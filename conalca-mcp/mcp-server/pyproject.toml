@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "conalca-mcp-server"
+version = "0.1.0"
+description = "Servidor MCP streameable para ElevenLabs integrado con base de datos AI Transport"
+authors = ["Conalca Team"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+mcp = "^1.0.0"
+asyncio = "^3.4.3"
+aiomysql = "^0.2.0"
+python-dotenv = "^1.0.0"
+pydantic = "^2.0.0"
+uvloop = "^0.19.0"
+
+[tool.poetry.scripts]
+conalca-mcp-server = "conalca_mcp_server.server:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

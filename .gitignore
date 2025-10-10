@@ -1,0 +1,100 @@
+# ===============================================
+# GITIGNORE - CONALCA IA SYSTEM
+# Incluye: conalca/ y conalca-mcp/
+# ===============================================
+
+# ===== ROOT LEVEL - IGNORAR =====
+/*.tar.gz
+/*.conf
+/*.sql
+/*.service
+/*.md
+!README.md
+!CONTRIBUTING.md
+!INSTRUCCIONES_GITHUB.md
+/ejemplo/
+/v-old/
+/SISTEMA_ELEVENLABS_DOCUMENTACION.md
+
+# ===== CONALCA (Laravel App) =====
+
+# Dependencias
+conalca/vendor/
+conalca/node_modules/
+
+# Entorno y configuración sensible
+conalca/.env
+conalca/.env.backup*
+!conalca/.env.example
+
+# Archivos de almacenamiento temporal
+conalca/storage/framework/cache/*
+!conalca/storage/framework/cache/.gitignore
+conalca/storage/framework/sessions/*
+!conalca/storage/framework/sessions/.gitignore
+conalca/storage/framework/views/*
+!conalca/storage/framework/views/.gitignore
+conalca/storage/logs/*.log
+!conalca/storage/logs/.gitignore
+
+# Archivos de backup y temporales
+conalca/*.tar.gz
+conalca/*.sql
+conalca/backup_*/
+conalca/*_backup*/
+
+# Scripts de prueba y diagnóstico
+conalca/test_*.php
+conalca/consultar_*.php
+conalca/diagnostico_*.php
+conalca/verificacion_*.sh
+conalca/monitorear_*.sh
+conalca/*.sh
+conalca/*.html
+conalca/debug_*.html
+
+# Archivos de configuración del servidor
+conalca/*.conf
+conalca/*.service
+
+# Archivos compilados
+conalca/public/build/
+conalca/public/hot
+conalca/public/storage
+
+# ===== CONALCA-MCP (MCP Server) =====
+
+# Dependencias
+conalca-mcp/node_modules/
+conalca-mcp/mcp-server/node_modules/
+
+# Build
+conalca-mcp/mcp-server/build/
+conalca-mcp/mcp-server/dist/
+
+# Configuración local
+conalca-mcp/.env
+conalca-mcp/*.tar.gz
+
+# ===== GENERAL =====
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.buildpath
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

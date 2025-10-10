@@ -1,0 +1,324 @@
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║     🔒 AUDITORÍA DE PERMISOS - SERVIDOR DE PRODUCCIÓN       ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+📅 Fecha: 2025-10-07 15:40:00
+🖥️  Servidor: Conalca IA - Producción
+📂 Ruta: /home/ubuntu/mcp/conalca
+
+═══════════════════════════════════════════════════════════════
+
+🔍 RESUMEN EJECUTIVO:
+─────────────────────
+
+✅ PHP-FPM ejecutándose como: www-data
+✅ Nginx ejecutándose como: www-data
+✅ Propietario del proyecto: ubuntu:www-data
+✅ Directorio storage: ✅ CORRECTO (775 www-data:www-data)
+✅ Directorio logs: ✅ CORRECTO (775 www-data:www-data)
+⚠️  Scripts .sh: MIXTO (algunos sin permisos de ejecución)
+⚠️  Bootstrap cache: MIXTO (algunos archivos 644)
+
+═══════════════════════════════════════════════════════════════
+
+📊 ANÁLISIS DETALLADO:
+──────────────────────
+
+1️⃣  PROCESOS DEL SERVIDOR
+─────────────────────────
+
+PHP-FPM:
+  Master: root (PID 74233)
+  Workers: www-data (PIDs 74236, 74237)
+  ✅ Configuración correcta
+
+Nginx:
+  Master: root (PID 74266)
+  Workers: www-data (PIDs 74267, 74268)
+  ✅ Configuración correcta
+
+═══════════════════════════════════════════════════════════════
+
+2️⃣  DIRECTORIO RAÍZ
+───────────────────
+
+Permisos: drwxr-xr-x (755)
+Propietario: ubuntu:www-data
+Estado: ✅ CORRECTO
+
+Archivos críticos:
+  artisan: 644 ubuntu:www-data
+  ⚠️  PROBLEMA: Debería ser 755 para ejecución
+
+═══════════════════════════════════════════════════════════════
+
+3️⃣  DIRECTORIO STORAGE (CRÍTICO)
+─────────────────────────────────
+
+storage/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/framework/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/framework/views/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/framework/cache/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/framework/cache/data/
+  Permisos: 775 www-data:www-data ✅
+  Subdirectorios: 755 ubuntu:www-data ⚠️  (Aceptable)
+  
+storage/framework/sessions/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/logs/
+  Permisos: 775 www-data:www-data ✅
+  
+storage/logs/laravel.log
+  Permisos: 775 www-data:www-data ✅
+  Estado: Escribible por PHP-FPM ✅
+
+storage/app/
+  Permisos: 775 www-data:www-data ✅
+
+ESTADO STORAGE: ✅ EXCELENTE
+
+═══════════════════════════════════════════════════════════════
+
+4️⃣  DIRECTORIO BOOTSTRAP/CACHE
+──────────────────────────────
+
+bootstrap/cache/
+  config.php: 644 ubuntu:www-data ⚠️
+  routes-v7.php: 644 ubuntu:www-data ⚠️
+  services.php: 775 www-data:www-data ✅
+  packages.php: 775 www-data:www-data ✅
+
+PROBLEMA: config.php y routes-v7.php no son escribibles
+IMPACTO: Cache puede fallar al regenerarse
+SOLUCIÓN: Cambiar a 664 o 775
+
+═══════════════════════════════════════════════════════════════
+
+5️⃣  DIRECTORIO PUBLIC
+─────────────────────
+
+public/
+  Permisos: 775 ubuntu:ubuntu
+  Estado: ✅ CORRECTO
+  
+public/index.php
+  Permisos: 755 ubuntu:www-data ✅
+  Estado: Ejecutable por web server ✅
+  
+public/storage (symlink)
+  Destino: /home/ubuntu/mcp/conalca/storage/app/public
+  Estado: ✅ CORRECTO
+  
+public/build/assets/
+  Permisos archivos: 664 ubuntu:ubuntu
+  Estado: ✅ CORRECTO (solo lectura)
+
+═══════════════════════════════════════════════════════════════
+
+6️⃣  SCRIPTS DE SISTEMA (.sh)
+────────────────────────────
+
+Scripts CON permisos de ejecución (755/775):
+  ✅ backup_archivos_chat.sh
+  ✅ monitorear_chat.sh
+  ✅ start-laravel.sh
+  ✅ verificar_chat_completo.sh
+  ✅ scripts/audit-assets.sh
+  ✅ scripts/check-phpmyadmin-security.sh
+  ✅ scripts/make_call.sh
+  ✅ scripts/quick_call.sh
+  ✅ scripts/verify_complete_system.sh
+
+Scripts SIN permisos de ejecución (644):
+  ⚠️  extract_data.sh
+  ⚠️  switch-db.sh
+  ⚠️  scripts/deploy.sh
+
+IMPACTO: No se pueden ejecutar directamente
+SOLUCIÓN: chmod +x si se necesitan ejecutar
+
+═══════════════════════════════════════════════════════════════
+
+7️⃣  DIRECTORIOS DE APLICACIÓN
+─────────────────────────────
+
+app/
+  Permisos: 755 ubuntu:www-data ✅
+  Archivos .php: 644 ubuntu:www-data ✅
+  
+resources/
+  Permisos: 755 ubuntu:www-data ✅
+  Archivos: 644 ubuntu:www-data ✅
+  
+routes/
+  Permisos: 755 ubuntu:www-data ✅
+  Archivos: 644 ubuntu:www-data ✅
+  
+config/
+  Permisos: 755 ubuntu:www-data ✅
+  Archivos: 644 ubuntu:www-data ✅
+
+ESTADO: ✅ CORRECTO
+
+═══════════════════════════════════════════════════════════════
+
+⚠️  PROBLEMAS ENCONTRADOS:
+──────────────────────────
+
+1. PRIORIDAD MEDIA: artisan sin permisos de ejecución
+   Archivo: /home/ubuntu/mcp/conalca/artisan
+   Actual: 644
+   Recomendado: 755
+   Comando: chmod 755 artisan
+
+2. PRIORIDAD BAJA: bootstrap/cache con permisos restrictivos
+   Archivos: config.php, routes-v7.php
+   Actual: 644
+   Recomendado: 664 o 775
+   Comando: chmod 664 bootstrap/cache/config.php bootstrap/cache/routes-v7.php
+
+3. PRIORIDAD BAJA: Scripts sin permisos de ejecución
+   Archivos: extract_data.sh, switch-db.sh, scripts/deploy.sh
+   Actual: 644
+   Recomendado: 755 (solo si se usan)
+   Comando: chmod +x extract_data.sh switch-db.sh scripts/deploy.sh
+
+═══════════════════════════════════════════════════════════════
+
+✅ PERMISOS CORRECTOS:
+──────────────────────
+
+✅ storage/ y todos sus subdirectorios (775 www-data:www-data)
+✅ storage/logs/laravel.log (775 www-data:www-data)
+✅ public/index.php (755)
+✅ Directorios de aplicación (app, resources, routes, config)
+✅ PHP-FPM ejecutándose como www-data
+✅ Nginx ejecutándose como www-data
+✅ Scripts principales de monitoreo y backup ejecutables
+
+═══════════════════════════════════════════════════════════════
+
+🔧 COMANDOS DE CORRECCIÓN:
+──────────────────────────
+
+# 1. Corregir permisos de artisan (RECOMENDADO)
+chmod 755 /home/ubuntu/mcp/conalca/artisan
+
+# 2. Corregir bootstrap/cache (RECOMENDADO)
+chmod 664 /home/ubuntu/mcp/conalca/bootstrap/cache/config.php
+chmod 664 /home/ubuntu/mcp/conalca/bootstrap/cache/routes-v7.php
+
+# 3. Dar permisos a scripts adicionales (OPCIONAL)
+chmod +x /home/ubuntu/mcp/conalca/extract_data.sh
+chmod +x /home/ubuntu/mcp/conalca/switch-db.sh
+chmod +x /home/ubuntu/mcp/conalca/scripts/deploy.sh
+
+# 4. Verificación completa de storage (PREVENTIVO)
+sudo chown -R www-data:www-data /home/ubuntu/mcp/conalca/storage
+sudo chmod -R 775 /home/ubuntu/mcp/conalca/storage
+
+# 5. Reiniciar servicios después de cambios
+sudo systemctl restart php8.3-fpm
+sudo systemctl restart nginx
+
+═══════════════════════════════════════════════════════════════
+
+📊 MATRIZ DE PERMISOS RECOMENDADOS:
+───────────────────────────────────
+
+Tipo de Archivo/Directorio    | Permisos | Propietario
+─────────────────────────────────────────────────────────────
+Directorios de código          | 755      | ubuntu:www-data
+Archivos PHP (.php)            | 644      | ubuntu:www-data
+Scripts ejecutables (.sh)      | 755      | ubuntu:ubuntu
+artisan                        | 755      | ubuntu:www-data
+public/index.php               | 755      | ubuntu:www-data
+storage/ (recursivo)           | 775      | www-data:www-data
+storage/logs/ (archivos)       | 664-775  | www-data:www-data
+bootstrap/cache/ (archivos)    | 664      | ubuntu:www-data
+.env                           | 600      | ubuntu:ubuntu
+Assets compilados (public/)    | 644      | ubuntu:ubuntu
+
+═══════════════════════════════════════════════════════════════
+
+🎯 EVALUACIÓN GENERAL:
+──────────────────────
+
+CALIFICACIÓN: 8.5/10
+
+Puntos fuertes:
+  ✅ Storage completamente correcto (crítico para Laravel)
+  ✅ PHP-FPM y Nginx con usuarios correctos
+  ✅ Logs escribibles por el servidor web
+  ✅ Scripts de monitoreo ejecutables
+  ✅ Public/index.php accesible
+
+Puntos a mejorar:
+  ⚠️  artisan debería tener permisos de ejecución
+  ⚠️  bootstrap/cache con permisos muy restrictivos
+  ⚠️  Algunos scripts sin permisos de ejecución
+
+IMPACTO EN PRODUCCIÓN: BAJO
+  → El sistema funciona correctamente
+  → Los problemas son de conveniencia, no críticos
+  → Se recomienda corregir para mejores prácticas
+
+═══════════════════════════════════════════════════════════════
+
+🔐 RECOMENDACIONES DE SEGURIDAD:
+────────────────────────────────
+
+1. ✅ BIEN: .env no es accesible vía web (está fuera de public/)
+2. ✅ BIEN: storage/ no es accesible vía web directamente
+3. ✅ BIEN: PHP-FPM no ejecuta como root
+4. ✅ BIEN: Archivos de código no son escribibles por web server
+5. ⚠️  CONSIDERA: Agregar permisos más restrictivos a .env (600)
+
+═══════════════════════════════════════════════════════════════
+
+📝 NOTAS ADICIONALES:
+────────────────────
+
+1. Los subdirectorios de storage/framework/cache/data/ tienen
+   permisos 755 con propietario ubuntu:www-data. Esto es
+   aceptable porque fueron creados por comandos artisan.
+
+2. Los archivos en bootstrap/cache/ se regeneran automáticamente,
+   por lo que los permisos 644 no causan problemas inmediatos,
+   pero pueden dificultar la regeneración.
+
+3. El symlink public/storage apunta correctamente a
+   storage/app/public, lo que permite servir archivos subidos.
+
+4. Los permisos 775 en storage/ permiten que tanto ubuntu como
+   www-data puedan escribir, lo cual es correcto para este setup.
+
+═══════════════════════════════════════════════════════════════
+
+✅ CONCLUSIÓN:
+──────────────
+
+El servidor de producción tiene permisos CORRECTOS en las áreas
+críticas (storage, logs, public). Los problemas encontrados son
+MENORES y no afectan el funcionamiento actual del sistema.
+
+Se recomienda aplicar las correcciones sugeridas para mejorar
+la consistencia y facilitar el mantenimiento futuro.
+
+El sistema está ✅ LISTO PARA PRODUCCIÓN con los permisos actuales.
+
+═══════════════════════════════════════════════════════════════
+
+Generado: 2025-10-07 15:40:00
+Ubicación: /home/ubuntu/mcp/conalca/AUDITORIA_PERMISOS.txt

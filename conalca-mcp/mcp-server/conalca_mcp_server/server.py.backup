@@ -1,0 +1,475 @@
+import asyncio
+import logging
+import sys
+from typing import Any, Dict, List, Optional
+import uvloop
+import json
+from datetime import datetime
+
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Resource, Tool, TextContent
+
+from .database import db_connection
+from .models import repository
+
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class ConalcaMCPServer:
+    """Servidor MCP principal para Conalca con capacidades de streaming"""
+    
+    def __init__(self):
+        self.server = Server("conalca-mcp-server")
+        self.streaming_clients = set()
+        
+    async def initialize(self):
+        """Inicializa el servidor y la conexión a la base de datos"""
+        try:
+            # Inicializar conexión a la base de datos
+            await db_connection.initialize()
+            logger.info("Conexión a base de datos inicializada")
+            
+            # Registrar herramientas MCP
+            self._register_tools()
+            logger.info("Herramientas MCP registradas")
+            
+            # Registrar recursos y capacidades de streaming
+            self._register_resources()
+            
+        except Exception as e:
+            logger.error(f"Error al inicializar el servidor: {e}")
+            raise
+    
+    def _register_tools(self):
+        """Registra todas las herramientas MCP"""
+        
+        @self.server.call_tool()
+        async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
+            """Maneja las llamadas a herramientas"""
+            try:
+                if name == "get_llamadas":
+                    limit = arguments.get("limit", 100)
+                    offset = arguments.get("offset", 0)
+                    llamadas = await repository.get_llamadas(limit, offset)
+                    
+                    result = []
+                    for llamada in llamadas:
+                        result.append({
+                            "id_llamada": llamada.id_llamada,
+                            "id_cotizacion": llamada.id_cotizacion,
+                            "chofer_id": llamada.chofer_id,
+                            "status": llamada.status,
+                            "elevenlabs_conversation_id": llamada.elevenlabs_conversation_id,
+                            "elevenlabs_sip_call_id": llamada.elevenlabs_sip_call_id,
+                            "call_started_at": str(llamada.call_started_at) if llamada.call_started_at else None,
+                            "call_ended_at": str(llamada.call_ended_at) if llamada.call_ended_at else None,
+                            "call_notes": llamada.call_notes,
+                            "created_at": str(llamada.created_at) if llamada.created_at else None,
+                            "updated_at": str(llamada.updated_at) if llamada.updated_at else None
+                        })
+                    
+                    return [TextContent(
+                        type="text",
+                        text=f"Encontradas {len(result)} llamadas:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    )]
+                
+                elif name == "get_llamada_by_id":
+                    id_llamada = arguments.get("id_llamada")
+                    if not id_llamada:
+                        return [TextContent(type="text", text="Error: id_llamada requerido")]
+                    
+                    llamada = await repository.get_llamada_by_id(id_llamada)
+                    if not llamada:
+                        return [TextContent(type="text", text=f"No se encontró la llamada con ID {id_llamada}")]
+                    
+                    result = {
+                        "id_llamada": llamada.id_llamada,
+                        "id_cotizacion": llamada.id_cotizacion,
+                        "chofer_id": llamada.chofer_id,
+                        "status": llamada.status,
+                        "elevenlabs_conversation_id": llamada.elevenlabs_conversation_id,
+                        "elevenlabs_sip_call_id": llamada.elevenlabs_sip_call_id,
+                        "call_started_at": str(llamada.call_started_at) if llamada.call_started_at else None,
+                        "call_ended_at": str(llamada.call_ended_at) if llamada.call_ended_at else None,
+                        "call_notes": llamada.call_notes,
+                        "created_at": str(llamada.created_at) if llamada.created_at else None,
+                        "updated_at": str(llamada.updated_at) if llamada.updated_at else None
+                    }
+                    
+                    return [TextContent(
+                        type="text",
+                        text=f"Llamada encontrada:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    )]
+                
+                elif name == "update_llamada_status":
+                    id_llamada = arguments.get("id_llamada")
+                    status = arguments.get("status")
+                    call_notes = arguments.get("call_notes")
+                    
+                    if not id_llamada or not status:
+                        return [TextContent(type="text", text="Error: id_llamada y status requeridos")]
+                    
+                    success = await repository.update_llamada_status(id_llamada, status, call_notes)
+                    if success:
+                        return [TextContent(
+                            type="text",
+                            text=f"Llamada {id_llamada} actualizada exitosamente. Nuevo status: {status}"
+                        )]
+                    else:
+                        return [TextContent(
+                            type="text",
+                            text=f"No se pudo actualizar la llamada {id_llamada}. Verifique que exista."
+                        )]
+                
+                elif name == "create_llamada":
+                    id_cotizacion = arguments.get("id_cotizacion")
+                    chofer_id = arguments.get("chofer_id")
+                    status = arguments.get("status", "pendiente")
+                    
+                    if not id_cotizacion or not chofer_id:
+                        return [TextContent(type="text", text="Error: id_cotizacion y chofer_id requeridos")]
+                    
+                    new_id = await repository.create_llamada(id_cotizacion, chofer_id, status)
+                    if new_id > 0:
+                        return [TextContent(
+                            type="text",
+                            text=f"Nueva llamada creada exitosamente con ID: {new_id}"
+                        )]
+                    else:
+                        return [TextContent(type="text", text="No se pudo crear la llamada")]
+                
+                elif name == "get_cotizaciones":
+                    limit = arguments.get("limit", 100)
+                    offset = arguments.get("offset", 0)
+                    cotizaciones = await repository.get_cotizaciones(limit, offset)
+                    
+                    result = []
+                    for cotizacion in cotizaciones:
+                        result.append({
+                            "id": cotizacion.id,
+                            "pricing_id": cotizacion.pricing_id,
+                            "ciudad_origen": cotizacion.ciudad_origen,
+                            "ciudad_destino": cotizacion.ciudad_destino,
+                            "peso_mercancia": cotizacion.peso_mercancia,
+                            "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                            "ruta": cotizacion.ruta,
+                            "valor": cotizacion.valor,
+                            "tipo_mercancia": cotizacion.tipo_mercancia,
+                            "silogtran_status": cotizacion.silogtran_status
+                        })
+                    
+                    return [TextContent(
+                        type="text",
+                        text=f"Encontradas {len(result)} cotizaciones:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    )]
+                
+                elif name == "get_vehicle_by_telefono_conductor":
+                    telefono = arguments.get("telefono")
+                    if not telefono:
+                        return [TextContent(type="text", text="Error: telefono requerido")]
+                    
+                    vehicle = await repository.get_vehicle_by_telefono_conductor(telefono)
+                    if not vehicle:
+                        return [TextContent(type="text", text=f"No se encontró el vehículo con teléfono de conductor {telefono}")]
+                    
+                    result = {
+                        "placa": vehicle.placa,
+                        "conductor": vehicle.conductor,
+                        "telefono_conductor": vehicle.telefonoconductor,
+                        "propietario": vehicle.propietario,
+                        "telefono_propietario": vehicle.telefonopropietario,
+                        "marca": vehicle.marca,
+                        "modelo": vehicle.modelo,
+                        "carroceria": vehicle.carroceria,
+                        "ciudad_conductor": vehicle.ciudad_conductor
+                    }
+                    
+                    return [TextContent(
+                        type="text",
+                        text=f"Vehículo encontrado:\n{json.dumps(result, indent=2, ensure_ascii=False)}"
+                    )]
+                
+                elif name == "elevenlabs_webhook_handler":
+                    conversation_id = arguments.get("conversation_id")
+                    status = arguments.get("status")
+                    call_data = arguments.get("call_data")
+                    
+                    if not conversation_id or not status:
+                        return [TextContent(type="text", text="Error: conversation_id y status requeridos")]
+                    
+                    # Buscar la llamada por conversation_id
+                    llamadas = await repository.get_llamadas(limit=1000)
+                    llamada_encontrada = None
+                    
+                    for llamada in llamadas:
+                        if llamada.elevenlabs_conversation_id == conversation_id:
+                            llamada_encontrada = llamada
+                            break
+                    
+                    if not llamada_encontrada:
+                        return [TextContent(
+                            type="text", 
+                            text=f"No se encontró llamada con conversation_id: {conversation_id}"
+                        )]
+                    
+                    # Actualizar el estado de la llamada
+                    call_notes = json.dumps(call_data) if call_data else None
+                    success = await repository.update_llamada_status(
+                        llamada_encontrada.id_llamada, 
+                        status, 
+                        call_notes
+                    )
+                    
+                    if success:
+                        # Enviar actualización via streaming
+                        stream_data = {
+                            "timestamp": datetime.now().isoformat(),
+                            "id_llamada": llamada_encontrada.id_llamada,
+                            "conversation_id": conversation_id,
+                            "new_status": status,
+                            "call_data": call_data,
+                            "source": "elevenlabs_webhook"
+                        }
+                        
+                        await self._notify_streaming_clients("webhook_update", stream_data)
+                        
+                        return [TextContent(
+                            type="text",
+                            text=f"Webhook procesado exitosamente. Llamada {llamada_encontrada.id_llamada} actualizada a status: {status}"
+                        )]
+                    else:
+                        return [TextContent(
+                            type="text",
+                            text=f"Error al actualizar la llamada {llamada_encontrada.id_llamada}"
+                        )]
+                
+                else:
+                    return [TextContent(type="text", text=f"Herramienta no encontrada: {name}")]
+                    
+            except Exception as e:
+                logger.error(f"Error en herramienta {name}: {e}")
+                return [TextContent(type="text", text=f"Error: {str(e)}")]
+        
+        @self.server.list_tools()
+        async def list_tools() -> List[Tool]:
+            """Lista las herramientas disponibles"""
+            return [
+                Tool(
+                    name="get_llamadas",
+                    description="Obtiene una lista de llamadas con paginación",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "default": 100},
+                            "offset": {"type": "integer", "default": 0}
+                        }
+                    }
+                ),
+                Tool(
+                    name="get_llamada_by_id",
+                    description="Obtiene una llamada específica por su ID",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "id_llamada": {"type": "integer"}
+                        },
+                        "required": ["id_llamada"]
+                    }
+                ),
+                Tool(
+                    name="update_llamada_status",
+                    description="Actualiza el estado y notas de una llamada",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "id_llamada": {"type": "integer"},
+                            "status": {"type": "string"},
+                            "call_notes": {"type": "string"}
+                        },
+                        "required": ["id_llamada", "status"]
+                    }
+                ),
+                Tool(
+                    name="create_llamada",
+                    description="Crea una nueva llamada",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "id_cotizacion": {"type": "integer"},
+                            "chofer_id": {"type": "integer"},
+                            "status": {"type": "string", "default": "pendiente"}
+                        },
+                        "required": ["id_cotizacion", "chofer_id"]
+                    }
+                ),
+                Tool(
+                    name="get_cotizaciones",
+                    description="Obtiene una lista de cotizaciones con paginación",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "default": 100},
+                            "offset": {"type": "integer", "default": 0}
+                        }
+                    }
+                ),
+                Tool(
+                    name="get_vehicle_by_telefono_conductor",
+                    description="Obtiene un vehículo por el teléfono del conductor",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "telefono": {"type": "string"}
+                        },
+                        "required": ["telefono"]
+                    }
+                ),
+                Tool(
+                    name="elevenlabs_webhook_handler",
+                    description="Maneja webhooks de ElevenLabs para actualizar estados de llamadas",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "conversation_id": {"type": "string"},
+                            "status": {"type": "string"},
+                            "call_data": {"type": "object"}
+                        },
+                        "required": ["conversation_id", "status"]
+                    }
+                )
+            ]
+    
+    def _register_resources(self):
+        """Registra los recursos disponibles"""
+        
+        @self.server.list_resources()
+        async def list_resources() -> List[Resource]:
+            """Lista los recursos disponibles"""
+            return [
+                Resource(
+                    uri="conalca://llamadas",
+                    name="Llamadas",
+                    description="Gestión de llamadas de Conalca",
+                    mimeType="application/json"
+                ),
+                Resource(
+                    uri="conalca://cotizaciones",
+                    name="Cotizaciones",
+                    description="Gestión de cotizaciones de transporte",
+                    mimeType="application/json"
+                ),
+                Resource(
+                    uri="conalca://vehiculos",
+                    name="Vehículos",
+                    description="Información de vehículos, propietarios y conductores",
+                    mimeType="application/json"
+                )
+            ]
+        
+        @self.server.read_resource()
+        async def read_resource(uri: str) -> str:
+            """Lee un recurso específico"""
+            try:
+                if uri == "conalca://llamadas":
+                    llamadas = await repository.get_llamadas(limit=50)
+                    return json.dumps([llamada.model_dump() for llamada in llamadas], 
+                                    default=str, ensure_ascii=False, indent=2)
+                
+                elif uri == "conalca://cotizaciones":
+                    cotizaciones = await repository.get_cotizaciones(limit=50)
+                    return json.dumps([cotizacion.model_dump() for cotizacion in cotizaciones], 
+                                    default=str, ensure_ascii=False, indent=2)
+                
+                elif uri == "conalca://vehiculos":
+                    vehiculos = await repository.get_vehicles(limit=50)
+                    return json.dumps([vehiculo.model_dump() for vehiculo in vehiculos], 
+                                    default=str, ensure_ascii=False, indent=2)
+                
+                else:
+                    raise ValueError(f"Recurso no encontrado: {uri}")
+                    
+            except Exception as e:
+                logger.error(f"Error al leer recurso {uri}: {e}")
+                return json.dumps({"error": str(e)})
+    
+
+    
+    async def _notify_streaming_clients(self, event_type: str, data: Dict[str, Any]):
+        """Notifica a los clientes de streaming conectados"""
+        if not self.streaming_clients:
+            return
+        
+        notification = {
+            "event_type": event_type,
+            "timestamp": datetime.now().isoformat(),
+            "data": data
+        }
+        
+        # En una implementación real, aquí enviarías las notificaciones a través de WebSockets
+        # Por ahora, solo logeamos
+        logger.info(f"Streaming notification: {json.dumps(notification, default=str)}")
+        
+        # Simular envío a clientes (en una implementación real serían conexiones WebSocket)
+        for client in self.streaming_clients.copy():
+            try:
+                # await client.send(json.dumps(notification))
+                pass
+            except Exception as e:
+                logger.error(f"Error enviando notificación a cliente: {e}")
+                self.streaming_clients.discard(client)
+    
+    async def add_streaming_client(self, client):
+        """Añade un cliente de streaming"""
+        self.streaming_clients.add(client)
+        logger.info(f"Cliente de streaming añadido. Total clientes: {len(self.streaming_clients)}")
+    
+    async def remove_streaming_client(self, client):
+        """Remueve un cliente de streaming"""
+        self.streaming_clients.discard(client)
+        logger.info(f"Cliente de streaming removido. Total clientes: {len(self.streaming_clients)}")
+    
+    async def shutdown(self):
+        """Cierra el servidor y limpia recursos"""
+        try:
+            await db_connection.close()
+            logger.info("Servidor MCP cerrado exitosamente")
+        except Exception as e:
+            logger.error(f"Error al cerrar el servidor: {e}")
+
+# Instancia global del servidor
+mcp_server = ConalcaMCPServer()
+
+async def main():
+    """Función principal para ejecutar el servidor MCP"""
+    try:
+        # Configurar uvloop para mejor rendimiento en Linux
+        if sys.platform != 'win32':
+            uvloop.install()
+        
+        # Inicializar el servidor
+        await mcp_server.initialize()
+        logger.info("Servidor MCP de Conalca iniciado")
+        
+        # Ejecutar el servidor stdio
+        async with stdio_server() as (read_stream, write_stream):
+            await mcp_server.server.run(
+                read_stream,
+                write_stream,
+                mcp_server.server.create_initialization_options()
+            )
+    
+    except KeyboardInterrupt:
+        logger.info("Recibida señal de interrupción")
+    except Exception as e:
+        logger.error(f"Error en el servidor principal: {e}")
+        raise
+    finally:
+        await mcp_server.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())

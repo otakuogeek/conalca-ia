@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Login - Conalca</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .debug-container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .debug-section { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .debug-section h3 { margin-top: 0; color: #333; }
+        .debug-output { background: #000; color: #0f0; padding: 10px; border-radius: 3px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .login-form { background: #f9f9f9; padding: 15px; border-radius: 5px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 3px; }
+        .btn { background: #007cba; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer; }
+        .btn:hover { background: #005a8b; }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; font-weight: bold; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔍 Sistema de Debugging de Login - Conalca</h1>
+        
+        <div class="debug-section">
+            <h3>📊 Información del Sistema</h3>
+            <div id="system-info" class="debug-output">Cargando información del sistema...</div>
+        </div>
+
+        <div class="debug-section">
+            <h3>🔐 Formulario de Login con Debugging</h3>
+            <div class="login-form">
+                <form id="debug-login-form">
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" name="email" value="DonDavidNavarro@conalca.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password" value="12345678" required>
+                    </div>
+                    <input type="hidden" id="csrf_token" name="_token" value="">
+                    <button type="submit" class="btn">🚀 Login con Debug</button>
+                    <button type="button" id="simple-login-btn" class="btn" style="background: #28a745; margin-left: 10px;">✅ Login Simplificado</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>📝 Log de Debugging</h3>
+            <div id="debug-log" class="debug-output"></div>
+        </div>
+
+        <div class="debug-section">
+            <h3>🌐 Información de Red</h3>
+            <div id="network-info" class="debug-output"></div>
+        </div>
+    </div>
+
+    <script>
+        let debugLog = document.getElementById('debug-log');
+        let systemInfo = document.getElementById('system-info');
+        let networkInfo = document.getElementById('network-info');
+
+        // Función para agregar logs
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toISOString();
+            const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}\n`;
+            debugLog.innerHTML += logEntry;
+            debugLog.scrollTop = debugLog.scrollHeight;
+            console.log(`[DEBUG] ${message}`);
+        }
+
+        // Función para obtener información del sistema
+        async function loadSystemInfo() {
+            try {
+                addLog('Obteniendo información del sistema...');
+                
+                const response = await fetch('/debug-system-info', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    systemInfo.innerHTML = `
+Session ID: ${data.session_id || 'No disponible'}
+CSRF Token: ${data.csrf_token || 'No disponible'}
+Cookies: ${JSON.stringify(data.cookies || {}, null, 2)}
+User Agent: ${navigator.userAgent}
+URL: ${window.location.href}
+Protocolo: ${window.location.protocol}
+                    `;
+                    
+                    // Establecer token CSRF en el formulario
+                    document.getElementById('csrf_token').value = data.csrf_token || '';
+                    addLog(`Sistema cargado. Token CSRF: ${data.csrf_token}`, 'success');
+                } else {
+                    addLog(`Error al cargar info del sistema: ${response.status}`, 'error');
+                    systemInfo.innerHTML = `Error: ${response.status} - ${response.statusText}`;
+                }
+            } catch (error) {
+                addLog(`Error de red: ${error.message}`, 'error');
+                systemInfo.innerHTML = `Error de red: ${error.message}`;
+            }
+        }
+
+        // Función para manejar el login
+        document.getElementById('debug-login-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            addLog('=== INICIANDO PROCESO DE LOGIN ===');
+            
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData.entries());
+            
+            addLog(`Datos del formulario: ${JSON.stringify(data)}`);
+            
+            try {
+                addLog('Enviando petición de login...');
+                
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'include',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                addLog(`Respuesta recibida: ${response.status} ${response.statusText}`);
+                
+                // Mostrar headers de respuesta
+                const headers = {};
+                for (let [key, value] of response.headers.entries()) {
+                    headers[key] = value;
+                }
+                addLog(`Headers de respuesta: ${JSON.stringify(headers, null, 2)}`);
+                
+                const responseText = await response.text();
+                addLog(`Contenido de respuesta (primeros 500 chars): ${responseText.substring(0, 500)}`);
+                
+                if (response.ok) {
+                    addLog('Login exitoso!', 'success');
+                    
+                    // Intentar parsear JSON
+                    try {
+                        const jsonData = JSON.parse(responseText);
+                        addLog(`Respuesta JSON: ${JSON.stringify(jsonData, null, 2)}`, 'success');
+                        
+                        // Si hay una URL de redirección
+                        if (jsonData.redirect) {
+                            addLog(`Redirigiendo a: ${jsonData.redirect}`, 'info');
+                            setTimeout(() => {
+                                window.location.href = jsonData.redirect;
+                            }, 2000);
+                        }
+                    } catch (parseError) {
+                        addLog('Respuesta no es JSON válido', 'info');
+                        // Si es una redirección HTML normal
+                        if (response.redirected) {
+                            addLog(`Redirigido a: ${response.url}`, 'info');
+                            window.location.href = response.url;
+                        }
+                    }
+                } else {
+                    addLog(`Error en login: ${response.status}`, 'error');
+                    
+                    // Mostrar detalles del error
+                    if (response.status === 419) {
+                        addLog('ERROR 419: Token CSRF expirado o inválido', 'error');
+                    } else if (response.status === 422) {
+                        addLog('ERROR 422: Datos de validación inválidos', 'error');
+                    }
+                }
+                
+            } catch (error) {
+                addLog(`Error de red en login: ${error.message}`, 'error');
+            }
+            
+            addLog('=== PROCESO DE LOGIN COMPLETADO ===');
+        });
+
+        // Manejador para login simplificado
+        document.getElementById('simple-login-btn').addEventListener('click', async function() {
+            addLog('=== INICIANDO LOGIN SIMPLIFICADO ===');
+            
+            const formData = new FormData();
+            formData.append('email', document.getElementById('email').value);
+            formData.append('password', document.getElementById('password').value);
+            formData.append('_token', document.getElementById('csrf_token').value);
+            
+            try {
+                addLog('Enviando petición de login simplificado...');
+                
+                const response = await fetch('/simple-login', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'include'
+                });
+                
+                addLog(`Respuesta recibida: ${response.status} ${response.statusText}`);
+                
+                const jsonData = await response.json();
+                addLog(`Respuesta JSON: ${JSON.stringify(jsonData, null, 2)}`);
+                
+                if (jsonData.success) {
+                    addLog(`LOGIN EXITOSO! Usuario: ${jsonData.user.name}`, 'success');
+                    if (jsonData.redirect) {
+                        addLog(`Redirigiendo a dashboard en 3 segundos...`, 'info');
+                        setTimeout(() => {
+                            window.location.href = jsonData.redirect;
+                        }, 3000);
+                    }
+                } else {
+                    addLog(`Login falló: ${jsonData.message}`, 'error');
+                }
+                
+            } catch (error) {
+                addLog(`Error en login simplificado: ${error.message}`, 'error');
+            }
+            
+            addLog('=== LOGIN SIMPLIFICADO COMPLETADO ===');
+        });
+
+        // Monitorear cookies
+        function monitorCookies() {
+            const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+                const [key, value] = cookie.trim().split('=');
+                acc[key] = value;
+                return acc;
+            }, {});
+            
+            networkInfo.innerHTML = `
+Cookies actuales:
+${JSON.stringify(cookies, null, 2)}
+
+Información de conexión:
+- URL actual: ${window.location.href}
+- Protocolo: ${window.location.protocol}
+- Host: ${window.location.host}
+- Referrer: ${document.referrer}
+            `;
+        }
+
+        // Inicializar
+        addLog('Iniciando sistema de debugging...');
+        loadSystemInfo();
+        monitorCookies();
+        
+        // Actualizar cookies cada 5 segundos
+        setInterval(monitorCookies, 5000);
+    </script>
+</body>
+</html>

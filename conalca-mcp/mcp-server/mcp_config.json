@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "conalca-transport": {
+      "command": "python",
+      "args": ["-m", "conalca_mcp_server.server"],
+      "cwd": "/root/conalca-mcp/mcp-server",
+      "env": {
+        "PYTHONPATH": "/root/conalca-mcp/mcp-server"
+      }
+    }
+  }
+}

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧪 CONALCA AutoFill - Test de Integración</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading { opacity: 0.6; pointer-events: none; }
+        .filled { background-color: #dcfce7; border-color: #16a34a; }
+    </style>
+</head>
+<body class="bg-gray-50 p-8">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">🚀 CONALCA AutoFill v2.0</h1>
+            <p class="text-gray-600">Sistema de llenado automático de formularios integrado con servidor MCP</p>
+            <div class="mt-4 flex gap-2">
+                <span class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">✅ Activo</span>
+                <span class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">🔗 MCP Conectado</span>
+                <span class="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-sm">🎯 23 Herramientas</span>
+            </div>
+        </div>
+
+        <!-- Panel de Control -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">🎮 Panel de Control</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button onclick="llenarConOrden(31)" class="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-lg transition-colors">
+                    <div class="text-lg font-semibold">📋 Orden 31</div>
+                    <div class="text-sm opacity-90">Individual - Funza → Bogotá</div>
+                </button>
+                <button onclick="llenarConOrden(32)" class="bg-green-600 hover:bg-green-700 text-white p-4 rounded-lg transition-colors">
+                    <div class="text-lg font-semibold">🏢 Orden 32</div>
+                    <div class="text-sm opacity-90">Grupal - Medellín → Bogotá</div>
+                </button>
+                <button onclick="llenarConOrden(66)" class="bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-lg transition-colors">
+                    <div class="text-lg font-semibold">🚛 Orden 66</div>
+                    <div class="text-sm opacity-90">Test - Otra configuración</div>
+                </button>
+            </div>
+            
+            <!-- Orden Personalizada -->
+            <div class="mt-4 flex gap-2">
+                <input type="number" id="orden-test" placeholder="ID de orden personalizada" 
+                       class="flex-1 px-4 py-2 border border-gray-300 rounded-lg">
+                <button onclick="llenarConOrdenPersonalizada()" 
+                        class="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2 rounded-lg transition-colors">
+                    🎯 Llenar Personalizada
+                </button>
+            </div>
+        </div>
+
+        <!-- Formulario de Prueba -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold">📝 Formulario de Cotización - Paso 1 (Datos Básicos)</h2>
+                <button onclick="limpiarFormulario()" class="text-gray-500 hover:text-gray-700">
+                    🗑️ Limpiar
+                </button>
+            </div>
+
+            <form id="formulario-cotizacion" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Tipo de Viaje -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">🚛 Tipo de viaje</label>
+                    <select id="tipo_viaje" name="tipo_viaje" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">-- seleccionar --</option>
+                        <option value="LOCAL">Local</option>
+                        <option value="INTERCITY">Intercity</option>
+                        <option value="IMPORT_EXPORT">Import/Export</option>
+                    </select>
+                </div>
+
+                <!-- Moneda -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">💰 Moneda</label>
+                    <select id="moneda" name="moneda" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">-- seleccionar --</option>
+                        <option value="COP">COP - Peso Colombiano</option>
+                        <option value="USD">USD - Dólar Americano</option>
+                        <option value="EUR">EUR - Euro</option>
+                    </select>
+                </div>
+
+                <!-- Fuente de Solicitud -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">📋 Fuente de la solicitud</label>
+                    <select id="fuente_solicitud" name="fuente_solicitud" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">-- seleccionar --</option>
+                        <option value="INDIVIDUAL">Individual</option>
+                        <option value="COTIZACION_GRUPAL">Cotización Grupal</option>
+                        <option value="CORPORATIVO">Corporativo</option>
+                    </select>
+                </div>
+
+                <!-- Tipo de Operación -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">📦 Tipo de operación</label>
+                    <select id="tipo_operacion" name="tipo_operacion" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">-- seleccionar --</option>
+                        <option value="GRANEL">Granel</option>
+                        <option value="CONTENEDORES">Contenedores</option>
+                        <option value="CARGA_GENERAL">Carga General</option>
+                        <option value="LIQUIDOS">Líquidos</option>
+                    </select>
+                </div>
+
+                <!-- Condición de Despacho -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">🚚 Condición de despacho</label>
+                    <input type="text" id="condicion_despacho" name="condicion_despacho" 
+                           placeholder="Condición despacho" 
+                           class="w-full p-3 border border-gray-300 rounded-lg">
+                </div>
+
+                <!-- Condición de Facturación -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">💳 Condición de facturación</label>
+                    <input type="text" id="condicion_facturacion" name="condicion_facturacion" 
+                           placeholder="Condición facturación" 
+                           class="w-full p-3 border border-gray-300 rounded-lg">
+                </div>
+
+                <!-- Ciudad de Facturación -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">🏙️ Ciudad de facturación</label>
+                    <select id="ciudad_facturacion" name="ciudad_facturacion" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">Select...</option>
+                        <option value="bogota">Bogotá</option>
+                        <option value="medellin">Medellín</option>
+                        <option value="cali">Cali</option>
+                        <option value="barranquilla">Barranquilla</option>
+                        <option value="cartagena">Cartagena</option>
+                    </select>
+                </div>
+
+                <!-- Vendedor -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">👤 Vendedor</label>
+                    <select id="vendedor" name="vendedor" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">Select...</option>
+                        <option value="CONALCA">CONALCA</option>
+                        <option value="VENDEDOR_1">Vendedor 1</option>
+                        <option value="VENDEDOR_2">Vendedor 2</option>
+                    </select>
+                </div>
+
+                <!-- Centro de Costo Despacho -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">🏢 Centro de costo despacho</label>
+                    <input type="text" id="centro_costo_despacho" name="centro_costo_despacho" 
+                           placeholder="Centro costo despacho" 
+                           class="w-full p-3 border border-gray-300 rounded-lg">
+                </div>
+
+                <!-- Cliente -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">👥 Cliente</label>
+                    <select id="cliente" name="cliente" class="w-full p-3 border border-gray-300 rounded-lg">
+                        <option value="">Select...</option>
+                        <option value="Cliente por asignar">Cliente por asignar</option>
+                        <option value="CLIENTE_VIP">Cliente VIP</option>
+                        <option value="CLIENTE_CORPORATIVO">Cliente Corporativo</option>
+                    </select>
+                </div>
+            </form>
+
+            <!-- Botón Siguiente -->
+            <div class="mt-6 flex justify-end">
+                <button class="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3 rounded-lg font-medium transition-colors">
+                    Siguiente →
+                </button>
+            </div>
+        </div>
+
+        <!-- Panel de Estado -->
+        <div class="mt-6 bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold mb-4">📊 Estado del Sistema</h3>
+            <div id="estado-sistema" class="text-sm text-gray-600">
+                Sistema listo. Ejecute un comando para ver el estado.
+            </div>
+        </div>
+
+        <!-- Log de Actividad -->
+        <div class="mt-6 bg-gray-900 text-green-400 rounded-lg p-6 font-mono text-sm">
+            <h3 class="text-lg font-semibold mb-4 text-white">📟 Log de Actividad</h3>
+            <div id="log-actividad">
+                <div>[SISTEMA] CONALCA AutoFill v2.0 inicializado</div>
+                <div>[INFO] Esperando comandos...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // Configuración global
+        const MCP_SERVER_URL = 'http://127.0.0.1:18840/';
+        let camposLlenados = 0;
+
+        // Log de actividad
+        function agregarLog(mensaje, tipo = 'INFO') {
+            const log = document.getElementById('log-actividad');
+            const timestamp = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.innerHTML = `[${timestamp}] [${tipo}] ${mensaje}`;
+            
+            if (tipo === 'ERROR') div.className = 'text-red-400';
+            if (tipo === 'SUCCESS') div.className = 'text-green-400';
+            if (tipo === 'WARNING') div.className = 'text-yellow-400';
+            
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Actualizar estado del sistema
+        function actualizarEstado(mensaje) {
+            document.getElementById('estado-sistema').textContent = mensaje;
+        }
+
+        // Llamar al servidor MCP
+        async function llamarServidorMCP(ordenId) {
+            agregarLog(`Llamando servidor MCP para orden ${ordenId}...`);
+            
+            const payload = {
+                jsonrpc: "2.0",
+                id: `test-${Date.now()}`,
+                method: "tools/call",
+                params: {
+                    name: "llenar_formulario",
+                    arguments: {
+                        orden_id: ordenId,
+                        tipo_formulario: "cotizacion"
+                    }
+                }
+            };
+
+            try {
+                const response = await fetch(MCP_SERVER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const resultado = await response.json();
+                
+                if (resultado.error) {
+                    throw new Error(`MCP Error: ${resultado.error.message}`);
+                }
+
+                const datos = JSON.parse(resultado.result.content[0].text);
+                agregarLog(`Datos recibidos del MCP: ${Object.keys(datos.campos_formulario).length} campos`, 'SUCCESS');
+                return datos;
+
+            } catch (error) {
+                agregarLog(`Error: ${error.message}`, 'ERROR');
+                throw error;
+            }
+        }
+
+        // Llenar campo del formulario
+        function llenarCampo(id, valor) {
+            const campo = document.getElementById(id);
+            if (!campo) {
+                agregarLog(`Campo ${id} no encontrado`, 'WARNING');
+                return false;
+            }
+
+            campo.value = valor;
+            campo.classList.add('filled');
+            
+            // Disparar eventos
+            ['input', 'change', 'blur'].forEach(evento => {
+                campo.dispatchEvent(new Event(evento, { bubbles: true }));
+            });
+
+            agregarLog(`✓ ${id} = "${valor}"`);
+            return true;
+        }
+
+        // Llenar formulario completo
+        async function llenarConOrden(ordenId) {
+            camposLlenados = 0;
+            actualizarEstado(`Llenando formulario con orden ${ordenId}...`);
+            
+            // Limpiar clases filled anteriores
+            document.querySelectorAll('.filled').forEach(el => el.classList.remove('filled'));
+
+            try {
+                const datos = await llamarServidorMCP(ordenId);
+                
+                // Mapear cada campo
+                for (const [campo, valor] of Object.entries(datos.campos_formulario)) {
+                    if (llenarCampo(campo, valor)) {
+                        camposLlenados++;
+                    }
+                }
+
+                const resumen = `
+                ✅ Formulario llenado exitosamente!
+                📋 Orden: ${ordenId}
+                🔧 Campos llenados: ${camposLlenados}
+                🚛 Ruta: ${datos.valores_sugeridos.origen} → ${datos.valores_sugeridos.destino}
+                📦 Mercancía: ${datos.valores_sugeridos.tipo_mercancia}
+                ⚖️ Peso: ${datos.valores_sugeridos.peso_mercancia} kg
+                `;
+
+                agregarLog(resumen.replace(/\n\s+/g, ' '), 'SUCCESS');
+                actualizarEstado(`✅ Formulario completado: ${camposLlenados} campos llenados`);
+
+                // Notificación visual
+                mostrarNotificacion(`✅ Formulario llenado con ${camposLlenados} campos de la orden ${ordenId}`, 'success');
+
+            } catch (error) {
+                actualizarEstado(`❌ Error: ${error.message}`);
+                mostrarNotificacion(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Llenar con orden personalizada
+        function llenarConOrdenPersonalizada() {
+            const input = document.getElementById('orden-test');
+            const ordenId = parseInt(input.value);
+            
+            if (!ordenId || ordenId <= 0) {
+                agregarLog('ID de orden inválido', 'ERROR');
+                return;
+            }
+            
+            llenarConOrden(ordenId);
+        }
+
+        // Limpiar formulario
+        function limpiarFormulario() {
+            document.getElementById('formulario-cotizacion').reset();
+            document.querySelectorAll('.filled').forEach(el => el.classList.remove('filled'));
+            agregarLog('Formulario limpiado');
+            actualizarEstado('Formulario limpiado - Listo para nueva operación');
+        }
+
+        // Mostrar notificación
+        function mostrarNotificacion(mensaje, tipo = 'info') {
+            const notif = document.createElement('div');
+            notif.className = `fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg text-white font-medium max-w-sm transition-transform duration-300 transform translate-x-full ${
+                tipo === 'success' ? 'bg-green-500' :
+                tipo === 'error' ? 'bg-red-500' : 'bg-blue-500'
+            }`;
+            notif.textContent = mensaje;
+            
+            document.body.appendChild(notif);
+            
+            setTimeout(() => notif.style.transform = 'translateX(0)', 10);
+            setTimeout(() => {
+                notif.style.transform = 'translateX(100%)';
+                setTimeout(() => notif.remove(), 300);
+            }, 4000);
+        }
+
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            agregarLog('Página de prueba cargada');
+            actualizarEstado('Sistema listo para pruebas');
+        });
+    </script>
+</body>
+</html>

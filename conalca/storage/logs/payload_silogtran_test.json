@@ -1,0 +1,130 @@
+{
+    "solicitudtransporte": [
+        {
+            "encabezado": {
+                "empresa_codigo": 11,
+                "tipvia_codigo": "NACIONAL",
+                "cencos_codigo_despacho": "CONALCA BOGOTA",
+                "cliente_codigo": 1,
+                "moneda_codigo": "PESOS",
+                "soltra_medio": "PAGINA WEB",
+                "soltra_condicionesdespacho": "PRUEBA WS",
+                "soltra_condicionesfacturacion": "PRUEBA WS",
+                "ciudad_codigo_facturacion": 11001000,
+                "vendedor_codigo": null,
+                "soltra_mandatario": 1,
+                "soltra_tipooperacion": "DISTRIBUCION",
+                "soltra_observacion": "PRUEBAS WS",
+                "soltra_observacion_remesa": "",
+                "soltra_tipoimagen": "",
+                "soltra_fechasolicitud": "2025-10-09",
+                "soltra_instruccionesservicio": "",
+                "solser_codigo": "",
+                "soltra_mostrarvehiculodigitalizado": "NO",
+                "soltra_mostrarconductordigitalizado": "NO",
+                "usuario_codigoautorizado": "",
+                "soltra_recomendado": ""
+            },
+            "detalle": [
+                {
+                    "ciudad_codigo_origen": 11001000,
+                    "ciudad_codigo_destino": 13001000,
+                    "ciudad_codigo_intermedia": null,
+                    "itesoltra_cantidad": "1",
+                    "itesoltra_peso": "8000",
+                    "producto_codigo": "1",
+                    "empaque_codigo": "1",
+                    "itesoltra_vehiculos": "1",
+                    "claveh_codigo": "1",
+                    "carroceria_codigo": "1",
+                    "itesoltra_modelo": "2010",
+                    "tipfle_codigo": "CARGA SUELTA",
+                    "itesoltra_flete": "150000",
+                    "itesoltra_fleteministerio": "200000",
+                    "tiptar_codigo": "GENERAL",
+                    "itesoltra_valortarifa": "250000",
+                    "itesoltra_valormercancia": "1000000",
+                    "itesoltra_tipodocumento": "FACTURA",
+                    "itesoltra_numerodocumento": "123456",
+                    "itesoltra_restricciones": "1",
+                    "itesoltra_cargueporcuentade": "CLIENTE",
+                    "itesoltra_descargueporcuentade": "CLIENTE",
+                    "itesoltra_seguroporcuentade": "CLIENTE",
+                    "itesoltra_descripcionmercancia": "Mercancía de Prueba",
+                    "itesoltra_escolta": "NO",
+                    "itesoltra_kitseguridad": "SI",
+                    "itesoltra_kitcinchas": "NO",
+                    "itesoltra_guiaacompanamiento": "SI",
+                    "itesoltra_observacion": 1,
+                    "subcliente_codigo": "1",
+                    "itesoltra_guiadespacho": 1,
+                    "itesoltra_remisionviaje": 1,
+                    "itesoltra_numeropedido": 1,
+                    "itesoltra_notaentrega": 1,
+                    "itesoltra_planillatransporte": 1,
+                    "itesoltra_facturamercancia": 1,
+                    "tipo_remesa_rndc": 3,
+                    "detalle_cargue": {
+                        "itesoltra_fechacargue": "2022-08-01",
+                        "itesoltra_promesaservicio": "2025-06-19",
+                        "itesoltra_horacargue": "15:45",
+                        "itesoltra_promesaserviciohora": "00:00",
+                        "remitente_codigo": 1,
+                        "destinatario_codigo": 1,
+                        "itesoltra_observacioncargue": "1",
+                        "itesoltra_documentotransporte": "8765",
+                        "itesoltra_manifiestocliente": 1,
+                        "itesoltra_remesacliente": 1,
+                        "itesoltra_remesioncliente": 1,
+                        "itesoltra_codigoentrega": 1,
+                        "itesoltra_email": 1,
+                        "itesoltra_contacto": 2345678
+                    },
+                    "detalle_contenedor": {
+                        "itesoltra_conttam": 10,
+                        "lugar_codigo": 1,
+                        "cantidad_contenedor": 1,
+                        "contenedor_fechaentrega": "2022-12-31",
+                        "itesoltra_contenedornumero": 1,
+                        "itesoltra_devolucioncontenedor": "NO"
+                    },
+                    "detalle_internacional": {
+                        "itesoltra_modalidad": "OTM",
+                        "itesoltra_modalidadtipoviaje": "BOGOTA",
+                        "itesoltra_modalidadnumero": 1,
+                        "itesoltra_fechallegadadta": "2025-10-09",
+                        "aduana_codigo": "TULCAN",
+                        "itesoltra_nombrecliente": 1,
+                        "itesoltra_nombreexportador": 1,
+                        "itesoltra_datosagenteduana": 1,
+                        "itesoltra_datosbodegaingresa": 1,
+                        "ingresa_ciudad_codigo": 11001000,
+                        "itesoltra_ingresatipo": "IMPORTACION",
+                        "itesoltra_datospagoalamcenamientobodega": 1,
+                        "pago_ciudad_codigo": 11001000,
+                        "itesoltra_pagotipo": "IMPORTACION",
+                        "itesoltra_nombreimportador": 1,
+                        "itesoltra_descripcionbrevemercancia": 1,
+                        "itesoltra_cantidadpesomercancia": 1,
+                        "itesoltra_fechavencimientomodalidad": "2025-10-09",
+                        "itesoltra_pasofrontera": "NO"
+                    },
+                    "detalle_condicion_factura": {
+                        "itesoltra_condicionfacturacion": "CON EMISION DE DESPACHO",
+                        "itesoltra_facturaremesahija": "NO",
+                        "itesoltra_solounafactura": "NO"
+                    },
+                    "detalle_condicion_cumplido": {
+                        "itesoltra_condicioncumplido": "COMODATO, REMESA"
+                    },
+                    "detalle_acompanamiento": {
+                        "itesoltra_vehiculoacompanamiento": 0,
+                        "tipaco_codigo": "",
+                        "itesoltra_acompanamientocuentade": "",
+                        "itesoltra_acompanamientovalor": 0
+                    }
+                }
+            ]
+        }
+    ]
+}

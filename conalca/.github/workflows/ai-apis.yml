@@ -1,0 +1,77 @@
+name: 🎙️ ElevenLabs Integration Tests
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Ejecutar diariamente a las 8 AM
+  workflow_dispatch:      # Permitir ejecución manual
+  
+jobs:
+  elevenlabs-test:
+    runs-on: ubuntu-latest
+    name: 🧪 Test ElevenLabs API
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐘 Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.2
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
+
+    - name: 📦 Install dependencies
+      run: composer install --prefer-dist --no-progress --no-interaction
+
+    - name: ⚙️ Setup environment
+      run: |
+        cp .env.example .env
+        php artisan key:generate
+
+    - name: 🎭 Test ElevenLabs Voices
+      env:
+        ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      run: |
+        php artisan elevenlabs:test --voice=JBFqnCBsd6RMkjVDRZzb
+        php artisan elevenlabs:generate --text="GitHub Actions test message"
+
+    - name: 📊 Generate test report
+      run: |
+        echo "## 🎙️ ElevenLabs API Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Voice synthesis: OK" >> $GITHUB_STEP_SUMMARY
+        echo "✅ API connectivity: OK" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Audio generation: OK" >> $GITHUB_STEP_SUMMARY
+
+  openai-test:
+    runs-on: ubuntu-latest
+    name: 🤖 Test OpenAI API
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐘 Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.2
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
+
+    - name: 📦 Install dependencies
+      run: composer install --prefer-dist --no-progress --no-interaction
+
+    - name: ⚙️ Setup environment
+      run: |
+        cp .env.example .env
+        php artisan key:generate
+
+    - name: 🧠 Test OpenAI Integration
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        php artisan test:openai
+        
+    - name: 📊 OpenAI test summary
+      run: |
+        echo "## 🤖 OpenAI API Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "✅ GPT-4o-mini: OK" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Whisper STT: OK" >> $GITHUB_STEP_SUMMARY

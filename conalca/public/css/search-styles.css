@@ -1,0 +1,418 @@
+/* SearchManager Styles - Estilos optimizados para el sistema de búsqueda */
+
+/* Variables CSS para consistencia y fácil mantenimiento */
+:root {
+    --search-primary-color: #3b82f6;
+    --search-primary-light: #dbeafe;
+    --search-success-color: #10b981;
+    --search-error-color: #ef4444;
+    --search-warning-color: #f59e0b;
+    --search-border-radius: 0.5rem;
+    --search-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --search-transition: all 0.15s ease-in-out;
+}
+
+/* Contenedor principal de búsqueda */
+.search-container {
+    position: relative;
+    width: 100%;
+}
+
+/* Campo de búsqueda */
+.search-input {
+    transition: var(--search-transition);
+    border: 2px solid transparent;
+}
+
+.search-input:focus {
+    border-color: var(--search-primary-color);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    outline: none;
+}
+
+.search-input:focus-visible {
+    outline: 2px solid var(--search-primary-color);
+    outline-offset: 2px;
+}
+
+/* Botón de limpieza */
+.search-clear-btn {
+    transition: var(--search-transition);
+    opacity: 0.6;
+}
+
+.search-clear-btn:hover {
+    opacity: 1;
+    color: var(--search-error-color);
+    transform: scale(1.1);
+}
+
+.search-clear-btn:focus {
+    outline: 2px solid var(--search-primary-color);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+}
+
+/* Indicador de carga */
+.search-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.search-loading svg {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Contenedor de resultados */
+.search-results {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: var(--search-border-radius);
+    box-shadow: var(--search-shadow);
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 50;
+    
+    /* Scrollbar personalizada */
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db #f3f4f6;
+}
+
+.search-results::-webkit-scrollbar {
+    width: 6px;
+}
+
+.search-results::-webkit-scrollbar-track {
+    background: #f3f4f6;
+    border-radius: 3px;
+}
+
+.search-results::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 3px;
+}
+
+.search-results::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* Elementos de resultado */
+.result-item {
+    transition: var(--search-transition);
+    cursor: pointer;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.result-item:last-child {
+    border-bottom: none;
+}
+
+.result-item:hover {
+    background-color: var(--search-primary-light);
+    transform: translateX(2px);
+}
+
+.result-item:focus {
+    outline: 2px solid var(--search-primary-color);
+    outline-offset: -2px;
+    background-color: var(--search-primary-light);
+}
+
+.result-item.highlighted {
+    background-color: var(--search-primary-light) !important;
+    border-left: 3px solid var(--search-primary-color);
+}
+
+/* Estados de los elementos */
+.result-item .status-active {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.result-item .status-inactive {
+    background-color: #f3f4f6;
+    color: #6b7280;
+}
+
+/* Texto resaltado */
+.search-highlight {
+    background-color: #fef3c7;
+    color: #92400e;
+    padding: 1px 3px;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+/* Estados especiales */
+.search-empty-state,
+.search-error-state,
+.search-minimum-chars {
+    padding: 1.5rem;
+    text-align: center;
+    color: #6b7280;
+}
+
+.search-error-state {
+    color: var(--search-error-color);
+}
+
+.search-error-state svg {
+    color: #fca5a5;
+}
+
+/* Botón de reintentar */
+.search-retry-btn {
+    color: var(--search-primary-color);
+    text-decoration: underline;
+    transition: var(--search-transition);
+}
+
+.search-retry-btn:hover {
+    color: #1d4ed8;
+    text-decoration: none;
+}
+
+.search-retry-btn:focus {
+    outline: 2px solid var(--search-primary-color);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+}
+
+/* Notificaciones */
+.search-notification {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 9999;
+    max-width: 24rem;
+    border-radius: var(--search-border-radius);
+    box-shadow: var(--search-shadow);
+    animation: slideInRight 0.3s ease-out;
+}
+
+.search-notification.success {
+    background-color: #d1fae5;
+    border: 1px solid #a7f3d0;
+    color: #065f46;
+}
+
+.search-notification.error {
+    background-color: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.search-notification.info {
+    background-color: #dbeafe;
+    border: 1px solid #93c5fd;
+    color: #1e40af;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Modo oscuro */
+@media (prefers-color-scheme: dark) {
+    .search-results {
+        background: #1f2937;
+        border-color: #374151;
+        color: #f9fafb;
+    }
+    
+    .result-item:hover {
+        background-color: #374151;
+    }
+    
+    .result-item.highlighted {
+        background-color: #374151 !important;
+        border-left-color: #60a5fa;
+    }
+    
+    .search-highlight {
+        background-color: #451a03;
+        color: #fbbf24;
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .search-results {
+        max-height: 240px;
+        left: 0 !important;
+        right: 0 !important;
+        margin: 0 1rem;
+    }
+    
+    .search-notification {
+        left: 1rem;
+        right: 1rem;
+        max-width: none;
+    }
+    
+    .result-item {
+        padding: 0.875rem;
+    }
+}
+
+/* Estados de alta contraste */
+@media (prefers-contrast: high) {
+    .result-item.highlighted {
+        border-left-width: 4px;
+        background-color: #1e40af !important;
+        color: white;
+    }
+    
+    .search-highlight {
+        background-color: #000;
+        color: #fff;
+        font-weight: 700;
+    }
+}
+
+/* Reducir movimiento para usuarios que lo prefieren */
+@media (prefers-reduced-motion: reduce) {
+    .result-item,
+    .search-input,
+    .search-clear-btn,
+    .search-retry-btn {
+        transition: none;
+    }
+    
+    .search-loading svg {
+        animation: none;
+    }
+    
+    .search-notification {
+        animation: none;
+    }
+    
+    .result-item:hover {
+        transform: none;
+    }
+}
+
+/* Estados de foco para navegación por teclado */
+.search-input:focus-visible,
+.result-item:focus-visible,
+.search-clear-btn:focus-visible,
+.search-retry-btn:focus-visible {
+    outline: 3px solid var(--search-primary-color);
+    outline-offset: 2px;
+}
+
+/* Indicadores de estado */
+.search-field-indicator {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.search-field-indicator.loading {
+    color: var(--search-primary-color);
+}
+
+.search-field-indicator.success {
+    color: var(--search-success-color);
+}
+
+.search-field-indicator.error {
+    color: var(--search-error-color);
+}
+
+/* Mejoras de accesibilidad */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Animaciones de entrada y salida */
+.search-results.entering {
+    animation: fadeInScale 0.2s ease-out;
+}
+
+.search-results.leaving {
+    animation: fadeOutScale 0.15s ease-in;
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+@keyframes fadeOutScale {
+    from {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: scale(0.95) translateY(-10px);
+    }
+}
+
+/* Utilidades para diferentes tipos de contenido */
+.result-contact-info {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.25rem;
+}
+
+.result-contact-info .icon {
+    display: inline-block;
+    width: 1rem;
+    margin-right: 0.25rem;
+}
+
+.result-metadata {
+    font-size: 0.6875rem;
+    color: #9ca3af;
+    margin-top: 0.5rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid #f3f4f6;
+}
+
+/* Estados de validación */
+.search-input.valid {
+    border-color: var(--search-success-color);
+}
+
+.search-input.invalid {
+    border-color: var(--search-error-color);
+}
+
+.search-input.valid:focus {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.search-input.invalid:focus {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}

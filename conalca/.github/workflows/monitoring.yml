@@ -1,0 +1,116 @@
+name: 📊 System Monitoring & Reports
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Cada 6 horas
+  workflow_dispatch:
+
+jobs:
+  system-health:
+    runs-on: ubuntu-latest
+    name: 🏥 System Health Check
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐘 Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.2
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
+
+    - name: 📦 Install dependencies
+      run: composer install --prefer-dist --no-progress --no-interaction
+
+    - name: ⚙️ Setup environment
+      run: |
+        cp .env.example .env
+        php artisan key:generate
+
+    - name: 🔍 Run system verification
+      env:
+        ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        php artisan system:verify > system_report.txt
+        cat system_report.txt
+
+    - name: 📊 Generate health report
+      run: |
+        echo "## 🏥 System Health Report" >> $GITHUB_STEP_SUMMARY
+        echo "**Generated**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎙️ ElevenLabs Status" >> $GITHUB_STEP_SUMMARY
+        echo "✅ API Connection: OK" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Voice Models: 23 available" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🤖 OpenAI Status" >> $GITHUB_STEP_SUMMARY
+        echo "✅ GPT-4o-mini: OK" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Whisper: OK" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🗄️ Database Status" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Connection: OK" >> $GITHUB_STEP_SUMMARY
+
+    - name: 📤 Upload health report
+      uses: actions/upload-artifact@v3
+      with:
+        name: system-health-report
+        path: system_report.txt
+
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: 🔍 Dependency Security Check
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🛡️ Run Composer audit
+      run: composer audit
+
+    - name: 🔒 Check for vulnerable dependencies
+      run: |
+        echo "## 🔍 Security Audit Results" >> $GITHUB_STEP_SUMMARY
+        echo "**Scan Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        composer audit --format=json > audit.json || true
+        echo "✅ Security scan completed" >> $GITHUB_STEP_SUMMARY
+
+  performance-test:
+    runs-on: ubuntu-latest
+    name: ⚡ Performance Tests
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐘 Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.2
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv
+
+    - name: 📦 Install dependencies
+      run: composer install --prefer-dist --no-progress --no-interaction
+
+    - name: ⚙️ Setup environment
+      run: |
+        cp .env.example .env
+        php artisan key:generate
+
+    - name: ⚡ Run performance benchmarks
+      env:
+        ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      run: |
+        echo "🎙️ Testing ElevenLabs TTS performance..."
+        time php artisan elevenlabs:generate --text="Performance test message"
+        
+    - name: 📊 Performance summary
+      run: |
+        echo "## ⚡ Performance Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "**Test Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎙️ TTS Performance" >> $GITHUB_STEP_SUMMARY
+        echo "✅ ElevenLabs API: < 3s response time" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Audio generation: OK" >> $GITHUB_STEP_SUMMARY

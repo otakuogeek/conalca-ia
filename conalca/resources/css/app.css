@@ -1,0 +1,413 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tonos naranjas personalizados para diseño minimalista */
+@layer utilities {
+  .bg-orange-25 {
+    background-color: #fef7f0;
+  }
+  .bg-orange-75 {
+    background-color: #fed4ab;
+  }
+  .border-orange-250 {
+    border-color: #fdba74;
+  }
+  .text-orange-25 {
+    color: #fef7f0;
+  }
+  .text-orange-75 {
+    color: #fed4ab;
+  }
+}
+
+@font-face {
+    font-family: 'Product Sans';
+    src: url('../fonts/ProductSansRegular.ttf') format('truetype');
+    font-weight: normal;
+  }
+
+  @font-face {
+    font-family: 'Product Sans';
+    src: url('../fonts/ProductSansBold.ttf') format('truetype');
+    font-weight: bold;
+  }
+  body {
+    font-family: 'Product Sans', sans-serif;
+  }
+  tr{
+    font-family: 'Product Sans', sans-serif;
+  }
+  input{
+    font-family: 'Product Sans', sans-serif;
+  }
+  button{
+    font-family: 'Product Sans', sans-serif;
+  }
+ /*para aplicar la fuente bold, puedes utilizar la propiedad font-weight usas class bold-text*/
+
+ .bold-text {
+    font-weight: bold;
+  }
+
+.fc-toolbar-title {
+    font-family: 'Product Sans', sans-serif;
+    font-size: 1.1rem !important;
+    font-style: normal !important;
+    font-weight: 700 !important;
+    line-height: normal !important;
+    text-align: center !important;
+}
+
+.fc-button-primary {
+    margin-top: 0.5rem !important;
+    height: 3rem !important;
+}
+
+.fc-prev-button {
+    margin-left: 1.88rem !important;
+}
+
+.fc-button {
+    background-color: #fffbfb !important;
+    font-family: 'Product Sans', sans-serif;
+    color: #717579 !important;
+    font-size: 1rem !important;
+    font-style: normal !important;
+    font-weight: 400 !important;
+    line-height: normal !important;
+    border: none !important;
+}
+
+.fc-custom5-button {
+    width: 11.3rem !important;
+    height: 3rem !important;
+    background-color: #1b48bb !important;
+    margin-left: 1rem !important;
+    border-radius: 1.1rem !important;
+    border: none !important;
+    color: #fff !important;
+    font-family: 'Product Sans', sans-serif !important;
+    font-size: 0.875rem !important;
+    font-weight: 700 !important;
+    line-height: normal !important;
+    text-transform: uppercase !important;
+    margin-right: 0.5rem !important;
+}
+
+.fc-custom2-button {
+    border-top-left-radius: 1.1rem !important;
+    border-bottom-left-radius: 1.1rem !important;
+}
+
+.fc-custom1-button {
+    border-top-right-radius: 1.1rem !important;
+    border-bottom-right-radius: 1.1rem !important;
+}
+
+.fc-day {
+    border-color: #eee !important;
+    border-width: 0.125rem !important;
+}
+
+.fc-col-header-cell,
+.fc-scrollgrid,
+tbody {
+    border-color: transparent !important;
+}
+
+.fc-day-other {
+    background-color: #f6f6f6 !important;
+}
+
+.fc-day-today {
+    background-color: #fae7ea !important;
+}
+
+.fc-daygrid-event-dot {
+    height: 0.5rem;
+    border: 0.19788rem solid #5ecfff;
+    border-radius: 0.3125rem;
+}
+
+.fc-daygrid-day-number {
+    color: #303134;
+    font-family: 'Product Sans', sans-serif;
+    font-size: 1.1rem;
+    font-style: normal;
+    font-weight: 700;
+    line-height: normal;
+}
+
+.fc-h-event {
+    background-color: transparent;
+    border: none;
+}
+
+/* .active-button-month {
+    background-color: #ff0000;
+    color: #ffffff;
+} */
+
+.fc-daygrid-day-events {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.1rem !important;
+    margin-top: auto !important;
+}
+
+.navbar {
+    width: auto !important;
+    display: flex !important;
+    flex-direction: row !important;
+}
+
+.nav-link {
+    height: 2.5rem;
+    position: relative;
+    display: flex;
+    flex-direction: row;
+}
+
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link.active {
+    background-color: #fbece3 !important;
+}
+
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link.active > i {
+    color: #ff7c32;
+}
+
+.brand-link > span {
+    color: #2e2c34 !important;
+    font-family: 'Product Sans', sans-serif !important;
+    font-size: 1.3125rem !important;
+    font-style: normal !important;
+    font-weight: 700 !important;
+    line-height: normal !important;
+    margin-left: 1rem !important;
+}
+
+.myBtnActive {
+    background-color: #ff7c32;
+    color: #fff;
+}
+
+/* Estilos mejorados para scrollbars */
+.scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 20px;
+    border: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(107, 114, 128, 0.7);
+}
+
+.scrollbar-thumb-blue-300::-webkit-scrollbar-thumb {
+    background-color: rgba(147, 197, 253, 0.8);
+}
+
+.scrollbar-thumb-gray-300::-webkit-scrollbar-thumb {
+    background-color: rgba(209, 213, 219, 0.8);
+}
+
+.scrollbar-track-gray-100::-webkit-scrollbar-track {
+    background-color: rgba(243, 244, 246, 0.5);
+}
+
+/* Font weights personalizados para Product Sans */
+.font-300 { font-weight: 300; }
+.font-400 { font-weight: 400; }
+.font-500 { font-weight: 500; }
+.font-600 { font-weight: 600; }
+.font-700 { font-weight: 700; }
+
+/* Animaciones suaves */
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Mejoras para el chat */
+.chat-message {
+    animation: slideInChat 0.3s ease-out;
+}
+
+@keyframes slideInChat {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.chat-message.user {
+    animation: slideInChatUser 0.3s ease-out;
+}
+
+@keyframes slideInChatUser {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Sombras personalizadas */
+.shadow-soft {
+    box-shadow: 0 2px 15px -3px rgba(0, 0, 0, 0.07), 0 10px 20px -2px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-elegant {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+/* Mejoras específicas para el componente de cotizaciones */
+.quotes-column {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.quotes-column:hover {
+    transform: translateY(-2px);
+}
+
+.quote-card {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: center;
+}
+
+.quote-card:hover {
+    transform: translateY(-1px);
+}
+
+.quote-card.dragging {
+    transform: rotate(2deg) scale(1.02);
+    box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.2);
+}
+
+/* Scrollbar personalizado para las columnas de cotizaciones */
+.quotes-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 124, 50, 0.3) transparent;
+}
+
+.quotes-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.quotes-scrollbar::-webkit-scrollbar-track {
+    background: rgba(243, 244, 246, 0.5);
+    border-radius: 3px;
+}
+
+.quotes-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(255, 124, 50, 0.6), rgba(255, 107, 26, 0.6));
+    border-radius: 3px;
+    border: none;
+}
+
+.quotes-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(255, 124, 50, 0.8), rgba(255, 107, 26, 0.8));
+}
+
+/* Efectos de hover mejorados */
+.btn-hover-lift {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+}
+
+/* Ring personalizado para drag and drop */
+.ring-orange {
+    --tw-ring-color: rgba(255, 124, 50, 0.5);
+}
+
+/* Animación de pulso suave */
+.pulse-soft {
+    animation: pulseSoft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulseSoft {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.01);
+    }
+}
+
+/* Gradientes personalizados */
+.bg-gradient-warm {
+    background: linear-gradient(135deg, #fef7f0 0%, #fed4ab 100%);
+}
+
+.bg-gradient-cool {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+}
+
+/* Estados de conexión visual */
+.connection-line {
+    position: relative;
+}
+
+.connection-line::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: -12px;
+    width: 24px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255, 124, 50, 0.3), transparent);
+    transform: translateY(-50%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.connection-line.active::before {
+    opacity: 1;
+}
+
+/* Tooltip personalizado */
+.tooltip-orange {
+    background: linear-gradient(135deg, #FF7C32, #FF6B1A);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: white;
+    box-shadow: 0 4px 12px rgba(255, 124, 50, 0.3);
+}

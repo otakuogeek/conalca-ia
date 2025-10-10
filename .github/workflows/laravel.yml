@@ -1,0 +1,87 @@
+name: Laravel CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: test_db
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.3'
+        extensions: mbstring, dom, fileinfo, mysql
+        coverage: none
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Copy .env
+      working-directory: ./conalca
+      run: |
+        cp .env.example .env
+        echo "DB_CONNECTION=mysql" >> .env
+        echo "DB_HOST=127.0.0.1" >> .env
+        echo "DB_PORT=3306" >> .env
+        echo "DB_DATABASE=test_db" >> .env
+        echo "DB_USERNAME=root" >> .env
+        echo "DB_PASSWORD=password" >> .env
+    
+    - name: Install Composer Dependencies
+      working-directory: ./conalca
+      run: composer install --no-progress --no-suggest --prefer-dist --optimize-autoloader
+    
+    - name: Install NPM Dependencies
+      working-directory: ./conalca
+      run: npm ci
+    
+    - name: Generate Application Key
+      working-directory: ./conalca
+      run: php artisan key:generate
+    
+    - name: Build Assets
+      working-directory: ./conalca
+      run: npm run build
+    
+    - name: Run Migrations
+      working-directory: ./conalca
+      run: php artisan migrate --force
+    
+    - name: Run Tests
+      working-directory: ./conalca
+      run: php artisan test
+    
+    - name: Check Code Style
+      working-directory: ./conalca
+      run: vendor/bin/phpcs --standard=PSR12 app/ || true
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Deploy to Production
+      run: |
+        echo "🚀 Deploy would happen here"
+        echo "Connect via SSH and run deployment script"
+        # ssh user@server 'cd /path/to/app && ./deploy.sh'

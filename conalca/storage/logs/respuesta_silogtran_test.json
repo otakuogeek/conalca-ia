@@ -1,0 +1,30 @@
+{
+    "success": true,
+    "data": {
+        "1": [
+            {
+                "result": false,
+                "validacion": "Valor errado en el campo cliente_codigo, valor recibido: 1, valor(es) permitido(s): NO SE ENCONTRO EL CODIGO EN LA BD O EL CLIENTE ESTA INACTIVO.",
+                "item": 1,
+                "item_detalle": "",
+                "llave": "encabezado"
+            },
+            {
+                "result": false,
+                "validacion": "Tipo de dato errado en el campo itesoltra_vehiculoacompanamiento, valor recibido: 0. Revisar manual.",
+                "item": 1,
+                "item_detalle": 1,
+                "llave": "detalle_acompanamiento"
+            },
+            {
+                "result": false,
+                "validacion": "Tipo de dato errado en el campo itesoltra_acompanamientovalor, valor recibido: 0. Revisar manual.",
+                "item": 1,
+                "item_detalle": 1,
+                "llave": "detalle_acompanamiento"
+            }
+        ]
+    },
+    "msg": "OK | [ 6082351 ]",
+    "log": 6082351
+}

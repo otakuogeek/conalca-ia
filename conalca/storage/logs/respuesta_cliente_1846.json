@@ -1,0 +1,14 @@
+{
+    "success": true,
+    "data": {
+        "1": {
+            "result": true,
+            "validacion": "SE CREO LA SOLICITUD TRANSPORTE CORRECTAMENTE, ST 0312599238",
+            "item": 1,
+            "item_detalle": "NUMERO DE DETALLES: 1",
+            "llave": "encabezado"
+        }
+    },
+    "msg": "OK | [ 6082437 ]",
+    "log": 6082437
+}
