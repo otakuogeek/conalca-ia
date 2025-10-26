@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\ElevenLabsController;
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\PricingApiController;
+use App\Http\Controllers\Api\ArcangelController;
 
 /*
 |--------------------------------------------------------------------------
@@ -281,4 +282,46 @@ Route::prefix('chat')->group(function () {
     Route::post('/functions', [App\Http\Controllers\Api\ChatController::class, 'chatWithFunctions'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.functions');
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Arcangel API Routes - Integración con sistema Arcangel
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('arcangel')->group(function () {
+    // Health check - sin autenticación
+    Route::get('/health', [App\Http\Controllers\Api\ArcangelController::class, 'healthCheck'])
+        ->name('api.arcangel.health');
+    
+    // Rutas protegidas con autenticación
+    Route::middleware(['auth:sanctum'])->group(function () {
+        // Endpoints específicos de Arcangel
+        
+        // Ciudades
+        Route::get('/ciudades', [App\Http\Controllers\Api\ArcangelController::class, 'obtenerCiudades'])
+            ->name('api.arcangel.ciudades');
+        
+        // Vehículos
+        Route::get('/vehiculos/cercanos', [App\Http\Controllers\Api\ArcangelController::class, 'obtenerVehiculosCercanos'])
+            ->name('api.arcangel.vehiculos.cercanos');
+        
+        Route::get('/vehiculos/filtrar', [App\Http\Controllers\Api\ArcangelController::class, 'filtrarVehiculos'])
+            ->name('api.arcangel.vehiculos.filtrar');
+        
+        Route::get('/vehiculos/clases', [App\Http\Controllers\Api\ArcangelController::class, 'obtenerClasesDisponibles'])
+            ->name('api.arcangel.vehiculos.clases');
+        
+        // Métodos genéricos para cualquier endpoint
+        Route::get('/consultar', [App\Http\Controllers\Api\ArcangelController::class, 'consultar'])
+            ->name('api.arcangel.consultar');
+        Route::post('/crear', [App\Http\Controllers\Api\ArcangelController::class, 'crear'])
+            ->name('api.arcangel.crear');
+        Route::put('/actualizar', [App\Http\Controllers\Api\ArcangelController::class, 'actualizar'])
+            ->name('api.arcangel.actualizar');
+        Route::delete('/eliminar', [App\Http\Controllers\Api\ArcangelController::class, 'eliminar'])
+            ->name('api.arcangel.eliminar');
+        
+        // Utilidades
+        Route::post('/clear-cache', [App\Http\Controllers\Api\ArcangelController::class, 'clearCache'])
+            ->name('api.arcangel.clear-cache');
+    });
 });

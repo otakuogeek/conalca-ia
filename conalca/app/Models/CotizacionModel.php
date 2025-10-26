@@ -11,6 +11,11 @@ class CotizacionModel extends Model
 {
     use HasFactory;
 
+    /**
+     * Atributos que se deben agregar a la serialización JSON
+     */
+    protected $appends = ['producto_label'];
+
     protected $fillable = [
         'client_id',
         'pricing_id',
@@ -126,6 +131,22 @@ class CotizacionModel extends Model
     public function llamadas()
     {
         return $this->hasMany(Llamada::class, 'id_cotizacion');
+    }
+
+    /**
+     * Relación con el producto
+     */
+    public function producto()
+    {
+        return $this->belongsTo(Product::class, 'tipo_producto', 'producto_codigo');
+    }
+
+    /**
+     * Accessor para obtener el nombre del producto
+     */
+    public function getProductoLabelAttribute()
+    {
+        return $this->producto?->producto_nombre;
     }
 
 }

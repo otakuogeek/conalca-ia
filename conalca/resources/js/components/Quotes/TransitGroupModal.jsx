@@ -333,7 +333,7 @@ export default function TransitGroupModal({ open, onClose, group }) {
                       {/* datos carga */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                         <Field small label="Mercancía" value={cot.tipo_mercancia} />
-                        <Field small label="Producto" value={cot.tipo_producto} />
+                        <Field small label="Producto" value={cot.producto_label || cot.tipo_producto} />
                         <Field
                           small
                           label="Peso"

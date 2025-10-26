@@ -493,6 +493,22 @@ class DatabaseRepository:
         params = (search_param, search_param, search_param, search_param, search_param, limit)
         results = await self.db.execute_query(query, params)
         return [CotizacionModel(**row) for row in results]
+    
+    async def get_packing_name(self, codigo: int) -> Optional[str]:
+        """Obtiene el nombre del tipo de embalaje por su código"""
+        query = "SELECT Nombre FROM packing WHERE Codigo = %s LIMIT 1"
+        results = await self.db.execute_query(query, (codigo,))
+        if results and len(results) > 0:
+            return results[0].get('Nombre')
+        return None
+    
+    async def get_product_name(self, producto_codigo: int) -> Optional[str]:
+        """Obtiene el nombre del producto por su código"""
+        query = "SELECT producto_nombre FROM products WHERE producto_codigo = %s LIMIT 1"
+        results = await self.db.execute_query(query, (producto_codigo,))
+        if results and len(results) > 0:
+            return results[0].get('producto_nombre')
+        return None
 
 # Instancia global del repositorio
 repository = DatabaseRepository()

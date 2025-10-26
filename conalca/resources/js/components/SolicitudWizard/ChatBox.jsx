@@ -454,92 +454,54 @@ IMPORTANTE: Usa SIEMPRE las funciones antes de responder.
 
 /* ---------- Componente ---------- */
 export default function ChatBox() {
-  const recorderRef    = useRef(null);       
-  const chunksRef      = useRef([]);         
+  console.log('🎯 ChatBox v4.0 - REFACTORIZADO Y FUNCIONAL');
+  
+  // Estados principales
   const [messages, setMsgs] = useState([
     { role: 'assistant', content: 'Hola! Dime los detalles de tu envío y llenaré el formulario automáticamente. Ejemplos: "Envío nacional de 500kg de alimentos de Bogotá a Medellín" o "llena todo con ejemplos" para llenar todos los campos.' }
   ]);
+  const [userInput, setUserInput] = useState('');
+  const [listening, setListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Referencias
   const inputRef = useRef();
   const recognitionRef = useRef(null);
-  const [listening, setListening] = useState(false);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const messagesEndRef = useRef(null);
+  
+  // Inicializar OpenAI
+  const openai = new OpenAI({
+    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true
+  });
+  
+  console.log('✅ OpenAI inicializado correctamente');
 
-  /* helper para enviar a pantalla */
-  const pushMsg = m => setMsgs(prev => [...prev, m]);
+  // Helper para agregar mensajes
+  const pushMsg = m => {
+    console.log('➕ Agregando mensaje:', m);
+    setMsgs(prev => [...prev, m]);
+  };
+  
+  // Auto-scroll cuando hay nuevos mensajes
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  /* bucle que procesa function-calls en cascada (con normalización) */
-  // const runChat = async (history) => {
-  //   let workHistory = [
-  //     { role: 'system', content: SYSTEM_PROMPT },
-  //     ...history
-  //   ];
-
-  //   let response = await openai.chat.completions.create({
-  //     model        : 'gpt-4o-mini',
-  //     messages     : workHistory,
-  //     functions    : FUNCTIONS,
-  //     function_call: 'auto'
-  //   });
-
-  //   // Mientras siga llamando funciones
-  //   // while (response.choices?.[0]?.finish_reason === 'function_call') {
-  //   while (response.choices?.[0]?.message?.function_call) {
-  //     const assistantMsg = response.choices[0].message;
-  //     workHistory.push(assistantMsg);
-  //     setMsgs(prev => [...prev, assistantMsg]);   // ➕ guarda el assistant con function_call
-
-  //     const call = assistantMsg.function_call;
-  //     try {
-  //       const args = JSON.parse(call.arguments || '{}');
-  //       const field = normalizeKey(args.field);
-  //       const rawValue = String(args.value ?? '');
-  //       const value = normalizeValue(field, rawValue); // Nuevo: normalización de valor
-
-  //       console.log('[func-call]', field, rawValue, '=>', value);
-  //       chatBus.emit('fill-field', field, value);
-
-  //        // 1) mensaje visible para el usuario
-  //       pushMsg({ role: 'assistant', content: `He rellenado «${field}».` });
-
-  //       // 2) mensaje role:function (no visible, pero debe quedar en el historial)
-  //       const fnMsg = {
-  //         role   : 'function',
-  //         name   : call.name,
-  //         content: JSON.stringify({ field, value })
-  //       };
-  //       workHistory.push(fnMsg);       // se lo enviamos al modelo
-  //       setMsgs(prev => [...prev, fnMsg]); // y lo guardamos en messages
-  //     } catch (err) {
-  //       console.error('Error parseando argumentos de function_call', err);
-  //       workHistory.push({
-  //         role   : 'function',
-  //         name   : call?.name || 'rellenar',
-  //         content: 'error'
-  //       });
-  //     }
-
-  //     response = await openai.chat.completions.create({
-  //       model        : 'gpt-4o-mini',
-  //       messages     : workHistory,
-  //       functions    : FUNCTIONS,
-  //       function_call: 'auto'
-  //     });
-  //   }
-
-  //   // Cuando ya no hay más function_call muestra el mensaje final
-  //   const finalMsg = response.choices?.[0]?.message;
-  //   if (finalMsg) pushMsg(finalMsg);
-  // };
-
-  /* ---------- bucle que procesa function-calls en cascada (sin mostrar los intermedios) ---------- */
+  // Función REFACTORIZADA para comunicación con OpenAI
   const runChat = async (history) => {
-    console.log('🚀 runChat llamado con history:', history);
+    console.log('🚀 runChat iniciado');
+    console.log('📜 Historia recibida:', history.length, 'mensajes');
     
     let workHistory = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...history
     ];
 
-    console.log('📤 Enviando a OpenAI:', workHistory);
+    console.log('📤 Enviando a OpenAI API...');
+    console.log('🔑 API Key presente:', !!import.meta.env.VITE_OPENAI_API_KEY);
 
     // Detectar si el último mensaje del usuario contiene datos específicos
     const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
@@ -613,17 +575,43 @@ export default function ChatBox() {
     if (finalMsg) pushMsg(finalMsg);
   };
 
+  // Función REFACTORIZADA para enviar mensajes
   const send = async () => {
-    const text = inputRef.current.value.trim();
-    if (!text) return;
-    pushMsg({ role: 'user', content: text });
-    const convo = [...messages, { role: 'user', content: text }];
-    inputRef.current.value = '';
-
-    try { await runChat(convo); }
-    catch (e) {
-      console.error('OpenAI error', e);
-      pushMsg({ role: 'assistant', content: '⚠️ Error procesando tu solicitud.' });
+    const text = userInput.trim();
+    console.log('📤 ChatBox v4.0 - send() llamado');
+    console.log('📝 Texto del input:', text);
+    console.log('📊 Estado userInput:', userInput);
+    
+    if (!text) {
+      console.warn('⚠️ Texto vacío, no se envía');
+      return;
+    }
+    
+    // Agregar mensaje del usuario
+    const userMsg = { role: 'user', content: text };
+    console.log('✅ Agregando mensaje del usuario:', userMsg);
+    pushMsg(userMsg);
+    
+    // Limpiar input INMEDIATAMENTE
+    setUserInput('');
+    console.log('� Input limpiado');
+    
+    // Preparar conversación
+    const convo = [...messages, userMsg];
+    setIsProcessing(true);
+    
+    try {
+      console.log('🤖 Iniciando comunicación con OpenAI...');
+      await runChat(convo);
+      console.log('✅ Respuesta de OpenAI recibida');
+    } catch (error) {
+      console.error('❌ Error en OpenAI:', error);
+      pushMsg({ 
+        role: 'assistant', 
+        content: `⚠️ Error: ${error.message || 'No se pudo procesar tu solicitud'}` 
+      });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -662,7 +650,7 @@ export default function ChatBox() {
         const texto = Array.from(e.results)
           .map(r => r[0].transcript)
           .join('');
-        inputRef.current.value = texto;
+        setUserInput(texto); // ✅ Actualizar estado en lugar del ref
       };
 
       recognitionRef.current = rec;
@@ -696,7 +684,7 @@ export default function ChatBox() {
               language: 'es'
             });
 
-            inputRef.current.value = txt;
+            setUserInput(txt); // ✅ Actualizar estado en lugar del ref
           } catch (err) {
             console.error('Whisper error', err);
             alert('Error al transcribir audio');
@@ -757,6 +745,23 @@ export default function ChatBox() {
               {m.content}
             </div>
           ))}
+        
+        {/* Indicador de procesamiento */}
+        {isProcessing && (
+          <div className="mr-auto bg-gray-100 text-gray-800 rounded-xl px-4 py-2 max-w-md">
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></span>
+              </div>
+              <span className="text-xs text-gray-500">Procesando...</span>
+            </div>
+          </div>
+        )}
+        
+        {/* Marcador para auto-scroll */}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* FOOTER (input + mic + enviar) */}
@@ -770,15 +775,30 @@ export default function ChatBox() {
       >
         {/* INPUT */}
         <input
+          id="chat-message-input"
+          name="chat-message"
+          type="text"
+          autoComplete="off"
           ref={inputRef}
-          onKeyDown={e => e.key === 'Enter' && send()}
-          className="
+          value={userInput}
+          onChange={(e) => setUserInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !isProcessing && send()}
+          disabled={isProcessing}
+          className={`
             flex-1 text-sm sm:text-base
+            text-gray-900
             border rounded-md px-3 py-2
             focus:outline-none focus:ring-2 focus:ring-orange-500
             placeholder:text-gray-400
-          "
-          placeholder={listening ? 'Escuchando…' : 'Escribe aquí…'}
+            ${isProcessing ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
+          `}
+          placeholder={
+            isProcessing 
+              ? 'Procesando...' 
+              : listening 
+                ? 'Escuchando…' 
+                : 'Escribe aquí…'
+          }
         />
 
         {/* MIC */}
@@ -812,13 +832,16 @@ export default function ChatBox() {
         {/* ENVIAR */}
         <button
           onClick={send}
-          className="
-            flex-shrink-0 bg-orange-500 hover:bg-orange-600
-            text-white text-sm sm:text-base
+          disabled={isProcessing || !userInput.trim()}
+          className={`
+            flex-shrink-0 text-white text-sm sm:text-base
             px-4 sm:px-5 py-2 rounded-md transition-colors
-          "
+            ${isProcessing || !userInput.trim()
+              ? 'bg-gray-300 cursor-not-allowed'
+              : 'bg-orange-500 hover:bg-orange-600'}
+          `}
         >
-          Enviar
+          {isProcessing ? 'Enviando...' : 'Enviar'}
         </button>
       </div>
     </div>

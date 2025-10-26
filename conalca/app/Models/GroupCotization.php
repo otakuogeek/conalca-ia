@@ -18,7 +18,7 @@ class GroupCotization extends Model
     ];
 
     public function cotizaciones() {
-        return $this->hasMany(CotizacionModel::class, 'group_cotization_id');
+        return $this->hasMany(CotizacionModel::class, 'group_cotization_id')->with('producto');
     }
 
     public function user()

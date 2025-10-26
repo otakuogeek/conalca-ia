@@ -182,28 +182,28 @@
                                                         <div class="w-full">
                                                             <label for="nit" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Nit</label>
-                                                            <input type="text" placeholder="000000000-0"
+                                                            <input type="text" id="nit" placeholder="000000000-0"
                                                                 name="nit"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="sector" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Sector económico</label>
-                                                            <input type="text" placeholder="Agroindustria"
+                                                            <input type="text" id="sector" placeholder="Agroindustria"
                                                                 name="sector"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="address" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Dirección</label>
-                                                            <input type="text" placeholder="Cra 9 # 0 -0"
+                                                            <input type="text" id="address" placeholder="Cra 9 # 0 -0"
                                                                 name="address"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="email" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Correo</label>
-                                                            <input type="email" placeholder="correo@correo.com"
+                                                            <input type="email" id="email" placeholder="correo@correo.com"
                                                                 name="email"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
@@ -212,28 +212,28 @@
                                                         <div class="w-full">
                                                             <label for="employee_type" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Cargo</label>
-                                                            <input type="text" placeholder="Gerente"
+                                                            <input type="text" id="employee_type" placeholder="Gerente"
                                                                 name="employee_type"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="contact_name" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Nombre persona contacto</label>
-                                                            <input type="text" placeholder="Nombre persona contacto"
+                                                            <input type="text" id="contact_name" placeholder="Nombre persona contacto"
                                                                 name="contact_name"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="phone" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Teléfono</label>
-                                                            <input type="tel" placeholder="Número de teléfono"
+                                                            <input type="tel" id="phone" placeholder="Número de teléfono"
                                                                 name="phone"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                         <div class="w-full">
                                                             <label for="city" class="block text-[0.625rem] text-gray-600 mb-1">
                                                                 Ciudad</label>
-                                                            <input type="text" placeholder="Bogota" name="city"
+                                                            <input type="text" id="city" placeholder="Bogota" name="city"
                                                                 class="w-full text-[0.94rem] px-3 py-2 border border-gray-200 rounded-md" />
                                                         </div>
                                                     </div>
@@ -320,16 +320,16 @@
                                                     <h4
                                                         class="text-[#202020] text-[1.44rem] font-bold uppercase leading-normal mb-2">
                                                         Conductor</h4>
-                                                    <label for="contact_person"
+                                                    <label for="driver_contact_person"
                                                         class="text-[0.625rem] text-[#89898992] leading-[1.03125rem] font-normal">
                                                         Nombre persona contacto</label>
-                                                    <input type="text" placeholder="Nombre persona contacto"
+                                                    <input type="text" id="driver_contact_person" placeholder="Nombre persona contacto"
                                                         name="contact_person" value=""
                                                         class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989] font-normal leading-[1.03125rem]" />
-                                                    <label for="phone"
+                                                    <label for="driver_phone"
                                                         class="text-[0.625rem] text-[#89898992] leading-[1.03125rem] font-normal">
                                                         Teléfono</label>
-                                                    <input type="text" placeholder="Número de teléfono"
+                                                    <input type="text" id="driver_phone" placeholder="Número de teléfono"
                                                         name="phone"
                                                         class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989] font-normal leading-[1.03125rem]" />
                                                 </div>
@@ -347,10 +347,10 @@
                                                         </span>
                                                         Lamar
                                                     </button>
-                                                    <label for="vehicle"
+                                                    <label for="driver_vehicle"
                                                         class="text-[0.625rem] text-[#89898992] leading-[1.03125rem] font-normal self-start">
                                                         Teléfono</label>
-                                                    <input type="text" placeholder="Placa ZTC33A" name="vehicle"
+                                                    <input type="text" id="driver_vehicle" placeholder="Placa ZTC33A" name="vehicle"
                                                         class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989] font-normal leading-[1.03125rem] self-start" />
                                                 </div>
                                             </div>
@@ -432,20 +432,20 @@
                                                         <label for="origin"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Origen</label>
-                                                        <input type="text" placeholder="Bogota D.C."
+                                                        <input type="text" id="origin" placeholder="Bogota D.C."
                                                             name="origin"
                                                             value="{{ $selected_data_cotizacion->ciudad_origen }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="charge_type"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Tipo de carga</label>
-                                                        <input type="text" placeholder="Maquinaría"
+                                                        <input type="text" id="charge_type" placeholder="Maquinaría"
                                                             name="charge_type"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="product"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Producto empaque</label>
-                                                        <input type="text" placeholder="N/A" name="product"
+                                                        <input type="text" id="product" placeholder="N/A" name="product"
                                                             value="{{ $selected_data_cotizacion->tipo_embajale }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                     </div>
@@ -453,21 +453,21 @@
                                                         <label for="destinatation"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Destino</label>
-                                                        <input type="text" placeholder="Barranquilla"
+                                                        <input type="text" id="destinatation" placeholder="Barranquilla"
                                                             name="destinatation"
                                                             value="{{ $selected_data_cotizacion->ciudad_destino }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="weight"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Peso</label>
-                                                        <input type="text" placeholder="12 Toneladas"
+                                                        <input type="text" id="weight" placeholder="12 Toneladas"
                                                             name="weight"
                                                             value="{{ $selected_data_cotizacion->peso_mercancia }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="quantity"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Cantidad de vehículos</label>
-                                                        <input type="number" placeholder="1" name="quantity"
+                                                        <input type="number" id="quantity" placeholder="1" name="quantity"
                                                             value="{{ $selected_data_cotizacion->cantidad_vh }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                     </div>
@@ -480,40 +480,40 @@
                                                             <label for="vehicle_type"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Tipo de vehículo</label>
-                                                            <input type="text" placeholder="Cama baja"
+                                                            <input type="text" id="vehicle_type" placeholder="Cama baja"
                                                                 name="vehicle_type"
                                                                 value="{{ $selected_data_cotizacion->clase_vehiculo }}"
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] text-[#898989]" />
                                                             <label for="vehicle_type_2"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Tipo de vehículo</label>
-                                                            <input type="text" placeholder="Cama baja"
+                                                            <input type="text" id="vehicle_type_2" placeholder="Cama baja"
                                                                 name="vehicle_type_2"
                                                                 value="{{ $selected_data_cotizacion->clase_vehiculo }}"
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] text-[#898989]" />
                                                             <label for="car_id"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Placas</label>
-                                                            <input type="text" placeholder="AOS43R" name="car_id"
+                                                            <input type="text" id="car_id" placeholder="AOS43R" name="car_id"
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] text-[#898989]" />
                                                         </div>
                                                         <div class="flex flex-col items-start justify-start">
                                                             <label for="body_work"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Carrocería</label>
-                                                            <input type="text" placeholder="N/A" name="body_work"
+                                                            <input type="text" id="body_work" placeholder="N/A" name="body_work"
                                                                 value="{{ $selected_data_cotizacion->tipo_carroceria }}"
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] text-[#898989]" />
                                                             <label for="car_model"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Modelo</label>
-                                                            <input type="text" placeholder="2005" name="car_model"
+                                                            <input type="text" id="car_model" placeholder="2005" name="car_model"
                                                                 value="{{ $selected_data_cotizacion->tipo_carroceria }}"
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] text-[#898989]" />
-                                                            <label for="driver"
+                                                            <label for="cargo_driver"
                                                                 class="w-full text-[0.625rem] text-[#89898983]">
                                                                 Conductor</label>
-                                                            <input type="text" name="driver" value=""
+                                                            <input type="text" id="cargo_driver" name="driver" value=""
                                                                 class="text-[0.94rem] -mt-[0.15rem] mb-[0.12rem] md:mb-0 text-[#898989]" />
                                                         </div>
                                                     </div>
@@ -525,12 +525,12 @@
                                                         <label for="rate"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Tipo de tarifa</label>
-                                                        <input type="text" placeholder="N/A" name="rate"
+                                                        <input type="text" id="rate" placeholder="N/A" name="rate"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="merchandise_value"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Valor de la mercancía</label>
-                                                        <input type="text" placeholder="$300.000.000"
+                                                        <input type="text" id="merchandise_value" placeholder="$300.000.000"
                                                             name="merchandise_value"
                                                             value="{{ $selected_data_cotizacion->valor_declarado }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
@@ -539,13 +539,13 @@
                                                         <label for="client_rate"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Tarifa cliente</label>
-                                                        <input type="text" placeholder="N/A" name="client_rate"
+                                                        <input type="text" id="client_rate" placeholder="N/A" name="client_rate"
                                                             value="{{ $selected_data_cotizacion->tipo_mercancia }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
                                                         <label for="insurance"
                                                             class="w-full text-[0.625rem] text-[#89898983]">
                                                             Seguro mercancía</label>
-                                                        <input type="text" placeholder="$300.000.000"
+                                                        <input type="text" id="insurance" placeholder="$300.000.000"
                                                             name="insurance"
                                                             value="{{ $selected_data_cotizacion->seguro }}"
                                                             class="text-[0.94rem] -mt-[0.15rem] mb-[0.44rem] text-[#898989]" />
@@ -691,8 +691,8 @@
                                                                 class="text-[#898989] text-sm font-normal leading-normal mt-[1.06rem]">
                                                                 Selecciona el tipo de modalidad para la cotización
                                                             </h6>
-                                                            <select wire:model="type_business" name="client_type"
-                                                                id="client_type"
+                                                            <select wire:model="type_business" name="business_type"
+                                                                id="business_type"
                                                                 class="w-full md:w-[21.5rem] h-[3.625rem] rounded-lg bg-white border border-solid border-[#dcdcdc] mt-1
                                                                        text-[#898989] text-xl font-normal leading-normal px-3">
                                                                 <option value="" disabled>Seleccione el tipo de negocio

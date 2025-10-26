@@ -1,0 +1,542 @@
+[
+  {
+    "name": "get_llamadas",
+    "description": "Obtiene todas las llamadas telefónicas con paginación opcional. Permite filtrar por estado y obtener información detallada de cada llamada.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Número de página para paginación",
+          "default": 1,
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Cantidad máxima de resultados por página",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    }
+  },
+  {
+    "name": "get_llamada_by_id",
+    "description": "Obtiene información detallada de una llamada específica usando su ID único. Incluye estado, fecha, observaciones y datos del contacto.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "llamada_id": {
+          "type": "integer",
+          "description": "ID único de la llamada a consultar",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "llamada_id"
+      ]
+    }
+  },
+  {
+    "name": "create_llamada",
+    "description": "Crea una nueva llamada telefónica en el sistema. Registra el número de teléfono del contacto, número de destino, estado inicial y observaciones opcionales.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "telefono": {
+          "type": "string",
+          "description": "Número de teléfono del contacto",
+          "pattern": "^[+]?[0-9\\s\\-\\(\\)]+$"
+        },
+        "numero_destino": {
+          "type": "string",
+          "description": "Número de teléfono al que se está llamando",
+          "pattern": "^[+]?[0-9\\s\\-\\(\\)]+$"
+        },
+        "estado": {
+          "type": "string",
+          "description": "Estado inicial de la llamada",
+          "default": "pendiente",
+          "enum": [
+            "pendiente",
+            "en_curso",
+            "completada",
+            "fallida",
+            "reagendada"
+          ]
+        },
+        "observaciones": {
+          "type": "string",
+          "description": "Observaciones o notas adicionales sobre la llamada"
+        }
+      },
+      "required": [
+        "telefono"
+      ]
+    }
+  },
+  {
+    "name": "update_llamada_status",
+    "description": "Actualiza el estado de una llamada existente. Útil para hacer seguimiento del progreso de las llamadas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "llamada_id": {
+          "type": "integer",
+          "description": "ID de la llamada a actualizar",
+          "minimum": 1
+        },
+        "new_status": {
+          "type": "string",
+          "description": "Nuevo estado de la llamada",
+          "enum": [
+            "pendiente",
+            "en_curso",
+            "completada",
+            "fallida",
+            "reagendada"
+          ]
+        }
+      },
+      "required": [
+        "llamada_id",
+        "new_status"
+      ]
+    }
+  },
+  {
+    "name": "get_cotizaciones",
+    "description": "Obtiene lista de cotizaciones de vehículos disponibles. Incluye modelos, precios y especificaciones técnicas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": "integer",
+          "description": "Número de página para paginación",
+          "default": 1,
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Cantidad máxima de cotizaciones por página",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    }
+  },
+  {
+    "name": "get_vehicle_by_telefono_conductor",
+    "description": "Busca vehículos asociados a un conductor específico usando su número de teléfono. Devuelve información del vehículo, conductor y propietario.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "telefono": {
+          "type": "string",
+          "description": "Número de teléfono del conductor",
+          "pattern": "^[+]?[0-9\\s\\-\\(\\)]+$"
+        }
+      },
+      "required": [
+        "telefono"
+      ]
+    }
+  },
+  {
+    "name": "process_elevenlabs_event",
+    "description": "Procesa eventos de webhook de ElevenLabs como inicio/fin de conversación, cambios de estado de llamada, etc.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "description": "Tipo de evento de ElevenLabs",
+          "enum": [
+            "conversation_started",
+            "conversation_ended",
+            "call_status_change",
+            "user_input",
+            "agent_response"
+          ]
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "ID único de la conversación"
+        },
+        "phone_number": {
+          "type": "string",
+          "description": "Número de teléfono asociado al evento"
+        },
+        "status": {
+          "type": "string",
+          "description": "Estado de la llamada (para eventos de cambio de estado)"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Duración en segundos (para eventos de fin de conversación)"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Metadatos adicionales del evento"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    }
+  },
+  {
+    "name": "get_chofer_by_placa",
+    "description": "Obtiene información del chofer y vehículo mediante el número de placa. Devuelve datos completos del conductor, propietario, poseedor, especificaciones del vehículo y el ID único del registro.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "placa": {
+          "type": "string",
+          "description": "Número de placa del vehículo (ej: ABC123, XYZ789)",
+          "pattern": "^[A-Z0-9]{3,8}$"
+        }
+      },
+      "required": [
+        "placa"
+      ]
+    }
+  },
+  {
+    "name": "get_llamadas_by_telefono",
+    "description": "Busca todas las llamadas asociadas a un número de teléfono específico. Puede buscar tanto en el campo telefono (origen) como en numero_destino (destino).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "telefono": {
+          "type": "string",
+          "description": "Número de teléfono a buscar (formato: 3123456789, +573123456789, etc.)",
+          "pattern": "^[+]?[0-9\\s\\-\\(\\)]+$"
+        },
+        "tipo_busqueda": {
+          "type": "string",
+          "description": "Tipo de búsqueda a realizar",
+          "enum": [
+            "origen",
+            "destino",
+            "ambos"
+          ],
+          "default": "ambos"
+        }
+      },
+      "required": [
+        "telefono"
+      ]
+    }
+  },
+  {
+    "name": "activate_conversation",
+    "description": "Activa o actualiza el estado de una llamada usando el conversation_id de ElevenLabs. Permite cambiar el estado y agregar notas a la conversación.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "description": "ID de conversación de ElevenLabs (ej: conv_430tk697vm3e47b1rre6r6e3rzb)",
+          "pattern": "^conv_[a-zA-Z0-9]+$"
+        },
+        "new_status": {
+          "type": "string",
+          "description": "Nuevo estado de la conversación",
+          "enum": [
+            "pendiente",
+            "en_curso",
+            "completada",
+            "fallida",
+            "reagendada"
+          ],
+          "default": "en_curso"
+        },
+        "call_notes": {
+          "type": "string",
+          "description": "Notas adicionales sobre la conversación o llamada"
+        },
+        "sip_call_id": {
+          "type": "string",
+          "description": "ID de llamada SIP de ElevenLabs (opcional)"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ]
+    }
+  },
+  {
+    "name": "generate_transport_offer",
+    "description": "Obtiene información detallada del viaje (chofer, origen, destino, producto, embalaje, fecha) usando el conversation_id. Retorna solo los datos estructurados sin mensajes predeterminados para que la IA los use libremente.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "description": "ID de conversación de ElevenLabs para consultar datos de la llamada",
+          "pattern": "^conv_[a-zA-Z0-9]+$"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ]
+    }
+  },
+  {
+    "name": "save_driver_decision",
+    "description": "Guarda la decisión del chofer sobre la oferta de transporte. Registra si acepta (1) o rechaza (0) la propuesta junto con el ID del chofer y cotización.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cotizacion_model_id": {
+          "type": "integer",
+          "description": "ID de la cotización/modelo asociado",
+          "minimum": 1
+        },
+        "driver_id": {
+          "type": "integer",
+          "description": "ID del chofer/conductor",
+          "minimum": 1
+        },
+        "decision": {
+          "type": "integer",
+          "description": "Decisión del chofer: 1 para aceptar, 0 para rechazar",
+          "enum": [
+            0,
+            1
+          ]
+        }
+      },
+      "required": [
+        "cotizacion_model_id",
+        "driver_id",
+        "decision"
+      ]
+    }
+  },
+  {
+    "name": "get_group_cotizations",
+    "description": "Obtiene una lista de grupos de cotizaciones con paginación",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "Cantidad máxima de resultados por página",
+          "default": 100,
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Número de registros a omitir",
+          "default": 0,
+          "minimum": 0
+        }
+      }
+    }
+  },
+  {
+    "name": "get_group_cotizations_by_user",
+    "description": "Obtiene grupos de cotizaciones asociados a un usuario específico",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "user_id": {
+          "type": "integer",
+          "description": "ID del usuario",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "user_id"
+      ]
+    }
+  },
+  {
+    "name": "get_cotizacion_with_group_info",
+    "description": "Obtiene una cotización específica con información completa del grupo asociado",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cotizacion_id": {
+          "type": "integer",
+          "description": "ID de la cotización",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "cotizacion_id"
+      ]
+    }
+  },
+  {
+    "name": "get_cotizations_by_group",
+    "description": "Obtiene todas las cotizaciones que pertenecen a un grupo específico",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "description": "ID del grupo de cotizaciones",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "group_id"
+      ]
+    }
+  },
+  {
+    "name": "get_pricings",
+    "description": "Obtiene una lista de precios con paginación",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "Cantidad máxima de resultados por página",
+          "default": 100,
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Número de registros a omitir",
+          "default": 0,
+          "minimum": 0
+        }
+      }
+    }
+  },
+  {
+    "name": "get_pricing_by_vehicle_type",
+    "description": "Obtiene precios filtrados por tipo de vehículo",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "vehicle_type": {
+          "type": "string",
+          "description": "Tipo de vehículo para filtrar precios"
+        }
+      },
+      "required": [
+        "vehicle_type"
+      ]
+    }
+  },
+  {
+    "name": "search_pricings_by_route",
+    "description": "Busca precios por ruta específica (origen y destino)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "description": "Ciudad o lugar de origen"
+        },
+        "destination": {
+          "type": "string",
+          "description": "Ciudad o lugar de destino"
+        }
+      }
+    }
+  },
+  {
+    "name": "get_cotizacion_with_pricing_info",
+    "description": "Obtiene una cotización específica con información completa de precios",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cotizacion_id": {
+          "type": "integer",
+          "description": "ID de la cotización",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "cotizacion_id"
+      ]
+    }
+  },
+  {
+    "name": "precioviaje",
+    "description": "Obtiene el precio específico de un viaje consultando la cotización y su precio asociado. Ideal para responder cuando el chofer pregunta el valor del viaje.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cotizacion_id": {
+          "type": "integer",
+          "description": "ID de la cotización para consultar el precio del viaje",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "cotizacion_id"
+      ]
+    }
+  },
+  {
+    "name": "zinformacion",
+    "description": "Consultar información operativa completa de órdenes con campos estáticos de cotizacion_models. Excluye información sensible como datos del cliente, porcentajes de ganancia y decisiones posteriores a llamadas.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "orden_id": {
+          "type": "integer",
+          "description": "ID específico de la orden a consultar",
+          "minimum": 1
+        },
+        "search": {
+          "type": "string",
+          "description": "Texto para buscar en ciudades, productos o mercancías"
+        },
+        "show_all": {
+          "type": "boolean",
+          "description": "Mostrar todas las órdenes (limitadas por limit)",
+          "default": false
+        },
+        "show_stats": {
+          "type": "boolean",
+          "description": "Mostrar estadísticas de completitud de campos obligatorios",
+          "default": false
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Límite de resultados para búsquedas",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50
+        }
+      }
+    }
+  },
+  {
+    "name": "llenar_formulario",
+    "description": "Llena automáticamente un formulario de cotización usando datos de una orden existente. Convierte la información técnica en valores de formulario listos para usar por el agente de IA.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "orden_id": {
+          "type": "integer",
+          "description": "ID de la orden para obtener datos del formulario",
+          "minimum": 1
+        },
+        "tipo_formulario": {
+          "type": "string",
+          "description": "Tipo de formulario a llenar",
+          "enum": [
+            "cotizacion",
+            "pre_solicitud",
+            "despacho"
+          ],
+          "default": "cotizacion"
+        }
+      },
+      "required": [
+        "orden_id"
+      ]
+    }
+  }
+]

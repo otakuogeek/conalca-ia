@@ -341,7 +341,7 @@ class ConalcaMCPServer:
                                 },
                                 {
                                     "name": "generate_transport_offer",
-                                    "description": "Genera una oferta personalizada de transporte usando el conversation_id. Consulta la información del chofer y cotización para crear un mensaje comercial completo para Natalia Álvarez de CONALCA.",
+                                    "description": "Obtiene información detallada del viaje (chofer, origen, destino, producto, embalaje, fecha) usando el conversation_id. Retorna solo los datos estructurados sin mensajes predeterminados para que la IA los use libremente.",
                                     "inputSchema": {
                                         "type": "object",
                                         "properties": {
@@ -841,7 +841,7 @@ class ConalcaMCPServer:
                         },
                         {
                             "name": "generate_transport_offer",
-                            "description": "Genera una oferta personalizada de transporte usando el conversation_id. Consulta la información del chofer y cotización para crear un mensaje comercial completo para Natalia Álvarez de CONALCA.",
+                            "description": "Obtiene información detallada del viaje (chofer, origen, destino, producto, embalaje, fecha) usando el conversation_id. Retorna solo los datos estructurados sin mensajes predeterminados para que la IA los use libremente.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
@@ -1439,8 +1439,20 @@ class ConalcaMCPServer:
                         "llamada_id": llamada.id_llamada
                     }, ensure_ascii=False)
                 
-                # Generar el mensaje personalizado según el formato solicitado
-                mensaje_oferta = self._generar_mensaje_transporte(nombre_chofer, cotizacion)
+                # Obtener nombres de tipo_embalaje y tipo_producto
+                tipo_embalaje_nombre = cotizacion.tipo_embajale
+                tipo_producto_nombre = cotizacion.tipo_producto
+                
+                # Si son IDs numéricos, consultar los nombres
+                if cotizacion.tipo_embajale and cotizacion.tipo_embajale.isdigit():
+                    nombre_embalaje = await repository.get_packing_name(int(cotizacion.tipo_embajale))
+                    if nombre_embalaje:
+                        tipo_embalaje_nombre = nombre_embalaje
+                
+                if cotizacion.tipo_producto and cotizacion.tipo_producto.isdigit():
+                    nombre_producto = await repository.get_product_name(int(cotizacion.tipo_producto))
+                    if nombre_producto:
+                        tipo_producto_nombre = nombre_producto
                 
                 result = {
                     "success": True,
@@ -1450,17 +1462,20 @@ class ConalcaMCPServer:
                         "id_cotizacion": llamada.id_cotizacion,
                         "chofer_id": llamada.chofer_id
                     },
-                    "chofer_nombre": nombre_chofer,
-                    "cotizacion_datos": {
-                        "ciudad_origen": cotizacion.ciudad_origen,
-                        "ciudad_destino": cotizacion.ciudad_destino,
-                        "peso_mercancia": cotizacion.peso_mercancia,
-                        "tipo_embalaje": cotizacion.tipo_embajale,
-                        "tipo_producto": cotizacion.tipo_producto,
-                        "fecha_hora_descargue_cargue": cotizacion.fecha_hora_descargue_cargue
+                    "chofer": {
+                        "nombre": nombre_chofer,
+                        "chofer_id": llamada.chofer_id
                     },
-                    "mensaje_oferta": mensaje_oferta,
-                    "mensaje_para_natalia": f"Aquí tienes el mensaje personalizado para el chofer {nombre_chofer}. Puedes usarlo directamente en tu conversación."
+                    "viaje": {
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "peso_kg": cotizacion.peso_mercancia,
+                        "tipo_embalaje": tipo_embalaje_nombre,
+                        "tipo_producto": tipo_producto_nombre,
+                        "fecha_hora": cotizacion.fecha_hora_descargue_cargue,
+                        "cantidad": cotizacion.cantidad,
+                        "vehiculo_requerido": cotizacion.vehiculo_requerido
+                    }
                 }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2164,7 +2179,7 @@ class ConalcaMCPServer:
         
         return mensaje
 
-    def _generar_mensaje_transporte(self, nombre_chofer: str, cotizacion) -> str:
+    def _generar_mensaje_transporte(self, nombre_chofer: str, cotizacion, tipo_embalaje_nombre: str = None, tipo_producto_nombre: str = None) -> str:
         """Genera el mensaje personalizado de oferta de transporte para Natalia Álvarez"""
         
         # Formatear el nombre del chofer
@@ -2174,8 +2189,10 @@ class ConalcaMCPServer:
         ciudad_origen = cotizacion.ciudad_origen or "ciudad de origen"
         ciudad_destino = cotizacion.ciudad_destino or "ciudad de destino"
         peso_mercancia = cotizacion.peso_mercancia or "peso no especificado"
-        tipo_embalaje = cotizacion.tipo_embajale or "embalaje estándar"
-        tipo_producto = cotizacion.tipo_producto or "producto"
+        
+        # Usar los nombres proporcionados o valores por defecto
+        tipo_embalaje = tipo_embalaje_nombre or cotizacion.tipo_embajale or "embalaje estándar"
+        tipo_producto = tipo_producto_nombre or cotizacion.tipo_producto or "producto"
         fecha_original = cotizacion.fecha_hora_descargue_cargue or "fecha por coordinar"
         
         # Convertir fecha a formato completo con nombre del mes
