@@ -286,6 +286,18 @@ Route::prefix('chat')->group(function () {
     Route::post('/functions', [App\Http\Controllers\Api\ChatController::class, 'chatWithFunctions'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.functions');
+        
+    Route::post('/quote', [App\Http\Controllers\Api\ChatController::class, 'quoteChat'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.quote');
+        
+    Route::get('/messages/{threadId}', [App\Http\Controllers\Api\ChatController::class, 'getMessages'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.messages');
+        
+    Route::get('/run/{threadId}/{runId}', [App\Http\Controllers\Api\ChatController::class, 'checkRunStatus'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.run.status');
 });
 
 // ═══════════════════════════════════════════════════════════════

@@ -141,22 +141,24 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       setMessages(prev => [...prev, newMessage]);
       setInputMessage('');
       
-      // Aquí iría la lógica para procesar el mensaje con IA
-      // Por ahora simulamos una respuesta
-      setTimeout(() => {
-        const aiResponse = {
-          role: 'assistant',
-          text: 'Gracias por la información. Estoy procesando los datos de tu envío.',
-          created_at: new Date().toLocaleTimeString()
-        };
-        setMessages(prev => [...prev, aiResponse]);
-        setLoading(false);
-      }, 1000);
-      
+      // La lógica real se maneja en ChatModal
+      // Este método es para mantener compatibilidad
+      setLoading(false);
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('Error en handleSendMessage:', error);
       setLoading(false);
     }
+  };
+
+  const updateMessagesFromAPI = (apiMessages) => {
+    console.log('Actualizando mensajes desde API:', apiMessages);
+    // Convertir formato de API a formato del componente
+    const formattedMessages = apiMessages.map(msg => ({
+      role: msg.role,
+      text: msg.text,
+      created_at: msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : new Date().toLocaleTimeString()
+    }));
+    setMessages(formattedMessages);
   };
 
   const handleSelectPricing = (routeIndex, pricing) => {
@@ -316,6 +318,8 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           setQuoteData={setQuoteData}
           clientData={clientData}
           loading={loading}
+          typeBusiness={clientData.typeBusiness || 'dta'}
+          onUpdateMessages={updateMessagesFromAPI}
         />
       )}
 

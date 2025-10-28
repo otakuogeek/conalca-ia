@@ -14,10 +14,16 @@ const ChatModal = ({
   quoteData,
   setQuoteData,
   clientData,
-  loading 
+  loading,
+  typeBusiness = 'dta', // Añadir typeBusiness con valor por defecto
+  onUpdateMessages // Callback para actualizar mensajes desde API
 }) => {
   const conversationRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [threadId, setThreadId] = useState(null);
+  const [isSending, setIsSending] = useState(false);
+  const [currentRunId, setCurrentRunId] = useState(null);
+  const [pollingInterval, setPollingInterval] = useState(null);
 
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
@@ -37,9 +43,145 @@ const ChatModal = ({
     }
   }, [messages]);
 
-  const handleSendMessage = () => {
-    if (inputMessage.trim()) {
-      onSendMessage(inputMessage.trim());
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [pollingInterval]);
+
+  const startPollingRun = (threadId, runId) => {
+    console.log('🔄 Iniciando polling para run:', runId);
+    setCurrentRunId(runId);
+    
+    const pollRun = async () => {
+      try {
+        const response = await fetch(`/api/chat/run/${threadId}/${runId}`, {
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          if (data.data.status === 'completed_with_data' && data.data.quote_data) {
+            console.log('✅ Datos de cotización extraídos:', data.data.quote_data);
+            
+            // Actualizar quoteData con los datos extraídos
+            if (setQuoteData && Array.isArray(data.data.quote_data)) {
+              setQuoteData(data.data.quote_data);
+            }
+            
+            // Detener polling
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              setPollingInterval(null);
+            }
+            setCurrentRunId(null);
+            
+            // Obtener mensajes actualizados
+            setTimeout(async () => {
+              try {
+                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
+                  headers: {
+                    'Accept': 'application/json'
+                  }
+                });
+                
+                const messagesData = await messagesResponse.json();
+                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+                  onUpdateMessages(messagesData.data.messages);
+                }
+              } catch (error) {
+                console.error('Error obteniendo mensajes después de polling:', error);
+              }
+            }, 1000);
+          }
+          // Si status es 'in_progress', continúa el polling
+        }
+      } catch (error) {
+        console.error('Error en polling run:', error);
+      }
+    };
+    
+    // Polling cada 2 segundos
+    const interval = setInterval(pollRun, 2000);
+    setPollingInterval(interval);
+    
+    // Primera verificación inmediata
+    pollRun();
+  };
+
+  const handleSendMessage = async () => {
+    if (inputMessage.trim() && !isSending && clientData.clientId && !currentRunId) {
+      const messageText = inputMessage.trim();
+      setIsSending(true);
+      
+      // Limpiar el input inmediatamente
+      setInputMessage('');
+      
+      try {
+        const response = await fetch('/api/chat/quote', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            message: messageText,
+            thread_id: threadId,
+            client_id: clientData.clientId,
+            type_business: typeBusiness
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+          // Actualizar thread_id si es nuevo
+          if (data.data.thread_id && !threadId) {
+            setThreadId(data.data.thread_id);
+          }
+          
+          // Llamar a onSendMessage con el mensaje del usuario para actualizar la UI
+          onSendMessage(messageText);
+          
+          // Iniciar polling para verificar el estado del run y extraer datos
+          if (data.data.run_id) {
+            startPollingRun(data.data.thread_id, data.data.run_id);
+          }
+          
+        } else if (data.error === 'processing_active') {
+          // Hay un procesamiento activo, mostrar mensaje y continuar polling del run activo
+          console.log('⏳ Procesamiento activo detectado, continuando polling...');
+          
+          // Restaurar el mensaje para que el usuario pueda reintentarlo después
+          setInputMessage(messageText);
+          
+          // Si hay un run activo, comenzar polling
+          if (data.data && data.data.active_run_id) {
+            startPollingRun(data.data.thread_id, data.data.active_run_id);
+          }
+          
+          // Mostrar mensaje informativo (opcional)
+          // TODO: Puedes añadir una notificación toast aquí
+          
+        } else {
+          console.error('Error en chat:', data.error);
+          // Restaurar el mensaje en caso de error
+          setInputMessage(messageText);
+        }
+      } catch (error) {
+        console.error('Error enviando mensaje:', error);
+        // Restaurar el mensaje en caso de error
+        setInputMessage(messageText);
+      } finally {
+        setIsSending(false);
+      }
     }
   };
 
@@ -163,18 +305,38 @@ const ChatModal = ({
           <div className="mb-6">
             <div className="flex items-center space-x-3 mb-4">
               <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
+                {currentRunId ? (
+                  <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                )}
               </div>
-              <h4 className="text-base font-600 text-gray-600 product-sans">Validando Información</h4>
+              <h4 className="text-base font-600 text-gray-600 product-sans">
+                {currentRunId ? 'Procesando información...' : 'Validando Información'}
+              </h4>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
               <div 
-                className="bg-orange-400 h-2 rounded-full transition-all duration-500" 
-                style={{ width: `${quoteData.length > 0 ? '70' : '30'}%` }}
+                className={`h-2 rounded-full transition-all duration-500 ${
+                  currentRunId ? 'bg-orange-400 animate-pulse' : 'bg-orange-400'
+                }`}
+                style={{ width: `${quoteData.length > 0 ? '70' : currentRunId ? '50' : '30'}%` }}
               ></div>
             </div>
+            {currentRunId && (
+              <div className="text-xs text-orange-600 product-sans flex items-center">
+                <svg className="w-3 h-3 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                </svg>
+                Extrayendo datos de cotización...
+              </div>
+            )}
           </div>
 
           {/* Información de Rutas */}
@@ -319,46 +481,73 @@ const ChatModal = ({
           {/* Área de Input */}
           {!canProceed && (
             <div className="border-t border-gray-200 p-6 bg-white">
-              <div className="space-y-4">
-                <div className="relative">
-                  <textarea 
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyDown={handleKeyPress}
-                    placeholder="Describe tu envío: origen, destino, peso, tipo de carga..."
-                    className="w-full px-4 py-3 pr-20 text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200 product-sans"
-                    rows="3"
-                  />
-                  
-                  {/* Botones de Acción */}
-                  <div className="absolute bottom-3 right-3 flex items-center space-x-2">
-                    <SpeechRecognition
-                      onResult={handleVoiceResult}
-                      isRecording={isRecording}
-                      setIsRecording={setIsRecording}
-                    />
-
-                    <button 
-                      type="button"
-                      onClick={handleSendMessage}
-                      disabled={!inputMessage.trim() || loading}
-                      className="w-8 h-8 flex items-center justify-center rounded-full bg-orange-400 hover:bg-orange-500 transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Enviar mensaje"
-                    >
-                      {loading ? (
-                        <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
-                        </svg>
-                      )}
-                    </button>
+              {!clientData.clientId ? (
+                <div className="text-center py-4">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <p className="text-yellow-800 text-sm product-sans">
+                      <span className="font-semibold">⚠️ Cliente requerido:</span> Selecciona un cliente para comenzar la conversación.
+                    </p>
                   </div>
                 </div>
-              </div>
+              ) : currentRunId ? (
+                <div className="text-center py-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-blue-800 text-sm product-sans flex items-center justify-center">
+                      <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                      </svg>
+                      <span className="font-semibold">Procesando tu mensaje anterior...</span> Espera un momento para enviar el siguiente.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="relative">
+                    <textarea 
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      onKeyDown={handleKeyPress}
+                      placeholder="Describe tu envío: origen, destino, peso, tipo de carga..."
+                      className="w-full px-4 py-3 pr-20 text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200 product-sans"
+                      rows="3"
+                      disabled={isSending}
+                    />
+                    
+                    {/* Botones de Acción */}
+                    <div className="absolute bottom-3 right-3 flex items-center space-x-2">
+                      <SpeechRecognition
+                        onResult={handleVoiceResult}
+                        isRecording={isRecording}
+                        setIsRecording={setIsRecording}
+                      />
+
+                      <button 
+                        type="button"
+                        onClick={handleSendMessage}
+                        disabled={!inputMessage.trim() || isSending || loading || !clientData.clientId || currentRunId}
+                        className="w-8 h-8 flex items-center justify-center rounded-full bg-orange-400 hover:bg-orange-500 transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={
+                          !clientData.clientId ? "Cliente requerido" : 
+                          currentRunId ? "Procesando respuesta anterior..." : 
+                          "Enviar mensaje"
+                        }
+                      >
+                        {(isSending || loading || currentRunId) ? (
+                          <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -395,7 +584,9 @@ ChatModal.propTypes = {
   quoteData: PropTypes.array.isRequired,
   setQuoteData: PropTypes.func.isRequired,
   clientData: PropTypes.object.isRequired,
-  loading: PropTypes.bool
+  loading: PropTypes.bool,
+  typeBusiness: PropTypes.string,
+  onUpdateMessages: PropTypes.func
 };
 
 export default ChatModal;
