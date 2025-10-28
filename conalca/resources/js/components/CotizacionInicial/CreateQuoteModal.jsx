@@ -1,10 +1,33 @@
 // resources/js/components/CotizacionInicial/CreateQuoteModal.jsx
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 
 const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
   const [errors, setErrors] = useState({});
+  const [searchResults, setSearchResults] = useState([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef(null);
+
+  // Cerrar dropdown cuando se hace clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setShowSearchResults(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Debug: Monitor clientData changes
+  useEffect(() => {
+    console.log('CreateQuoteModal - clientData changed:', clientData);
+  }, [clientData]);
 
   const handleChange = (field, value) => {
     setClientData(prev => ({
@@ -19,10 +42,70 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
         [field]: null
       }));
     }
+
+    // Si es el campo de búsqueda, ejecutar búsqueda
+    if (field === 'search' && value.length >= 3) {
+      searchClients(value);
+    } else if (field === 'search' && value.length < 3) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+    }
+  };
+
+  const searchClients = async (searchTerm) => {
+    setSearchLoading(true);
+    try {
+      const response = await fetch(`/api/clients/search?q=${encodeURIComponent(searchTerm)}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const clients = data.clients || [];
+        setSearchResults(clients);
+        setShowSearchResults(clients.length > 0);
+      }
+    } catch (error) {
+      console.error('Error buscando clientes:', error);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const selectClient = (client) => {
+    console.log('CreateQuoteModal - selectClient - cliente seleccionado:', client);
+    
+    const updatedClientData = {
+      ...clientData,
+      search: client.documento,
+      clientId: client.id,
+      clientName: client.cliente,
+      documentClient: client.documento,
+      clientCompanyName: client.cliente,
+      clientLocation: client.ciudad,
+      clientPhoneNumbers: client.telefono,
+      clientPersonalCell: client.telefono, // usar telefono como celular si no hay campo específico
+      clientEmail: client.email,
+      clientAddress: client.direccion,
+      clientBranchOffice: client.branch_office || '',
+      clientSalesRepresentative: client.vendedor_nombre || '',
+      clientContact: client.contacto,
+      clientCargo: client.cargo
+    };
+    
+    console.log('CreateQuoteModal - selectClient - datos actualizados:', updatedClientData);
+    setClientData(updatedClientData);
+    setShowSearchResults(false);
+    setSearchResults([]);
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    
+    console.log('CreateQuoteModal - handleSubmit - clientData antes de enviar:', clientData);
     
     // Validación básica
     const newErrors = {};
@@ -35,6 +118,7 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
       return;
     }
 
+    console.log('CreateQuoteModal - Enviando datos:', clientData);
     onSubmit(clientData);
   };
 
@@ -69,17 +153,63 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
               </div>
 
               {/* Buscador de empresa */}
-              <div className="space-y-2 sm:space-y-3">
+              <div className="space-y-2 sm:space-y-3 relative" ref={searchRef}>
                 <label className="block text-[#898989] text-xs sm:text-sm font-medium">
                   Buscar la empresa en tus registros u omite esta opción.
                 </label>
-                <input 
-                  type="search"
-                  value={clientData.search || ''}
-                  onChange={(e) => handleChange('search', e.target.value)}
-                  placeholder="Buscar empresa" 
-                  className="w-full h-12 sm:h-14 rounded-lg bg-white border border-[#dcdcdc] px-3 sm:px-4 text-gray-700 text-sm sm:text-base placeholder-gray-400 focus:border-[#FF7C32] focus:ring-2 focus:ring-[#FF7C32] focus:ring-opacity-20 transition-all"
-                />
+                <div className="relative">
+                  <input 
+                    type="search"
+                    value={clientData.search || ''}
+                    onChange={(e) => handleChange('search', e.target.value)}
+                    placeholder="Buscar empresa" 
+                    className="w-full h-12 sm:h-14 rounded-lg bg-white border border-[#dcdcdc] px-3 sm:px-4 text-gray-700 text-sm sm:text-base placeholder-gray-400 focus:border-[#FF7C32] focus:ring-2 focus:ring-[#FF7C32] focus:ring-opacity-20 transition-all"
+                  />
+                  {searchLoading && (
+                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#FF7C32]"></div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Dropdown de resultados de búsqueda */}
+                {showSearchResults && searchResults.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {searchResults.map((client) => (
+                      <div
+                        key={client.id}
+                        onClick={() => selectClient(client)}
+                        className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                      >
+                        <div className="flex flex-col">
+                          <span className="font-medium text-gray-900 text-sm">{client.cliente}</span>
+                          <span className="text-xs text-gray-500">NIT: {client.documento}</span>
+                          {client.ciudad && (
+                            <span className="text-xs text-gray-500">{client.ciudad}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Mostrar información del cliente seleccionado */}
+                {clientData.clientId && (
+                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center mb-2">
+                      <svg className="w-4 h-4 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                      </svg>
+                      <span className="text-sm font-medium text-green-800">Cliente encontrado</span>
+                    </div>
+                    <div className="text-xs text-green-700">
+                      <p><strong>Empresa:</strong> {clientData.clientName}</p>
+                      <p><strong>NIT:</strong> {clientData.documentClient}</p>
+                      {clientData.clientLocation && <p><strong>Ciudad:</strong> {clientData.clientLocation}</p>}
+                      {clientData.clientEmail && <p><strong>Email:</strong> {clientData.clientEmail}</p>}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Tipo de cliente */}
@@ -184,6 +314,19 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                   <option value="general">CARGA GENERAL</option>
                 </select>
               </div>
+
+              {/* DEBUG: Estado actual de clientData */}
+              {clientData.clientId && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+                  <p><strong>DEBUG - Datos que se enviarán:</strong></p>
+                  <p>clientId: {clientData.clientId}</p>
+                  <p>clientName: {clientData.clientName}</p>
+                  <p>documentClient: {clientData.documentClient}</p>
+                  <p>clientLocation: {clientData.clientLocation}</p>
+                  <p>clientEmail: {clientData.clientEmail}</p>
+                  <p>clientContact: {clientData.clientContact}</p>
+                </div>
+              )}
 
               {/* Botón de envío */}
               <div className="pt-4 sm:pt-6">

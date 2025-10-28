@@ -186,11 +186,51 @@ const PricingModal = ({
                   <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></div>
                   <span className="text-sm font-500 text-orange-500 product-sans">Configurando Pricing</span>
                 </div>
-                <h3 className="text-lg font-600 text-gray-700 product-sans mb-1">Creación de cotización</h3>
-                <p className="text-sm font-500 text-gray-500 product-sans">
-                  {clientData.documentClient || '-'} | <span className="font-bold uppercase">{clientData.clientName || '-'}</span>
-                </p>
-                <p className="text-xs text-gray-400 product-sans mt-1">
+                <h3 className="text-lg font-600 text-gray-700 product-sans mb-1">
+                  {clientData.clientName || clientData.search || 'Creación de cotización'}
+                </h3>
+                <div className="space-y-1">
+                  {clientData.clientId ? (
+                    <>
+                      <p className="text-sm font-500 text-gray-500 product-sans">
+                        <span className="inline-flex items-center space-x-2">
+                          <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">CLIENTE VINCULADO</span>
+                          <span>NIT: {clientData.documentClient}</span>
+                        </span>
+                      </p>
+                      {clientData.clientLocation && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                          </svg>
+                          {clientData.clientLocation}
+                        </p>
+                      )}
+                      {clientData.clientEmail && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                          </svg>
+                          {clientData.clientEmail}
+                        </p>
+                      )}
+                      {clientData.clientSalesRepresentative && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                          </svg>
+                          Representante: {clientData.clientSalesRepresentative}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm font-500 text-gray-500 product-sans">
+                      {clientData.documentClient || '-'} | <span className="font-bold uppercase">{clientData.clientName || 'Cliente nuevo'}</span>
+                    </p>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 product-sans mt-2">
                   {new Date().toLocaleDateString('es-ES', { 
                     year: 'numeric', 
                     month: 'long', 

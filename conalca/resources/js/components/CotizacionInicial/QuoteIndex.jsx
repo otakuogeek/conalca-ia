@@ -39,12 +39,28 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   // Datos del cliente y configuración
   const [clientData, setClientData] = useState({
     search: '',
+    clientId: null,
     clientName: '',
     documentClient: '',
+    clientCompanyName: '',
+    clientLocation: '',
+    clientPhoneNumbers: '',
+    clientPersonalCell: '',
+    clientEmail: '',
+    clientAddress: '',
+    clientBranchOffice: '',
+    clientSalesRepresentative: '',
+    clientContact: '',
+    clientCargo: '',
     clientType: '',
     operationType: '',
     typeBusiness: ''
   });
+
+  // Debug: Monitor clientData changes
+  useEffect(() => {
+    console.log('QuoteIndex - clientData changed:', clientData);
+  }, [clientData]);
 
   // Efectos
   useEffect(() => {
@@ -89,7 +105,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     switch (modalType) {
       case 'create':
         setShowCreateModal(false);
-        resetCreateFlow();
+        // No resetear datos al cerrar modal de creación, solo al cancelar completamente
         break;
       case 'chat':
         setShowChatModal(false);
@@ -160,8 +176,19 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     setPorcentajeGlobal(17);
     setClientData({
       search: '',
+      clientId: null,
       clientName: '',
       documentClient: '',
+      clientCompanyName: '',
+      clientLocation: '',
+      clientPhoneNumbers: '',
+      clientPersonalCell: '',
+      clientEmail: '',
+      clientAddress: '',
+      clientBranchOffice: '',
+      clientSalesRepresentative: '',
+      clientContact: '',
+      clientCargo: '',
       clientType: '',
       operationType: '',
       typeBusiness: ''
@@ -172,8 +199,15 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     handleOpenModal('create');
   };
 
+  const handleCancelCreate = () => {
+    handleCloseModal('create');
+    resetCreateFlow();
+  };
+
   const handleSubmitClient = (data) => {
+    console.log('QuoteIndex - handleSubmitClient - data recibida:', data);
     setClientData(data);
+    console.log('QuoteIndex - clientData actualizado:', data);
     handleCloseModal('create');
     handleOpenModal('chat');
   };
@@ -263,7 +297,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
       {showCreateModal && (
         <CreateQuoteModal
-          onClose={() => handleCloseModal('create')}
+          onClose={handleCancelCreate}
           onSubmit={handleSubmitClient}
           clientData={clientData}
           setClientData={setClientData}

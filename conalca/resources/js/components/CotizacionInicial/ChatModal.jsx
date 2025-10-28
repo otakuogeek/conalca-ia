@@ -19,6 +19,17 @@ const ChatModal = ({
   const conversationRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
 
+  // Debug: Log clientData para verificar qué información llega
+  useEffect(() => {
+    console.log('🔍 ChatModal - clientData completo:', clientData);
+    console.log('🆔 clientData.clientId:', clientData.clientId);
+    console.log('📋 clientData.clientName:', clientData.clientName);
+    console.log('📄 clientData.documentClient:', clientData.documentClient);
+    console.log('🏢 clientData.clientLocation:', clientData.clientLocation);
+    console.log('📧 clientData.clientEmail:', clientData.clientEmail);
+    console.log('👤 clientData.clientContact:', clientData.clientContact);
+  }, [clientData]);
+
   useEffect(() => {
     // Auto-scroll al final de la conversación
     if (conversationRef.current) {
@@ -87,11 +98,51 @@ const ChatModal = ({
                   <span className="text-sm font-500 text-green-500 product-sans">En Proceso</span>
                 </div>
                 <h3 className="text-lg font-600 text-gray-700 product-sans mb-1">
-                  {clientData.search || 'Nueva Cotización'}
+                  {clientData.clientName || clientData.search || 'Nueva Cotización'}
                 </h3>
-                <p className="text-sm font-500 text-gray-500 product-sans uppercase tracking-wide">
-                  {clientData.clientName || 'Cliente'}
-                </p>
+                
+                {/* DEBUG: Mostrar información de debug temporalmente */}
+                <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                  <p><strong>DEBUG clientId:</strong> {clientData.clientId || 'null'}</p>
+                  <p><strong>DEBUG clientName:</strong> {clientData.clientName || 'vacío'}</p>
+                  <p><strong>DEBUG documentClient:</strong> {clientData.documentClient || 'vacío'}</p>
+                  <p><strong>DEBUG search:</strong> {clientData.search || 'vacío'}</p>
+                </div>
+                
+                <div className="space-y-1">
+                  {clientData.clientId ? (
+                    <>
+                      <p className="text-sm font-500 text-gray-500 product-sans">
+                        <span className="inline-flex items-center space-x-2">
+                          <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">CLIENTE VINCULADO</span>
+                          <span>NIT: {clientData.documentClient}</span>
+                        </span>
+                      </p>
+                      {clientData.clientLocation && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <span className="mr-1">📍</span>
+                          {clientData.clientLocation}
+                        </p>
+                      )}
+                      {clientData.clientEmail && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <span className="mr-1">✉️</span>
+                          {clientData.clientEmail}
+                        </p>
+                      )}
+                      {clientData.clientContact && (
+                        <p className="text-xs text-gray-500 product-sans flex items-center">
+                          <span className="mr-1">👤</span>
+                          {clientData.clientContact}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm font-500 text-gray-500 product-sans uppercase tracking-wide">
+                      {clientData.clientName || 'Cliente'}
+                    </p>
+                  )}
+                </div>
                 <p className="text-xs text-gray-400 product-sans mt-1">
                   {new Date().toLocaleDateString('es-ES', { 
                     year: 'numeric', 

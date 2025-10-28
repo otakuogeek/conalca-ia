@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Cache;
 class ArcangelService
 {
     protected string $baseUrl;
-    protected string $apiKey;
+    protected ?string $apiKey;
     protected int $timeout;
     protected int $retryTimes;
     protected int $retryDelay;
@@ -24,8 +24,8 @@ class ArcangelService
             : config('arcangel.base_url');
             
         $this->apiKey = $mode === 'development'
-            ? config('arcangel.api_key_dev')
-            : config('arcangel.api_key');
+            ? config('arcangel.api_key_dev', '')
+            : config('arcangel.api_key', '');
             
         $this->timeout = config('arcangel.timeout', 30);
         $this->retryTimes = config('arcangel.retry_times', 3);
