@@ -30,7 +30,7 @@ const components = [
     { id: 'notification-list', component: <NotificationList /> },
     { id: 'my-goal-progress', component: <MyGoalProgress /> },
     { id:'sac-cotizations', component:<SacCotizationView/> },
-    {id:'solicitud-wizard', component:<Wizard/>},
+    // Wizard component removed from global rendering as it's used conditionally in ChannelColumnContent
 ];
 
 components.forEach(({ id, component }) => {

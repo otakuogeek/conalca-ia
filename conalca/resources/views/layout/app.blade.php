@@ -343,7 +343,7 @@
                         </div>
                         {{-- cotizaciones --}}
                         <div>
-                            <a href="{{ route('quotes.show') }}"
+                            <a href="{{ route('quotes.react-test') }}"
                                 class="nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                 text-base font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
                                 role="button" aria-haspopup="true" data-button="quotes"
@@ -979,7 +979,7 @@
 
                             <!-- cotizaciones -->
                             <div x-data="{ isActive: false, open: false }">
-                                <a href="{{ route('quotes.show') }}"
+                                <a href="{{ route('quotes.react-test') }}"
                                     class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md dark:text-light hover:bg-[#FBEBE2]  dark:hover:bg-[#FBEBE2] "
                                     :class="{ 'bg-[#FBEBE2]  dark:bg-[#FBEBE2] ': isActive || open }" role="button"
                                     aria-haspopup="true" :aria-expanded="(open || isActive) ? 'true' : 'false'">

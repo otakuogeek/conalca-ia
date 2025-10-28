@@ -499,6 +499,30 @@ Route::group(['middleware' => 'auth'], function () {
         return view('quotes.show', compact('quotes'));
     })->name('quotes.show');
 
+    // Nueva ruta específica para React con nombre más claro
+    Route::get('/cotizacion', function () {
+        $quotes = CotizacionModel::get();
+        return view('quotes.react-show', compact('quotes'));
+    })->name('quotes.react-test');
+
+    // Ruta original con Livewire (disponible como backup)
+    Route::get('/quotes-livewire', function () {
+        $quotes = CotizacionModel::get();
+        return view('quotes.show', compact('quotes'));
+    })->name('quotes.livewire-show');
+
+    // Nueva ruta específica para React con nombre más claro
+    Route::get('/cotizacion-react', function () {
+        $quotes = CotizacionModel::get();
+        return view('quotes.react-show', compact('quotes'));
+    })->name('quotes.react-specific');
+
+    // Nueva ruta para la versión React de cotizaciones
+    Route::get('/quotes-react', function () {
+        $quotes = CotizacionModel::get();
+        return view('quotes.react-show', compact('quotes'));
+    })->name('quotes.react-show');
+
     Route::get('/llamadas', function (Request $request) {
         $groupCotizationId = $request->get('group_id');
         $cotizacionId = $request->get('cotizacion_id');

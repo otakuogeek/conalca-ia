@@ -15,7 +15,8 @@ export default defineConfig({
                 "resources/js/dropzone.js",
                 "resources/js/editCalendarModal.js",
                 "resources/js/analysis.js",
-                'resources/js/app.jsx'
+                'resources/js/app.jsx',
+                'resources/js/quotes-react.jsx'
             ],
             refresh: true,
         }),
