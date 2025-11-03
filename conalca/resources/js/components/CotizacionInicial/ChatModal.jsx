@@ -24,6 +24,7 @@ const ChatModal = ({
   const [isSending, setIsSending] = useState(false);
   const [currentRunId, setCurrentRunId] = useState(null);
   const [pollingInterval, setPollingInterval] = useState(null);
+  const [processingMessage, setProcessingMessage] = useState(null); // Mensaje de "Pensando..."
 
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
@@ -56,8 +57,41 @@ const ChatModal = ({
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
     
+    let pollAttempts = 0;
+    const maxPollAttempts = 30; // Máximo 60 segundos de polling (30 * 2 segundos)
+    
     const pollRun = async () => {
       try {
+        pollAttempts++;
+        
+        // Si superamos el máximo de intentos, detener polling
+        if (pollAttempts > maxPollAttempts) {
+          console.warn('⏰ Timeout de polling alcanzado, deteniendo...');
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            setPollingInterval(null);
+          }
+          setCurrentRunId(null);
+          setProcessingMessage(null);
+          
+          // Intentar obtener mensajes finales
+          try {
+            const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
+              headers: {
+                'Accept': 'application/json'
+              }
+            });
+            
+            const messagesData = await messagesResponse.json();
+            if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+              onUpdateMessages(messagesData.data.messages);
+            }
+          } catch (error) {
+            console.error('Error obteniendo mensajes después de timeout:', error);
+          }
+          return;
+        }
+        
         const response = await fetch(`/api/chat/run/${threadId}/${runId}`, {
           headers: {
             'Accept': 'application/json'
@@ -66,6 +100,8 @@ const ChatModal = ({
         
         const data = await response.json();
         
+        console.log(`🔍 Polling intento ${pollAttempts}/${maxPollAttempts}, status:`, data.data?.status);
+        
         if (data.success) {
           if (data.data.status === 'completed_with_data' && data.data.quote_data) {
             console.log('✅ Datos de cotización extraídos:', data.data.quote_data);
@@ -73,6 +109,41 @@ const ChatModal = ({
             // Actualizar quoteData con los datos extraídos
             if (setQuoteData && Array.isArray(data.data.quote_data)) {
               setQuoteData(data.data.quote_data);
+              
+              // Guardar las rutas en la base de datos automáticamente
+              if (clientData.groupId) {
+                console.log('💾 Guardando rutas en la base de datos...');
+                try {
+                  const saveResponse = await fetch('/api/chat/quote/save-routes', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                      'Accept': 'application/json',
+                      'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                      group_id: clientData.groupId,
+                      routes: data.data.quote_data
+                    })
+                  });
+                  
+                  const saveResult = await saveResponse.json();
+                  if (saveResult.success) {
+                    console.log('✅ Rutas guardadas exitosamente:', saveResult.data);
+                  } else {
+                    console.error('❌ Error guardando rutas:', saveResult.error);
+                    // Mostrar error al usuario si es necesario
+                    if (saveResult.error.includes('permisos')) {
+                      console.warn('⚠️ Problema de permisos al guardar rutas');
+                    }
+                  }
+                } catch (saveError) {
+                  console.error('❌ Error de red guardando rutas:', saveError);
+                  // No bloquear el flujo si hay error guardando rutas
+                }
+              }
             }
             
             // Detener polling
@@ -81,6 +152,72 @@ const ChatModal = ({
               setPollingInterval(null);
             }
             setCurrentRunId(null);
+            
+            // Quitar mensaje de "Pensando..."
+            setProcessingMessage(null);
+            
+            // Obtener mensajes actualizados
+            setTimeout(async () => {
+              try {
+                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
+                  headers: {
+                    'Accept': 'application/json'
+                  }
+                });
+                
+                const messagesData = await messagesResponse.json();
+                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+                  onUpdateMessages(messagesData.data.messages);
+                }
+              } catch (error) {
+                console.error('Error obteniendo mensajes después de polling:', error);
+              }
+            }, 1000);
+          } else if (data.data.status === 'in_progress') {
+            // Si status es 'in_progress', continúa el polling
+            console.log('🔄 Run aún en progreso, continuando polling...');
+          } else if (data.data.status === 'completed') {
+            // Run completado sin datos específicos, detener polling y actualizar mensajes
+            console.log('🏁 Run completado sin datos, actualizando mensajes...');
+            
+            // Detener polling
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              setPollingInterval(null);
+            }
+            setCurrentRunId(null);
+            
+            // Quitar mensaje de "Pensando..."
+            setProcessingMessage(null);
+            
+            // Obtener mensajes actualizados inmediatamente
+            try {
+              const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
+                headers: {
+                  'Accept': 'application/json'
+                }
+              });
+              
+              const messagesData = await messagesResponse.json();
+              if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+                onUpdateMessages(messagesData.data.messages);
+              }
+            } catch (error) {
+              console.error('Error obteniendo mensajes después de completar:', error);
+            }
+          } else {
+            // Si es cualquier otro estado (finished, completed, etc.), detener polling
+            console.log('🏁 Run completado sin datos específicos, deteniendo polling');
+            
+            // Detener polling
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              setPollingInterval(null);
+            }
+            setCurrentRunId(null);
+            
+            // Quitar mensaje de "Pensando..."
+            setProcessingMessage(null);
             
             // Obtener mensajes actualizados
             setTimeout(async () => {
@@ -100,7 +237,6 @@ const ChatModal = ({
               }
             }, 1000);
           }
-          // Si status es 'in_progress', continúa el polling
         }
       } catch (error) {
         console.error('Error en polling run:', error);
@@ -120,8 +256,29 @@ const ChatModal = ({
       const messageText = inputMessage.trim();
       setIsSending(true);
       
+      // Mostrar mensaje del usuario inmediatamente con estado "Enviado"
+      const userMessage = {
+        role: 'user',
+        text: messageText,
+        created_at: new Date().toLocaleTimeString(),
+        status: 'sent' // Estado enviado
+      };
+      
+      // Actualizar mensajes inmediatamente para mostrar el mensaje del usuario
+      onSendMessage(messageText);
+      
       // Limpiar el input inmediatamente
       setInputMessage('');
+      
+      // Agregar mensaje de "Pensando..." del asistente
+      const thinkingMessage = {
+        role: 'assistant',
+        text: 'Pensando...',
+        created_at: new Date().toLocaleTimeString(),
+        status: 'thinking',
+        isTemporary: true
+      };
+      setProcessingMessage(thinkingMessage);
       
       try {
         const response = await fetch('/api/chat/quote', {
@@ -148,9 +305,6 @@ const ChatModal = ({
             setThreadId(data.data.thread_id);
           }
           
-          // Llamar a onSendMessage con el mensaje del usuario para actualizar la UI
-          onSendMessage(messageText);
-          
           // Iniciar polling para verificar el estado del run y extraer datos
           if (data.data.run_id) {
             startPollingRun(data.data.thread_id, data.data.run_id);
@@ -168,18 +322,19 @@ const ChatModal = ({
             startPollingRun(data.data.thread_id, data.data.active_run_id);
           }
           
-          // Mostrar mensaje informativo (opcional)
-          // TODO: Puedes añadir una notificación toast aquí
-          
         } else {
           console.error('Error en chat:', data.error);
           // Restaurar el mensaje en caso de error
           setInputMessage(messageText);
+          // Quitar mensaje de "Pensando..."
+          setProcessingMessage(null);
         }
       } catch (error) {
         console.error('Error enviando mensaje:', error);
         // Restaurar el mensaje en caso de error
         setInputMessage(messageText);
+        // Quitar mensaje de "Pensando..."
+        setProcessingMessage(null);
       } finally {
         setIsSending(false);
       }
@@ -189,7 +344,10 @@ const ChatModal = ({
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      // Solo permitir envío si no hay procesamiento activo
+      if (!isSending && !currentRunId && !processingMessage && clientData.clientId && inputMessage.trim()) {
+        handleSendMessage();
+      }
     }
   };
 
@@ -244,13 +402,7 @@ const ChatModal = ({
                   {clientData.clientName || clientData.search || 'Nueva Cotización'}
                 </h3>
                 
-                {/* DEBUG: Mostrar información de debug temporalmente */}
-                <div className="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                  <p><strong>DEBUG clientId:</strong> {clientData.clientId || 'null'}</p>
-                  <p><strong>DEBUG clientName:</strong> {clientData.clientName || 'vacío'}</p>
-                  <p><strong>DEBUG documentClient:</strong> {clientData.documentClient || 'vacío'}</p>
-                  <p><strong>DEBUG search:</strong> {clientData.search || 'vacío'}</p>
-                </div>
+              
                 
                 <div className="space-y-1">
                   {clientData.clientId ? (
@@ -440,31 +592,65 @@ const ChatModal = ({
             className="flex-1 p-6 overflow-y-auto scrollbar-thin bg-gray-50" 
             style={{ maxHeight: '500px' }}
           >
-            {messages.length > 0 ? (
-              messages.map((message, index) => (
-                <div 
-                  key={index} 
-                  className={`mb-4 ${message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} chat-message`}
-                >
-                  <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm ${
-                    message.role === 'user' 
-                      ? 'bg-orange-400 text-white rounded-br-sm' 
-                      : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
-                  }`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs opacity-75 product-sans">
-                        {message.role === 'user' ? 'Tú' : 'Asistente'}
-                      </span>
-                      <span className="text-xs opacity-75 product-sans">
-                        {message.created_at}
-                      </span>
+            {messages.length > 0 || processingMessage ? (
+              <>
+                {messages.map((message, index) => (
+                  <div 
+                    key={index} 
+                    className={`mb-4 ${message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} chat-message`}
+                  >
+                    <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm ${
+                      message.role === 'user' 
+                        ? 'bg-orange-400 text-white rounded-br-sm' 
+                        : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
+                    }`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs opacity-75 product-sans">
+                          {message.role === 'user' ? 'Tú' : 'Asistente'}
+                        </span>
+                        <div className="flex items-center space-x-1">
+                          <span className="text-xs opacity-75 product-sans">
+                            {message.created_at}
+                          </span>
+                          {message.role === 'user' && message.status === 'sent' && (
+                            <div className="flex items-center">
+                              <svg className="w-3 h-3 text-white opacity-75" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"></path>
+                              </svg>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-sm product-sans leading-relaxed">
+                        {message.text}
+                      </p>
                     </div>
-                    <p className="text-sm product-sans leading-relaxed">
-                      {message.text}
-                    </p>
                   </div>
-                </div>
-              ))
+                ))}
+                
+                {/* Mensaje de "Pensando..." */}
+                {processingMessage && (
+                  <div className="mb-4 flex justify-start chat-message">
+                    <div className="max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm bg-white text-gray-800 border border-gray-200 rounded-bl-sm">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs opacity-75 product-sans">Asistente</span>
+                        <span className="text-xs opacity-75 product-sans">
+                          {processingMessage.created_at}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <svg className="w-4 h-4 text-orange-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                        </svg>
+                        <p className="text-sm product-sans leading-relaxed text-orange-600">
+                          {processingMessage.text}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -472,9 +658,28 @@ const ChatModal = ({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
                   </svg>
                 </div>
-                <p className="text-gray-500 product-sans">
-                  ¡Hola! Estoy aquí para ayudarte a crear tu cotización. Comparte los detalles de tu envío.
+                <p className="text-gray-600 product-sans mb-4 font-500">
+                  ¡Hola! Soy tu asistente inteligente para cotizaciones de transporte.
                 </p>
+                <p className="text-gray-500 product-sans text-sm mb-6">
+                  Comparte los detalles de tu envío y yo me encargaré del resto.
+                </p>
+                
+                {/* Ejemplos de mensajes propositivos */}
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 max-w-md mx-auto">
+                  <p className="text-orange-800 text-xs product-sans font-500 mb-2">💡 Ejemplos de mensajes:</p>
+                  <div className="space-y-2 text-xs text-orange-700 product-sans">
+                    <div className="bg-white rounded px-2 py-1 border border-orange-100">
+                      "Envío de 500kg de Bogotá a Medellín"
+                    </div>
+                    <div className="bg-white rounded px-2 py-1 border border-orange-100">
+                      "Necesito transportar 10 pallets de Cali a Barranquilla"
+                    </div>
+                    <div className="bg-white rounded px-2 py-1 border border-orange-100">
+                      "Mercancía refrigerada 200kg, origen Cartagena"
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -490,16 +695,37 @@ const ChatModal = ({
                     </p>
                   </div>
                 </div>
-              ) : currentRunId ? (
+              ) : currentRunId || processingMessage ? (
                 <div className="text-center py-4">
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <p className="text-blue-800 text-sm product-sans flex items-center justify-center">
+                    <p className="text-blue-800 text-sm product-sans flex items-center justify-center mb-3">
                       <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
                       </svg>
-                      <span className="font-semibold">Procesando tu mensaje anterior...</span> Espera un momento para enviar el siguiente.
+                      <span className="font-semibold">
+                        {processingMessage ? 'Generando respuesta...' : 'Procesando tu mensaje anterior...'}
+                      </span>
                     </p>
+                    <p className="text-blue-600 text-xs product-sans mb-3">
+                      Espera un momento para enviar el siguiente mensaje.
+                    </p>
+                    
+                    {/* Botón para forzar limpieza del estado */}
+                    <button
+                      onClick={() => {
+                        console.log('🧹 Limpiando estado de procesamiento forzadamente');
+                        if (pollingInterval) {
+                          clearInterval(pollingInterval);
+                          setPollingInterval(null);
+                        }
+                        setCurrentRunId(null);
+                        setProcessingMessage(null);
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
+                    >
+                      🔄 Reiniciar Chat
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -509,10 +735,10 @@ const ChatModal = ({
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
                       onKeyDown={handleKeyPress}
-                      placeholder="Describe tu envío: origen, destino, peso, tipo de carga..."
+                      placeholder="Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
                       className="w-full px-4 py-3 pr-20 text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200 product-sans"
                       rows="3"
-                      disabled={isSending}
+                      disabled={isSending || currentRunId || processingMessage}
                     />
                     
                     {/* Botones de Acción */}
@@ -526,15 +752,15 @@ const ChatModal = ({
                       <button 
                         type="button"
                         onClick={handleSendMessage}
-                        disabled={!inputMessage.trim() || isSending || loading || !clientData.clientId || currentRunId}
+                        disabled={!inputMessage.trim() || isSending || loading || !clientData.clientId || currentRunId || processingMessage}
                         className="w-8 h-8 flex items-center justify-center rounded-full bg-orange-400 hover:bg-orange-500 transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                         title={
                           !clientData.clientId ? "Cliente requerido" : 
-                          currentRunId ? "Procesando respuesta anterior..." : 
+                          currentRunId || processingMessage ? "Procesando respuesta anterior..." : 
                           "Enviar mensaje"
                         }
                       >
-                        {(isSending || loading || currentRunId) ? (
+                        {(isSending || loading || currentRunId || processingMessage) ? (
                           <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>

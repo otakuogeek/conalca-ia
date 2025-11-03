@@ -303,6 +303,39 @@ Route::prefix('chat')->group(function () {
     Route::post('/quote/create-group', [App\Http\Controllers\Api\QuoteCreationController::class, 'createQuoteGroup'])
         ->middleware('auth')
         ->name('api.quote.create.group');
+        
+    // Rutas para manejo de rutas individuales de cotización
+    Route::post('/quote/save-routes', [App\Http\Controllers\Api\QuoteRoutesController::class, 'saveQuoteRoutes'])
+        ->middleware('auth')
+        ->name('api.quote.save.routes');
+        
+    Route::get('/quote/routes/{groupId}', [App\Http\Controllers\Api\QuoteRoutesController::class, 'getQuoteRoutes'])
+        ->middleware('auth')
+        ->name('api.quote.get.routes');
+        
+    // Debug endpoint para verificar rutas (temporal)
+    Route::get('/quote/debug/{groupId}', function($groupId) {
+        $group = \App\Models\GroupCotization::find($groupId);
+        if (!$group) {
+            return response()->json(['error' => 'Grupo no encontrado']);
+        }
+        
+        $routes = $group->cotizaciones()->get();
+        return response()->json([
+            'group_id' => $groupId,
+            'group_reference' => $group->reference,
+            'routes_count' => $routes->count(),
+            'routes' => $routes->map(function($r) {
+                return [
+                    'id' => $r->id,
+                    'origen' => $r->ciudad_origen,
+                    'destino' => $r->ciudad_destino,
+                    'peso' => $r->peso_mercancia,
+                    'estado' => $r->estado
+                ];
+            })
+        ]);
+    })->name('api.quote.debug');
 });
 
 // ═══════════════════════════════════════════════════════════════

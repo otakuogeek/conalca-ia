@@ -267,6 +267,16 @@ class ChatController extends Controller
                         'status' => 'completed_with_data'
                     ]
                 ]);
+            } else if ($runData === 'finished') {
+                // El run está completado pero sin tool calls
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'thread_id' => $threadId,
+                        'run_id' => $runId,
+                        'status' => 'completed'
+                    ]
+                ]);
             } else {
                 // El run aún está en proceso o no hay datos
                 return response()->json([

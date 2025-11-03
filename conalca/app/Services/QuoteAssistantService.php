@@ -263,24 +263,90 @@ class QuoteAssistantService
             'messages_count' => count($messages)
         ]);
 
-        // Definir el prompt del sistema para cotizaciones
-        $systemPrompt = 'Eres un asistente especializado en cotizaciones de transporte en Colombia. Tu objetivo es ayudar a completar formularios de cotización extrayendo información del usuario.
+        // Definir el prompt del sistema para cotizaciones propositivas
+        $systemPrompt = 'Eres un asistente de cotizaciones PROPOSITIVO y EFICIENTE especializado en transporte en Colombia. 
 
-        Campos disponibles para rellenar:
-        1. origen_codigo: Código de ciudad de origen (número)
-        2. origen: Nombre de ciudad de origen  
-        3. destino_codigo: Código de ciudad de destino (número)
-        4. destino: Nombre de ciudad de destino
-        5. fecha_recogida: Fecha de recogida (YYYY-MM-DD)
-        6. fecha_entrega: Fecha de entrega (YYYY-MM-DD)
-        7. tipo_mercancia: Tipo de mercancía
-        8. peso: Peso en kilogramos (número)
-        9. volumen: Volumen en metros cúbicos (número)
-        10. valor_mercancia: Valor de la mercancía (número)
-        11. remitente_codigo: Código de remitente (número)
-        12. observaciones: Observaciones adicionales
+PRINCIPIOS CLAVE:
+1. NO hagas preguntas de confirmación ("¿está seguro?", "¿quiere que...?")
+2. ASUME parámetros razonables cuando la información sea parcial
+3. PROPÓN acciones automáticas basadas en la información disponible
+4. SÉ RESOLUTIVO - responde con soluciones, no con dudas
 
-        Responde de manera clara y usa la función "rellenar_campo" cuando identifiques información específica.';
+INFORMACIÓN DE CONTEXTO DISPONIBLE:
+- Los parámetros automáticos (Candado Satelital, Jen Set, Combustible, Kit derrames, Pictogramas) ya están configurados según el tipo de servicio
+- El cliente y tipo de negocio ya están vinculados
+- El sistema está optimizado para cotizaciones rápidas
+
+COMPORTAMIENTO ESPERADO:
+- Si mencionan una ciudad, asume que es origen/destino según el contexto
+- Si mencionan peso sin unidad, asume kilogramos
+- Si falta información secundaria, usa valores estándar de la industria
+- Propón interpretaciones automáticas de información ambigua
+- Evita repreguntas - mejor asumir y aclarar después si es necesario
+
+CAMPOS DISPONIBLES:
+1. ciudad_origen: Ciudad de origen del envío
+2. ciudad_destino: Ciudad de destino del envío  
+3. peso_mercancia: Peso en kilogramos
+4. cantidad: Cantidad de unidades/bultos
+5. tipo_embajale: Tipo de embalaje (caja, pallet, etc.)
+6. tipo_producto: Tipo de producto/mercancía
+7. vehiculo_requerido: Tipo de vehículo necesario
+8. valor_declarado: Valor declarado de la mercancía
+
+RESPUESTAS INTELIGENTES:
+- "Perfecto, configurando envío de [origen] a [destino]..."
+- "Entendido, procesando [peso]kg desde [ciudad]..."
+- "Basándome en tu solicitud, sugiero..."
+- "Detecté que necesitas [servicio], aplicando configuración automática..."
+
+USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques información de envío.';
+
+        // Definir las funciones disponibles para extracción de datos
+        $functions = [
+            [
+                'name' => 'extract_quote_data',
+                'description' => 'Extrae y estructura datos de cotización del mensaje del usuario',
+                'parameters' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'ciudad_origen' => [
+                            'type' => 'string',
+                            'description' => 'Ciudad de origen del envío'
+                        ],
+                        'ciudad_destino' => [
+                            'type' => 'string', 
+                            'description' => 'Ciudad de destino del envío'
+                        ],
+                        'peso_mercancia' => [
+                            'type' => 'string',
+                            'description' => 'Peso de la mercancía (incluir unidad si está disponible)'
+                        ],
+                        'cantidad' => [
+                            'type' => 'string',
+                            'description' => 'Cantidad de unidades o bultos'
+                        ],
+                        'tipo_embajale' => [
+                            'type' => 'string',
+                            'description' => 'Tipo de embalaje (caja, pallet, bulto, etc.)'
+                        ],
+                        'tipo_producto' => [
+                            'type' => 'string',
+                            'description' => 'Tipo de producto o mercancía'
+                        ],
+                        'vehiculo_requerido' => [
+                            'type' => 'string',
+                            'description' => 'Tipo de vehículo requerido'
+                        ],
+                        'valor_declarado' => [
+                            'type' => 'string',
+                            'description' => 'Valor declarado de la mercancía'
+                        ]
+                    ],
+                    'required' => []
+                ]
+            ]
+        ];
 
         // Agregar prompt del sistema si no existe
         $hasSystemPrompt = collect($messages)->where('role', 'system')->isNotEmpty();
@@ -291,33 +357,6 @@ class QuoteAssistantService
             ]);
         }
 
-        // Definir las funciones disponibles
-        $functions = [
-            [
-                'name' => 'rellenar_campo',
-                'description' => 'Rellena un campo específico del formulario de cotización',
-                'parameters' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'field' => [
-                            'type' => 'string',
-                            'description' => 'El nombre del campo a rellenar',
-                            'enum' => [
-                                'origen_codigo', 'origen', 'destino_codigo', 'destino',
-                                'fecha_recogida', 'fecha_entrega', 'tipo_mercancia',
-                                'peso', 'volumen', 'valor_mercancia', 'remitente_codigo', 'observaciones'
-                            ]
-                        ],
-                        'value' => [
-                            'type' => 'string',
-                            'description' => 'El valor para rellenar en el campo'
-                        ]
-                    ],
-                    'required' => ['field', 'value']
-                ]
-            ]
-        ];
-
         try {
             $response = Http::withToken(self::$token)
                 ->timeout(30)
@@ -326,8 +365,10 @@ class QuoteAssistantService
                     'messages' => $messages,
                     'functions' => $functions,
                     'function_call' => 'auto',
-                    'max_tokens' => 500,
-                    'temperature' => 0.3
+                    'max_tokens' => 800,
+                    'temperature' => 0.1, // Más determinista para respuestas propositivas
+                    'presence_penalty' => 0.1,
+                    'frequency_penalty' => 0.1
                 ]);
 
             if ($response->successful()) {
