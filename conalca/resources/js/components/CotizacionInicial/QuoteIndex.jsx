@@ -206,12 +206,78 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     resetCreateFlow();
   };
 
-  const handleSubmitClient = (data) => {
+  const handleSubmitClient = async (data) => {
     console.log('QuoteIndex - handleSubmitClient - data recibida:', data);
-    setClientData(data);
-    console.log('QuoteIndex - clientData actualizado:', data);
-    handleCloseModal('create');
-    handleOpenModal('chat');
+    
+    try {
+      setLoading(true);
+      
+      // Crear grupo de cotización con parámetros automáticos
+      const response = await fetch('/api/chat/quote/create-group', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          client_id: data.clientId,
+          client_type: data.clientType,
+          operation_type: data.operationType,
+          type_business: data.typeBusiness,
+          cargo_type: data.cargoType,
+          candado_satelital: data.candadoSatelital,
+          jen_set: data.jenSet,
+          combustible: data.combustible,
+          kit_derrames: data.kitDerrames,
+          pictogramas: data.pictogramas,
+        })
+      });
+
+      if (!response.ok) {
+        console.error('Error en la respuesta del servidor:', response.status, response.statusText);
+        const errorText = await response.text();
+        console.error('Contenido del error:', errorText);
+        throw new Error(`Error del servidor: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log('QuoteIndex - Grupo creado exitosamente:', result.data);
+        
+        // Actualizar clientData con los datos del grupo creado
+        const updatedClientData = {
+          ...data,
+          groupId: result.data.group_id,
+          threadId: result.data.thread_id,
+        };
+        
+        setClientData(updatedClientData);
+        console.log('QuoteIndex - clientData actualizado:', updatedClientData);
+        
+        // Continuar al siguiente paso
+        handleCloseModal('create');
+        handleOpenModal('chat');
+      } else {
+        console.error('Error creando grupo:', result.error);
+        
+        // Manejar error específico de autenticación
+        if (response.status === 401) {
+          alert('Sesión expirada. Por favor, inicia sesión nuevamente.');
+          window.location.reload();
+        } else {
+          alert(`Error: ${result.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error de red o parsing al crear el grupo:', error);
+      alert(`Error de conexión: ${error.message}. Por favor, intenta nuevamente.`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleNextStep = (stepNumber) => {

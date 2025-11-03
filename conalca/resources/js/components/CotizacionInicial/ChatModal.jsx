@@ -133,17 +133,18 @@ const ChatModal = ({
           },
           body: JSON.stringify({
             message: messageText,
-            thread_id: threadId,
+            thread_id: clientData.threadId || threadId,
             client_id: clientData.clientId,
-            type_business: typeBusiness
+            type_business: clientData.typeBusiness || typeBusiness
           })
         });
 
         const data = await response.json();
         
         if (data.success) {
-          // Actualizar thread_id si es nuevo
-          if (data.data.thread_id && !threadId) {
+          // Actualizar thread_id si es nuevo y no tenemos uno del clientData
+          const currentThreadId = clientData.threadId || threadId;
+          if (data.data.thread_id && !currentThreadId) {
             setThreadId(data.data.thread_id);
           }
           

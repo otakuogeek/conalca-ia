@@ -15,6 +15,20 @@ class GroupCotization extends Model
         'type',
         'reference',
         'status',
+        'candado_satelital',
+        'jen_set',
+        'combustible',
+        'kit_derrames',
+        'pictogramas',
+        'cargo_type',
+    ];
+
+    protected $casts = [
+        'candado_satelital' => 'boolean',
+        'jen_set' => 'boolean',
+        'combustible' => 'boolean',
+        'kit_derrames' => 'boolean',
+        'pictogramas' => 'boolean',
     ];
 
     public function cotizaciones() {

@@ -145,6 +145,8 @@ class QuoteAssistantService
             $assistant_id = self::$assistant_id_dta_otm;
         }else if($type_business == 'refri'){
             $assistant_id = self::$assistant_id_refri;
+        }else if($type_business == 'nacionalizado'){
+            $assistant_id = self::$assistant_id_dta_otm; // Usar el mismo asistente que DTA/OTM por ahora
         }else if($type_business == 'impo' || $type_business == 'expo'){
             $assistant_id = self::$assistant_id_impo_expo;
         }else if($type_business == 'distri'){

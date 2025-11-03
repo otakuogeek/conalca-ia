@@ -29,11 +29,64 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
     console.log('CreateQuoteModal - clientData changed:', clientData);
   }, [clientData]);
 
+  // Establecer automáticamente el tipo de cliente como "contado"
+  useEffect(() => {
+    if (!clientData.clientType) {
+      setClientData(prev => ({
+        ...prev,
+        clientType: 'cash'
+      }));
+    }
+  }, []);
+
   const handleChange = (field, value) => {
-    setClientData(prev => ({
-      ...prev,
+    let updatedData = {
+      ...clientData,
       [field]: value
-    }));
+    };
+
+    // Aplicar parámetros automáticos según el tipo de modalidad
+    if (field === 'typeBusiness') {
+      switch (value) {
+        case 'dta':
+        case 'otm':
+          updatedData.candadoSatelital = true;
+          break;
+        case 'nacionalizado':
+          // Para nacionalizado no se aplican parámetros adicionales automáticamente
+          break;
+        default:
+          // Limpiar parámetros automáticos si se cambia a otro tipo
+          updatedData.candadoSatelital = false;
+          updatedData.jenSet = false;
+          updatedData.combustible = false;
+          updatedData.kitDerrames = false;
+          updatedData.pictogramas = false;
+          break;
+      }
+    }
+
+    // Aplicar parámetros automáticos según el tipo de carga
+    if (field === 'cargoType') {
+      // Limpiar parámetros automáticos previos
+      updatedData.jenSet = false;
+      updatedData.combustible = false;
+      updatedData.kitDerrames = false;
+      updatedData.pictogramas = false;
+
+      switch (value) {
+        case 'refrigerado':
+          updatedData.jenSet = true;
+          updatedData.combustible = true;
+          break;
+        case 'dangerous':
+          updatedData.kitDerrames = true;
+          updatedData.pictogramas = true;
+          break;
+      }
+    }
+
+    setClientData(updatedData);
     
     // Limpiar error del campo cuando el usuario empieza a escribir
     if (errors[field]) {
@@ -109,7 +162,7 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
     
     // Validación básica
     const newErrors = {};
-    if (!clientData.clientType) newErrors.clientType = 'Selecciona el tipo de cliente';
+    // El clientType ya está establecido automáticamente como 'cash'
     if (!clientData.operationType) newErrors.operationType = 'Selecciona el tipo de operación';
     if (!clientData.typeBusiness) newErrors.typeBusiness = 'Selecciona el tipo de modalidad';
 
@@ -202,42 +255,21 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                       </svg>
                       <span className="text-sm font-medium text-green-800">Cliente encontrado</span>
                     </div>
-                    <div className="text-xs text-green-700">
-                      <p><strong>Empresa:</strong> {clientData.clientName}</p>
-                      <p><strong>NIT:</strong> {clientData.documentClient}</p>
-                      {clientData.clientLocation && <p><strong>Ciudad:</strong> {clientData.clientLocation}</p>}
-                      {clientData.clientEmail && <p><strong>Email:</strong> {clientData.clientEmail}</p>}
-                    </div>
+                  
                   </div>
                 )}
               </div>
 
-              {/* Tipo de cliente */}
+              {/* Tipo de cliente establecido automáticamente como CONTADO */}
               <div className="space-y-2 sm:space-y-3">
-                <label className="block text-[#898989] text-xs sm:text-sm font-medium">
-                  Selecciona el tipo de cliente que va ser dirigida tu cotización *
-                </label>
-                <select 
-                  value={clientData.clientType || ''}
-                  onChange={(e) => handleChange('clientType', e.target.value)}
-                  className={`w-full h-12 sm:h-14 rounded-lg bg-white border px-3 sm:px-4 text-gray-700 text-sm sm:text-base focus:ring-2 focus:ring-opacity-20 transition-all ${
-                    errors.clientType 
-                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500' 
-                      : 'border-[#dcdcdc] focus:border-[#FF7C32] focus:ring-[#FF7C32]'
-                  }`}
-                >
-                  <option value="">Seleccione el tipo de cliente</option>
-                  <option value="credit">Crédito</option>
-                  <option value="cash">Contado</option>
-                </select>
-                {errors.clientType && (
-                  <p className="text-red-500 text-xs sm:text-sm flex items-center">
-                    <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
-                    </svg>
-                    {errors.clientType}
-                  </p>
-                )}
+                <div className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                  </svg>
+                  <span className="text-[#898989] text-xs sm:text-sm font-medium">
+                    Tipo de cliente: <span className="text-[#FF7C32] font-semibold">CONTADO</span>
+                  </span>
+                </div>
               </div>
 
               {/* Tipo de operación */}
@@ -284,10 +316,23 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                   }`}
                 >
                   <option value="">Seleccione el tipo de negocio</option>
-                  <option value="dta">DTA</option>
-                  <option value="otm">OTM</option>
-                  <option value="refri">REFRI</option>
+                  <option value="dta">DTA {(clientData.typeBusiness === 'dta' && clientData.candadoSatelital) ? '(Candado Satelital)' : ''}</option>
+                  <option value="otm">OTM {(clientData.typeBusiness === 'otm' && clientData.candadoSatelital) ? '(Candado Satelital)' : ''}</option>
+                  <option value="nacionalizado">Nacionalizado</option>
                 </select>
+                
+                {/* Mostrar parámetros aplicados automáticamente para modalidad */}
+                {(clientData.typeBusiness === 'dta' || clientData.typeBusiness === 'otm') && (
+                  <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center text-xs text-blue-700">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                      </svg>
+                      Parámetro aplicado automáticamente: Candado Satelital
+                    </div>
+                  </div>
+                )}
+                
                 {errors.typeBusiness && (
                   <p className="text-red-500 text-xs sm:text-sm flex items-center">
                     <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -309,24 +354,38 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                   className="w-full h-12 sm:h-14 rounded-lg bg-white border border-[#dcdcdc] px-3 sm:px-4 text-gray-700 text-sm sm:text-base focus:border-[#FF7C32] focus:ring-2 focus:ring-[#FF7C32] focus:ring-opacity-20 transition-all"
                 >
                   <option value="">Seleccione el tipo de carga</option>
-                  <option value="extradimensional">CARGA EXTRADIMENSIONAL</option>
-                  <option value="dangerous">MERCANCÍA PELIGROSA</option>
-                  <option value="general">CARGA GENERAL</option>
+                  <option value="refrigerado">Refrigerado</option>
+                  <option value="general">Carga general</option>
+                  <option value="extradimensional">Extradimensionada</option>
+                  <option value="dangerous">Mercancía peligrosa</option>
+                  <option value="otro">Otro</option>
                 </select>
+
+                {/* Mostrar parámetros aplicados automáticamente para tipo de carga */}
+                {clientData.cargoType === 'refrigerado' && (
+                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center text-xs text-green-700">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                      </svg>
+                      Parámetros aplicados automáticamente: Jen set, Combustible
+                    </div>
+                  </div>
+                )}
+
+                {clientData.cargoType === 'dangerous' && (
+                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-lg">
+                    <div className="flex items-center text-xs text-red-700">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                      </svg>
+                      Parámetros aplicados automáticamente: Kit de derrames, Pictogramas
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* DEBUG: Estado actual de clientData */}
-              {clientData.clientId && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
-                  <p><strong>DEBUG - Datos que se enviarán:</strong></p>
-                  <p>clientId: {clientData.clientId}</p>
-                  <p>clientName: {clientData.clientName}</p>
-                  <p>documentClient: {clientData.documentClient}</p>
-                  <p>clientLocation: {clientData.clientLocation}</p>
-                  <p>clientEmail: {clientData.clientEmail}</p>
-                  <p>clientContact: {clientData.clientContact}</p>
-                </div>
-              )}
+            
 
               {/* Botón de envío */}
               <div className="pt-4 sm:pt-6">

@@ -73,6 +73,8 @@ class QuoteIndex extends Component
 
     public $type_business;
 
+    public $cargo_type;
+
     public $file;
 
     public $selectedPricings = [];
@@ -495,6 +497,12 @@ class QuoteIndex extends Component
                     'client_id' => $this->client_id,
                     'type' => $this->type_business,
                     'status' => 'pendiente', // o lo que corresponda
+                    'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
+                    'cargo_type' => $this->cargo_type ?? null,
+                    'jen_set' => ($this->cargo_type === 'refrigerado'),
+                    'combustible' => ($this->cargo_type === 'refrigerado'),
+                    'kit_derrames' => ($this->cargo_type === 'dangerous'),
+                    'pictogramas' => ($this->cargo_type === 'dangerous'),
                     // 'reference' => ..., // Si se usa
                 ]);
                 $this->group_cotization_id = $group->id;
@@ -506,6 +514,12 @@ class QuoteIndex extends Component
                 'client_id' => $this->client_id,
                 'type' => $this->type_business,
                 'status' => 'pendiente',
+                'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
+                'cargo_type' => $this->cargo_type ?? null,
+                'jen_set' => ($this->cargo_type === 'refrigerado'),
+                'combustible' => ($this->cargo_type === 'refrigerado'),
+                'kit_derrames' => ($this->cargo_type === 'dangerous'),
+                'pictogramas' => ($this->cargo_type === 'dangerous'),
                 // 'reference' => ...,
             ]);
             $this->group_cotization_id = $group->id;
@@ -2127,6 +2141,12 @@ class QuoteIndex extends Component
                     'client_id' => $this->client_id,
                     'type'      => $this->type_business,
                     'status'    => 'borrador',
+                    'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
+                    'cargo_type' => $this->cargo_type ?? null,
+                    'jen_set' => ($this->cargo_type === 'refrigerado'),
+                    'combustible' => ($this->cargo_type === 'refrigerado'),
+                    'kit_derrames' => ($this->cargo_type === 'dangerous'),
+                    'pictogramas' => ($this->cargo_type === 'dangerous'),
                     // 'reference' => ..., // Si lo usas
                 ]);
                 $this->group_cotization_id = $group->id;
@@ -2138,6 +2158,12 @@ class QuoteIndex extends Component
                 'client_id' => $this->client_id,
                 'type'      => $this->type_business,
                 'status'    => 'borrador',
+                'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
+                'cargo_type' => $this->cargo_type ?? null,
+                'jen_set' => ($this->cargo_type === 'refrigerado'),
+                'combustible' => ($this->cargo_type === 'refrigerado'),
+                'kit_derrames' => ($this->cargo_type === 'dangerous'),
+                'pictogramas' => ($this->cargo_type === 'dangerous'),
                 // 'reference' => ..., // Si lo usas
             ]);
             $this->group_cotization_id = $group->id;

@@ -298,6 +298,11 @@ Route::prefix('chat')->group(function () {
     Route::get('/run/{threadId}/{runId}', [App\Http\Controllers\Api\ChatController::class, 'checkRunStatus'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.run.status');
+        
+    // Ruta para crear grupos de cotización con parámetros automáticos
+    Route::post('/quote/create-group', [App\Http\Controllers\Api\QuoteCreationController::class, 'createQuoteGroup'])
+        ->middleware('auth')
+        ->name('api.quote.create.group');
 });
 
 // ═══════════════════════════════════════════════════════════════
