@@ -18,7 +18,9 @@ class ConversationalAgentService
     {
         $apiKey = config('services.openai.api_key');
         if (!$apiKey) {
-            throw new \Exception('OpenAI API key no configurada. Verifica OPENAI_API_KEY en .env');
+            // During development/setup, don't throw exception on service discovery
+            $this->openai = null;
+            return;
         }
         $this->openai = OpenAI::client($apiKey);
         $this->setupSystemPrompt();
@@ -29,6 +31,12 @@ class ConversationalAgentService
      */
     private function setupSystemPrompt()
     {
+        // Si no hay cliente OpenAI configurado, usar prompt por defecto
+        if (!$this->openai) {
+            $this->systemPrompt = "Servicio OpenAI no configurado. Necesitas configurar OPENAI_API_KEY en .env";
+            return;
+        }
+        
         $this->systemPrompt = "
 Eres un representante profesional de CONALCA. Sigues un GUIÓN ESTRUCTURADO para llamadas efectivas.
 
@@ -71,10 +79,21 @@ IMPORTANTE: SIEMPRE usar el guión estructurado y información completa de la co
     }
 
     /**
+     * Verificar si el servicio está configurado correctamente
+     */
+    private function ensureConfigured()
+    {
+        if (!$this->openai) {
+            throw new \Exception('OpenAI API key no configurada. Verifica OPENAI_API_KEY en .env');
+        }
+    }
+
+    /**
      * Generar mensaje inicial estructurado para el conductor
      */
     public function generateInitialMessage(CotizacionModel $cotizacion, $driverName = 'conductor')
     {
+        $this->ensureConfigured();
         $userPrompt = "
 Genera un mensaje ESTRUCTURADO siguiendo el guión de CONALCA para llamar al conductor {$driverName}:
 
@@ -136,6 +155,8 @@ Genera SOLO el mensaje estructurado siguiendo este guión exactamente.
      */
     public function processDriverResponse($cotizacionId, $driverId, $userInput, $conversationHistory = [])
     {
+        $this->ensureConfigured();
+        
         $cotizacion = CotizacionModel::find($cotizacionId);
         
         if (!$cotizacion) {
@@ -323,6 +344,8 @@ IMPORTANTE: Si detectas confusión o respuestas vagas, usa 'NEEDS_REPEAT' y repi
      */
     public function quickResponseAnalysis($userInput, $cotizacion = null)
     {
+        $this->ensureConfigured();
+        
         $input = strtolower(trim($userInput));
         $input = $this->normalizeText($input);
         
