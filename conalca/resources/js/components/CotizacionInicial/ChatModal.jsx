@@ -53,6 +53,69 @@ const ChatModal = ({
     };
   }, [pollingInterval]);
 
+  // Detectar mensajes huérfanos y crear run si es necesario
+  const checkForOrphanMessages = async (threadId) => {
+    try {
+      console.log('🔍 Verificando mensajes huérfanos para thread:', threadId);
+      
+      // Usar el endpoint especializado para procesar mensajes huérfanos
+      const response = await fetch('/api/chat/orphan/process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          thread_id: threadId,
+          client_id: clientData.clientId
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        console.log('✅ Respuesta del procesador de huérfanos:', data.data);
+        
+        if (data.data.run_id) {
+          console.log('🚀 Run creado para mensaje huérfano:', data.data.run_id);
+          
+          // Mostrar mensaje de procesamiento
+          setProcessingMessage({
+            role: 'assistant',
+            text: 'Procesando mensaje pendiente...',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'thinking',
+            isTemporary: true
+          });
+          
+          // Iniciar polling para el run creado
+          startPollingRun(threadId, data.data.run_id);
+          
+          return true; // Indica que se encontró y procesó un mensaje huérfano
+        } else {
+          console.log('ℹ️ No se detectaron mensajes huérfanos');
+          return false;
+        }
+      } else {
+        console.error('❌ Error en el procesador de huérfanos:', data.error);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error verificando mensajes huérfanos:', error);
+      return false;
+    }
+  };
+
+  // Verificar mensajes huérfanos al cargar el componente
+  useEffect(() => {
+    if (clientData.threadId && clientData.clientId && !currentRunId) {
+      // Esperar un momento antes de verificar para permitir que el componente se inicialice
+      setTimeout(() => {
+        checkForOrphanMessages(clientData.threadId);
+      }, 2000);
+    }
+  }, [clientData.threadId, clientData.clientId]);
+
   const startPollingRun = (threadId, runId) => {
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
@@ -135,7 +198,7 @@ const ChatModal = ({
                   } else {
                     console.error('❌ Error guardando rutas:', saveResult.error);
                     // Mostrar error al usuario si es necesario
-                    if (saveResult.error.includes('permisos')) {
+                    if (saveResult.error && typeof saveResult.error === 'string' && saveResult.error.includes('permisos')) {
                       console.warn('⚠️ Problema de permisos al guardar rutas');
                     }
                   }
@@ -167,6 +230,61 @@ const ChatModal = ({
                 
                 const messagesData = await messagesResponse.json();
                 if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+                  onUpdateMessages(messagesData.data.messages);
+                }
+              } catch (error) {
+                console.error('Error obteniendo mensajes después de polling:', error);
+              }
+            }, 1000);
+          } else if (data.data.status === 'completed_with_indication') {
+            // El asistente indicó que las cotizaciones están completadas
+            console.log('✅ Asistente indica cotizaciones completadas:', data.data.message);
+            
+            // Detener polling
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              setPollingInterval(null);
+            }
+            setCurrentRunId(null);
+            
+            // Quitar mensaje de "Pensando..."
+            setProcessingMessage(null);
+            
+            // Obtener mensajes actualizados
+            setTimeout(async () => {
+              try {
+                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
+                  headers: {
+                    'Accept': 'application/json'
+                  }
+                });
+                
+                const messagesData = await messagesResponse.json();
+                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
+                  // Verificar si hay mensajes del asistente
+                  const assistantMessages = messagesData.data.messages.filter(msg => msg.role === 'assistant');
+                  const userMessages = messagesData.data.messages.filter(msg => msg.role === 'user');
+                  
+                  console.log('📊 Análisis de mensajes (completed_with_indication):', {
+                    total: messagesData.data.messages.length,
+                    assistant: assistantMessages.length,
+                    user: userMessages.length
+                  });
+                  
+                  // Si hay mensajes del usuario pero ninguno del asistente después de completion,
+                  // puede indicar que el run no se ejecutó correctamente
+                  if (userMessages.length > 0 && assistantMessages.length === 0) {
+                    console.warn('⚠️ Se detectó mensaje del usuario sin respuesta del asistente');
+                    // Mostrar mensaje de error al usuario
+                    setProcessingMessage({
+                      role: 'assistant',
+                      text: 'Parece que hubo un problema procesando tu solicitud. Por favor, inténtalo de nuevo.',
+                      created_at: new Date().toLocaleTimeString(),
+                      status: 'error',
+                      isTemporary: true
+                    });
+                  }
+                  
                   onUpdateMessages(messagesData.data.messages);
                 }
               } catch (error) {
@@ -256,6 +374,34 @@ const ChatModal = ({
       const messageText = inputMessage.trim();
       setIsSending(true);
       
+      // Verificar si este mensaje ya existe en el thread para evitar duplicados
+      if (clientData.threadId) {
+        try {
+          const existingMessagesResponse = await fetch(`/api/chat/messages/${clientData.threadId}`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          
+          const existingData = await existingMessagesResponse.json();
+          if (existingData.success && existingData.data.messages) {
+            const lastUserMessage = existingData.data.messages
+              .filter(msg => msg.role === 'user')
+              .pop();
+            
+            if (lastUserMessage && lastUserMessage.text === messageText) {
+              console.log('🔄 Mensaje duplicado detectado, verificando si necesita procesamiento...');
+              
+              // Verificar si hay mensajes huérfanos
+              await checkForOrphanMessages(clientData.threadId);
+              setIsSending(false);
+              return;
+            }
+          }
+        } catch (error) {
+          console.warn('Error verificando mensajes existentes:', error);
+          // Continuar con el envío normal
+        }
+      }
+      
       // Mostrar mensaje del usuario inmediatamente con estado "Enviado"
       const userMessage = {
         role: 'user',
@@ -296,7 +442,13 @@ const ChatModal = ({
           })
         });
 
-        const data = await response.json();
+        // Manejar tanto respuestas exitosas como conflictos (409) que indican procesamiento activo
+        let data;
+        if (response.ok || response.status === 409) {
+          data = await response.json();
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         
         if (data.success) {
           // Actualizar thread_id si es nuevo y no tenemos uno del clientData
@@ -307,10 +459,14 @@ const ChatModal = ({
           
           // Iniciar polling para verificar el estado del run y extraer datos
           if (data.data.run_id) {
+            console.log('🚀 Run creado exitosamente:', data.data.run_id);
             startPollingRun(data.data.thread_id, data.data.run_id);
+          } else {
+            console.warn('⚠️ No se recibió run_id en la respuesta');
+            setProcessingMessage(null);
           }
           
-        } else if (data.error === 'processing_active') {
+        } else if (data.error === 'processing_active' || response.status === 409) {
           // Hay un procesamiento activo, mostrar mensaje y continuar polling del run activo
           console.log('⏳ Procesamiento activo detectado, continuando polling...');
           
@@ -320,7 +476,13 @@ const ChatModal = ({
           // Si hay un run activo, comenzar polling
           if (data.data && data.data.active_run_id) {
             startPollingRun(data.data.thread_id, data.data.active_run_id);
+          } else if (data.data && data.data.thread_id) {
+            // Verificar si hay mensajes huérfanos
+            await checkForOrphanMessages(data.data.thread_id);
           }
+          
+          // Quitar mensaje de "Pensando..."
+          setProcessingMessage(null);
           
         } else {
           console.error('Error en chat:', data.error);
@@ -712,20 +874,31 @@ const ChatModal = ({
                     </p>
                     
                     {/* Botón para forzar limpieza del estado */}
-                    <button
-                      onClick={() => {
-                        console.log('🧹 Limpiando estado de procesamiento forzadamente');
-                        if (pollingInterval) {
-                          clearInterval(pollingInterval);
-                          setPollingInterval(null);
-                        }
-                        setCurrentRunId(null);
-                        setProcessingMessage(null);
-                      }}
-                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
-                    >
-                      🔄 Reiniciar Chat
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                      <button
+                        onClick={() => {
+                          console.log('🧹 Limpiando estado de procesamiento forzadamente');
+                          if (pollingInterval) {
+                            clearInterval(pollingInterval);
+                            setPollingInterval(null);
+                          }
+                          setCurrentRunId(null);
+                          setProcessingMessage(null);
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
+                      >
+                        🔄 Reiniciar Chat
+                      </button>
+                      
+                      {clientData.threadId && (
+                        <button
+                          onClick={() => checkForOrphanMessages(clientData.threadId)}
+                          className="bg-orange-600 hover:bg-orange-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
+                        >
+                          🔍 Revisar Mensajes
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (

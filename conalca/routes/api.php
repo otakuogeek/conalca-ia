@@ -299,6 +299,15 @@ Route::prefix('chat')->group(function () {
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.run.status');
         
+    // Rutas para manejo de mensajes huérfanos
+    Route::post('/orphan/process', [App\Http\Controllers\Api\OrphanMessageController::class, 'processOrphanMessages'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.orphan.process');
+        
+    Route::get('/orphan/candidates', [App\Http\Controllers\Api\OrphanMessageController::class, 'listOrphanCandidates'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.orphan.candidates');
+        
     // Ruta para crear grupos de cotización con parámetros automáticos
     Route::post('/quote/create-group', [App\Http\Controllers\Api\QuoteCreationController::class, 'createQuoteGroup'])
         ->middleware('auth')
@@ -336,6 +345,11 @@ Route::prefix('chat')->group(function () {
             })
         ]);
     })->name('api.quote.debug');
+    
+    // Ruta para guardar cotizaciones desde el chat
+    Route::post('/save-quote-from-chat', [App\Http\Controllers\Api\QuoteSaveController::class, 'saveQuoteFromChat'])
+        ->middleware('auth')
+        ->name('api.quote.save.from.chat');
 });
 
 // ═══════════════════════════════════════════════════════════════

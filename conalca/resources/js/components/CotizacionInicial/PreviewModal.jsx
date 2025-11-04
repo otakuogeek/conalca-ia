@@ -54,14 +54,66 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     setSaving(true);
     
     try {
-      // Aquí iría la lógica para enviar la cotización
-      // Simular envío
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log('Guardando cotización en backend...', {
+        clientData,
+        quoteData,
+        selectedPricings
+      });
+
+      // Preparar los datos para el nuevo sistema de guardado
+      const quotesToSave = quoteData.map((route, index) => {
+        const pricing = selectedPricings[index];
+        const basePrice = pricing ? pricing.price : 0;
+        const porcentaje = route.porcentaje || 0;
+        const finalValue = basePrice + (basePrice * porcentaje / 100);
+        
+        return {
+          ciudad_origen: route.ciudad_origen,
+          ciudad_destino: route.ciudad_destino,
+          peso_mercancia: route.peso_mercancia,
+          tipo_producto: route.tipo_producto,
+          vehiculo_requerido: route.vehiculo_requerido,
+          valor_declarado: route.valor_declarado,
+          finalValue: finalValue,
+          porcentaje: porcentaje,
+          cantidad: route.cantidad || '1',
+          tipo_embajale: route.tipo_embajale || 'Bultos',
+          dimensiones_exactas: route.dimensiones_exactas || 'No especificado',
+          registro_fotografico: route.registro_fotografico || 'No requerido'
+        };
+      });
+
+      // Llamar a nuestro nuevo endpoint para guardar la cotización
+      const response = await fetch('/api/chat/save-quote-from-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+        },
+        body: JSON.stringify({
+          client_id: clientData.clientId,
+          quote_data: quotesToSave,
+          thread_id: clientData.threadId || null,
+          type_business: clientData.typeBusiness || 'Terrestre'
+        })
+      });
+
+      const result = await response.json();
       
-      onNext(); // Ir al modal de éxito
+      if (!response.ok) {
+        throw new Error(result.error || 'Error al guardar la cotización');
+      }
+
+      console.log('Cotización guardada exitosamente:', result);
+      
+      // Simular envío de email (mantener por ahora)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      onNext(); // Ir al modal de éxito con los datos guardados
     } catch (error) {
       console.error('Error sending quote:', error);
-      alert('Error al enviar la cotización. Por favor, intente nuevamente.');
+      alert(`Error al enviar la cotización: ${error.message}. Por favor, intente nuevamente.`);
     } finally {
       setSaving(false);
     }

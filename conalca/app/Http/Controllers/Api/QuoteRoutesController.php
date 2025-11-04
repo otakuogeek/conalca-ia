@@ -16,6 +16,15 @@ class QuoteRoutesController extends Controller
      */
     public function saveQuoteRoutes(Request $request)
     {
+        // Log de datos recibidos para diagnosticar el error 422
+        Log::info('saveQuoteRoutes - Datos recibidos:', [
+            'body' => $request->all(),
+            'has_group_id' => $request->has('group_id'),
+            'has_routes' => $request->has('routes'),
+            'routes_type' => gettype($request->input('routes')),
+            'routes_count' => is_array($request->input('routes')) ? count($request->input('routes')) : 'no es array'
+        ]);
+
         $request->validate([
             'group_id' => 'required|integer|exists:group_cotizations,id',
             'routes' => 'required|array|min:1',

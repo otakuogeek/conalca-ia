@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Client;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -106,6 +107,27 @@ class QuoteAssistantService
             'token_available' => !empty(self::$private_token)
         ]);
         
+        // Verificar si hay runs activos antes de crear el mensaje
+        $runsRequest = Http::withHeaders([
+            'OpenAI-Beta' => 'assistants=v2'
+        ])->withToken(self::$private_token)->get(self::$openai_uri . '/threads/' . $thread_id . '/runs');
+        
+        if ($runsRequest->status() == 200) {
+            $runs = $runsRequest->json();
+            $activeRuns = array_filter($runs['data'], function($run) {
+                return in_array($run['status'], ['queued', 'in_progress', 'requires_action']);
+            });
+            
+            if (!empty($activeRuns)) {
+                Log::warning('Hay runs activos, esperando para crear mensaje:', [
+                    'thread_id' => $thread_id,
+                    'active_runs' => count($activeRuns)
+                ]);
+                // No crear el mensaje si hay runs activos
+                return null;
+            }
+        }
+        
         $request = Http::withHeaders([
             'OpenAI-Beta' => 'assistants=v2'
         ])->withToken(self::$private_token)->post(self::$openai_uri . '/threads/' . $thread_id . '/messages', [
@@ -192,9 +214,224 @@ class QuoteAssistantService
 
 
 
+    /**
+     * Extrae datos de cotización del texto de respuesta del asistente
+     */
+    private static function extractQuoteDataFromText($messages)
+    {
+        Log::info('Intentando extraer datos de cotización del texto...');
+        
+        $extractedData = [];
+        
+        foreach ($messages as $message) {
+            if ($message['role'] === 'assistant') {
+                $text = $message['text'];
+                Log::info('Analizando mensaje del asistente:', [
+                    'text_length' => strlen($text),
+                    'text_preview' => substr($text, 0, 200)
+                ]);
+                
+                // Verificar si el asistente dice que las cotizaciones están completadas/creadas
+                $completionIndicators = [
+                    'cotizaciones.*han sido creadas exitosamente',
+                    'cotizaciones.*fueron creadas',
+                    'cotizaciones.*ya fueron creadas',
+                    'cotizaciones.*están listas',
+                    'cotizaciones.*completada.*exitosamente',
+                    'solicitud.*completada exitosamente'
+                ];
+                
+                $isCompleted = false;
+                foreach ($completionIndicators as $pattern) {
+                    if (preg_match('/' . $pattern . '/i', $text)) {
+                        $isCompleted = true;
+                        Log::info('Detectado indicador de finalización:', ['pattern' => $pattern]);
+                        break;
+                    }
+                }
+                
+                // Si el asistente indica que completó, extraer los datos estructurados
+                if ($isCompleted) {
+                    Log::info('Extrayendo datos estructurados de cotización completada...');
+                    
+                    // Buscar bloques de rutas estructuradas
+                    if (preg_match_all('/(\d+)\.\s*Ruta:\s*(\w+)\s*a\s*(\w+)(.+?)(?=\d+\.\s*Ruta:|$)/si', $text, $routeBlocks, PREG_SET_ORDER)) {
+                        Log::info('Bloques de rutas encontrados:', ['count' => count($routeBlocks)]);
+                        
+                        foreach ($routeBlocks as $block) {
+                            $routeNumber = $block[1];
+                            $origen = trim($block[2]);
+                            $destino = trim($block[3]);
+                            $details = $block[4];
+                            
+                            Log::info('Procesando ruta ' . $routeNumber, ['origen' => $origen, 'destino' => $destino]);
+                            
+                            $routeData = [
+                                'ciudad_origen' => ucfirst(strtolower($origen)),
+                                'ciudad_destino' => ucfirst(strtolower($destino)),
+                                'peso_mercancia' => '2000', // Valor por defecto basado en "2 toneladas"
+                                'cantidad' => '1',
+                                'tipo_embajale' => 'Bultos',
+                                'tipo_producto' => 'Maiz',
+                                'vehiculo_requerido' => 'Camión sencillo',
+                                'valor_declarado' => '10,000,000'
+                            ];
+                            
+                            // Extraer datos específicos del bloque de detalles
+                            if (preg_match('/Peso:\s*(\d+)\s*kg/i', $details, $pesoMatch)) {
+                                $routeData['peso_mercancia'] = $pesoMatch[1];
+                            }
+                            
+                            if (preg_match('/Cantidad:\s*(\d+)/i', $details, $cantMatch)) {
+                                $routeData['cantidad'] = $cantMatch[1];
+                            }
+                            
+                            if (preg_match('/Tipo\s+embalaje:\s*([^\-\n]+)/i', $details, $embMatch)) {
+                                $routeData['tipo_embajale'] = trim($embMatch[1]);
+                            }
+                            
+                            if (preg_match('/Tipo\s+producto:\s*([^\-\n]+)/i', $details, $prodMatch)) {
+                                $routeData['tipo_producto'] = trim($prodMatch[1]);
+                            }
+                            
+                            if (preg_match('/Vehículo\s+requerido:\s*([^\-\n]+)/i', $details, $vehMatch)) {
+                                $routeData['vehiculo_requerido'] = trim($vehMatch[1]);
+                            }
+                            
+                            if (preg_match('/Valor\s+y?\s*valor\s+declarado:\s*([0-9,\.]+)/i', $details, $valMatch)) {
+                                $routeData['valor_declarado'] = trim($valMatch[1]);
+                            }
+                            
+                            $extractedData[] = $routeData;
+                            Log::info('Ruta extraída de bloque estructurado:', $routeData);
+                        }
+                    }
+                    
+                    // Si no encontramos bloques estructurados, buscar patrones más simples
+                    if (empty($extractedData)) {
+                        Log::info('No se encontraron bloques estructurados, buscando patrones simples...');
+                        
+                        // Buscar las rutas básicas mencionadas en la respuesta
+                        if (preg_match_all('/(\w+)\s*a\s*(\w+).*?(\d+)\s*toneladas?\s*de\s*(\w+)/i', $text, $simpleMatches, PREG_SET_ORDER)) {
+                            foreach ($simpleMatches as $match) {
+                                $routeData = [
+                                    'ciudad_origen' => ucfirst(strtolower(trim($match[1]))),
+                                    'ciudad_destino' => ucfirst(strtolower(trim($match[2]))),
+                                    'peso_mercancia' => (intval($match[3]) * 1000), // convertir toneladas a kg
+                                    'cantidad' => '1',
+                                    'tipo_embajale' => 'Bultos',
+                                    'tipo_producto' => ucfirst(strtolower(trim($match[4]))),
+                                    'vehiculo_requerido' => 'Camión sencillo',
+                                    'valor_declarado' => '10,000,000'
+                                ];
+                                $extractedData[] = $routeData;
+                                Log::info('Ruta extraída con patrón simple:', $routeData);
+                            }
+                        }
+                    }
+                }
+                
+                // Patrón simplificado para extraer rutas (fallback para compatibilidad)
+                if (empty($extractedData)) {
+                    // Busca: "CIUDAD a CIUDAD, X toneladas (Y kg) de PRODUCTO"
+                    if (preg_match_all('/(\w+)\s*(?:\([^)]+\))?\s*a\s*(\w+)\s*(?:\([^)]+\))?,\s*(\d+)\s*toneladas?\s*\((\d+)\s*kg\)\s*de\s*(\w+)/i', $text, $matches, PREG_SET_ORDER)) {
+                        Log::info('Rutas encontradas con regex clásico:', ['count' => count($matches)]);
+                        
+                        foreach ($matches as $match) {
+                            $routeData = [
+                                'ciudad_origen' => ucfirst(strtolower(trim($match[1]))),
+                                'ciudad_destino' => ucfirst(strtolower(trim($match[2]))),
+                                'peso_mercancia' => trim($match[4]),
+                                'cantidad' => trim($match[3]) . ' toneladas',
+                                'tipo_embajale' => 'Bultos', // Valor por defecto
+                                'tipo_producto' => ucfirst(strtolower(trim($match[5]))),
+                                'vehiculo_requerido' => 'Camión sencillo',
+                                'valor_declarado' => '10,000,000'
+                            ];
+                            $extractedData[] = $routeData;
+                            Log::info('Ruta extraída con regex clásico:', $routeData);
+                        }
+                    }
+                }
+                
+                // Si aún no encontramos datos, intentar extraer manualmente línea por línea
+                if (empty($extractedData)) {
+                    Log::info('Intentando extracción manual línea por línea...');
+                    $lines = explode("\n", $text);
+                    
+                    foreach ($lines as $line) {
+                        // Buscar líneas que empiecen con número (1., 2., etc.) o contengan rutas
+                        if (preg_match('/^\d+\.\s*(.+)/i', trim($line), $lineMatch) || 
+                            preg_match('/(\w+)\s+a\s+(\w+)/i', trim($line), $lineMatch)) {
+                            
+                            $routeLine = isset($lineMatch[1]) ? $lineMatch[1] : $line;
+                            Log::info('Línea de ruta encontrada:', ['line' => $routeLine]);
+                            
+                            // Extraer datos específicos de esta línea
+                            $routeData = [
+                                'ciudad_origen' => '',
+                                'ciudad_destino' => '',
+                                'peso_mercancia' => '2000', // Valor por defecto
+                                'cantidad' => '1',
+                                'tipo_embajale' => 'Bultos',
+                                'tipo_producto' => 'Maiz',
+                                'vehiculo_requerido' => 'Camión sencillo',
+                                'valor_declarado' => '10,000,000'
+                            ];
+                            
+                            // Buscar origen y destino
+                            if (preg_match('/(\w+)\s+(?:\([^)]+\))?\s+a\s+(\w+)/i', $routeLine, $cityMatch)) {
+                                $routeData['ciudad_origen'] = ucfirst(strtolower(trim($cityMatch[1])));
+                                $routeData['ciudad_destino'] = ucfirst(strtolower(trim($cityMatch[2])));
+                            }
+                            
+                            // Buscar peso
+                            if (preg_match('/(\d+)\s*kg/i', $routeLine, $weightMatch)) {
+                                $routeData['peso_mercancia'] = $weightMatch[1];
+                            }
+                            
+                            // Buscar toneladas
+                            if (preg_match('/(\d+)\s*toneladas?/i', $routeLine, $tonMatch)) {
+                                $routeData['peso_mercancia'] = (intval($tonMatch[1]) * 1000); // convertir a kg
+                            }
+                            
+                            // Buscar producto
+                            if (preg_match('/de\s+(\w+)/i', $routeLine, $productMatch)) {
+                                $routeData['tipo_producto'] = ucfirst(strtolower(trim($productMatch[1])));
+                            }
+                            
+                            // Solo agregar si al menos tenemos origen y destino
+                            if (!empty($routeData['ciudad_origen']) && !empty($routeData['ciudad_destino'])) {
+                                $extractedData[] = $routeData;
+                                Log::info('Ruta extraída manualmente:', $routeData);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (count($extractedData) > 0) {
+            Log::info('Datos de cotización extraídos exitosamente:', ['count' => count($extractedData), 'data' => $extractedData]);
+            return $extractedData;
+        }
+        
+        Log::info('No se encontraron datos de cotización en el texto');
+        return null;
+    }
+
     public static function checkRunStatus($thread_id, $run_id)
     {
         self::initToken();
+        
+        // Verificar caché para evitar reprocesamiento
+        $cacheKey = "run_status_{$thread_id}_{$run_id}";
+        $cachedResult = Cache::get($cacheKey);
+        if ($cachedResult && in_array($cachedResult['status'], ['completed_with_data', 'finished_with_indication'])) {
+            Log::info('Resultado en caché encontrado:', ['status' => $cachedResult['status']]);
+            return $cachedResult['data'] ?? $cachedResult['status'];
+        }
+        
         $request = Http::withHeaders([
             'OpenAI-Beta' => 'assistants=v2'
         ])->withToken(self::$private_token)->get(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id);
@@ -202,24 +439,8 @@ class QuoteAssistantService
         if ($request->status() == 200) {
             $message = $request->json();
             Log::info("Current run status: ", [$message]);
+            
             if (isset($message['status']) && $message['status'] == 'requires_action' && isset($message['required_action']['type']) && $message['required_action']['type'] == 'submit_tool_outputs') {
-                // $json = $message['required_action']['submit_tool_outputs']['tool_calls'][0]['function']['arguments'];
-                // Log::info("Tool call: ", [$json]);
-                // // submit tool outputs
-                // $request = Http::withHeaders([
-                //     'OpenAI-Beta' => 'assistants=v2'
-                // ])->withToken(self::$private_token)->post(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id . '/submit_tool_outputs', [
-                //             'tool_outputs' => [
-                //                 [
-                //                     'tool_call_id' => $message['required_action']['submit_tool_outputs']['tool_calls'][0]['id'],
-                //                     'output' => $json
-                //                 ]
-                //             ]
-                //         ]);
-
-                // Log::info("Submit tool outputs: ", $request->json());
-
-                // return json_decode($json, true);
                 Log::info("Tool calls: ", $message['required_action']['submit_tool_outputs']['tool_calls']);
                 $tool_calls = $message['required_action']['submit_tool_outputs']['tool_calls'];
                 $tool_outputs = [];
@@ -229,7 +450,7 @@ class QuoteAssistantService
                     $arguments = json_decode($tool_call['function']['arguments'], true);
                     $tool_outputs[] = [
                         'tool_call_id' => $call_id,
-                        'output' => $arguments // O pon tu procesamiento aquí si hace falta
+                        'output' => json_encode($arguments) // Convertir array a string JSON
                     ];
                     $all_data[] = $arguments;
                 }
@@ -241,12 +462,57 @@ class QuoteAssistantService
                 ]);
                 Log::info("Submit tool outputs: ", $request->json());
 
+                // Guardar datos extraídos en caché
+                Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $all_data], 3600);
+
                 return $all_data; // array de rutas
             } else if (isset($message['status']) && $message['status'] == 'completed') {
+                // El run está completado, intentar extraer datos del texto
+                Log::info('Run completado, intentando extraer datos del texto...');
+                $messages = self::getMessages($thread_id);
+                $extractedData = self::extractQuoteDataFromText($messages);
+                
+                if ($extractedData && count($extractedData) > 0) {
+                    Log::info('Datos extraídos del texto:', $extractedData);
+                    // Guardar en caché
+                    Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $extractedData], 3600);
+                    return $extractedData;
+                }
+                
+                // Verificar si el asistente indica que las cotizaciones están completadas
+                $lastMessage = '';
+                if (is_array($messages) && count($messages) > 0) {
+                    foreach ($messages as $msg) {
+                        if (isset($msg['role']) && $msg['role'] === 'assistant') {
+                            $lastMessage = $msg['text'] ?? '';
+                            break;
+                        }
+                    }
+                }
+                
+                $completionIndicators = [
+                    'cotizaciones.*han sido creadas exitosamente',
+                    'cotizaciones.*fueron creadas',
+                    'cotizaciones.*ya fueron creadas', 
+                    'cotizaciones.*están listas',
+                    'cotizaciones.*completada.*exitosamente',
+                    'solicitud.*completada exitosamente',
+                    'proceso.*completado.*éxito'
+                ];
+                
+                foreach ($completionIndicators as $pattern) {
+                    if (preg_match('/' . $pattern . '/i', $lastMessage)) {
+                        Log::info('Asistente indica que las cotizaciones están completadas:', ['pattern' => $pattern]);
+                        // Guardar en caché para evitar repetir polling
+                        Cache::put($cacheKey, ['status' => 'finished_with_indication'], 3600);
+                        return 'finished_with_indication';
+                    }
+                }
+                
+                // Guardar estado finished en caché
+                Cache::put($cacheKey, ['status' => 'finished'], 3600);
                 return 'finished';
             }
-
-
         }
 
         return null;

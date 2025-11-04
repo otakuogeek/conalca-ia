@@ -174,6 +174,19 @@ class ChatController extends Controller
             // Crear el mensaje del usuario
             $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
             if (!$userMessage) {
+                // Verificar si es porque hay runs activos
+                if ($request->thread_id) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'processing_active',
+                        'message' => 'Hay un procesamiento en curso. Por favor espera unos segundos e intenta nuevamente.',
+                        'data' => [
+                            'thread_id' => $threadId,
+                            'should_retry' => true
+                        ]
+                    ], 409); // Conflict
+                }
+                
                 return response()->json([
                     'success' => false,
                     'error' => 'No se pudo crear el mensaje'
@@ -188,6 +201,17 @@ class ChatController extends Controller
                     'error' => 'No se pudo ejecutar el asistente'
                 ], 500);
             }
+
+            // Actualizar el cliente con el run_id activo
+            $client->openai_current_run = $run['id'];
+            $client->openai_thread_id = $threadId;
+            $client->save();
+            
+            Log::info('Cliente actualizado con run activo:', [
+                'client_id' => $client->id,
+                'run_id' => $run['id'],
+                'thread_id' => $threadId
+            ]);
 
             // Obtener todos los mensajes actualizados
             $messages = QuoteAssistantService::getMessages($threadId);
@@ -256,8 +280,23 @@ class ChatController extends Controller
 
             $runData = QuoteAssistantService::checkRunStatus($threadId, $runId);
             
+            // Función helper para limpiar el run activo del cliente
+            $clearClientActiveRun = function() use ($runId) {
+                try {
+                    $client = \App\Models\Client::where('openai_current_run', $runId)->first();
+                    if ($client) {
+                        $client->openai_current_run = null;
+                        $client->save();
+                        Log::info('Cliente run activo limpiado:', ['client_id' => $client->id, 'run_id' => $runId]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Error limpiando run activo del cliente:', ['error' => $e->getMessage()]);
+                }
+            };
+            
             if ($runData && is_array($runData)) {
                 // Si hay datos extraídos del tool call
+                $clearClientActiveRun();
                 return response()->json([
                     'success' => true,
                     'data' => [
@@ -267,8 +306,21 @@ class ChatController extends Controller
                         'status' => 'completed_with_data'
                     ]
                 ]);
+            } else if ($runData === 'finished_with_indication') {
+                // El asistente indica que las cotizaciones están completadas
+                $clearClientActiveRun();
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'thread_id' => $threadId,
+                        'run_id' => $runId,
+                        'status' => 'completed_with_indication',
+                        'message' => 'Las cotizaciones han sido creadas exitosamente'
+                    ]
+                ]);
             } else if ($runData === 'finished') {
                 // El run está completado pero sin tool calls
+                $clearClientActiveRun();
                 return response()->json([
                     'success' => true,
                     'data' => [

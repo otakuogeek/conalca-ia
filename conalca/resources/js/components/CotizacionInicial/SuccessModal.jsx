@@ -3,20 +3,69 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 
-const SuccessModal = ({ onClose, quoteData, clientData }) => {
+const SuccessModal = ({ onClose, quoteData, clientData, threadId }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [groupId, setGroupId] = useState(null);
+  const [saveError, setSaveError] = useState(null);
 
-  // Simular el proceso de guardado y envío de email
-  useEffect(() => {
-    const timer = setTimeout(() => {
+  // Función para guardar la cotización en el backend
+  const saveQuoteToBackend = async () => {
+    try {
+      console.log('Guardando cotización en backend:', {
+        client_id: clientData.clientId,
+        quote_data: quoteData,
+        thread_id: threadId,
+        type_business: clientData.typeBusiness || 'Terrestre'
+      });
+
+      const response = await fetch('/api/chat/save-quote-from-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+        },
+        body: JSON.stringify({
+          client_id: clientData.clientId,
+          quote_data: quoteData,
+          thread_id: threadId,
+          type_business: clientData.typeBusiness || 'Terrestre'
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Error al guardar la cotización');
+      }
+
+      console.log('Cotización guardada exitosamente:', result);
+      setGroupId(result.data.group_id);
       setEmailSent(true);
       setIsLoading(false);
-    }, 2000);
 
-    return () => clearTimeout(timer);
-  }, []);
+    } catch (error) {
+      console.error('Error guardando cotización:', error);
+      setSaveError(error.message);
+      setIsLoading(false);
+    }
+  };
+
+  // Guardar la cotización automáticamente al cargar el modal
+  useEffect(() => {
+    if (quoteData && clientData && clientData.clientId) {
+      saveQuoteToBackend();
+    } else {
+      // Si no hay datos suficientes, simular el guardado anterior
+      const timer = setTimeout(() => {
+        setEmailSent(true);
+        setIsLoading(false);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [quoteData, clientData, threadId]);
 
   const calculateTotal = () => {
     return quoteData.reduce((total, route) => {
@@ -196,8 +245,8 @@ const SuccessModal = ({ onClose, quoteData, clientData }) => {
                 </div>
               </div>
 
-              {/* Mensaje de Confirmación */}
-              {emailSent && (
+              {/* Mensaje de Confirmación o Error */}
+              {emailSent && !saveError && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 slide-in" style={{ animationDelay: '0.3s' }}>
                   <div className="flex items-start">
                     <svg className="w-5 h-5 text-green-500 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -206,11 +255,29 @@ const SuccessModal = ({ onClose, quoteData, clientData }) => {
                     </svg>
                     <div>
                       <h4 className="text-sm font-semibold text-green-800 mb-1">
-                        Correo electrónico enviado
+                        Cotización guardada exitosamente
                       </h4>
                       <p className="text-xs text-green-700">
-                        La cotización ha sido enviada al correo electrónico del cliente. 
-                        También se ha guardado una copia en el sistema para futuras referencias.
+                        La cotización ha sido guardada en el sistema y aparecerá en la columna "Pre-Solicitud" 
+                        del tablero de gestión. {groupId && `ID del grupo: ${groupId}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {saveError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 slide-in" style={{ animationDelay: '0.3s' }}>
+                  <div className="flex items-start">
+                    <svg className="w-5 h-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"></path>
+                    </svg>
+                    <div>
+                      <h4 className="text-sm font-semibold text-red-800 mb-1">
+                        Error al guardar la cotización
+                      </h4>
+                      <p className="text-xs text-red-700">
+                        {saveError}. La cotización se ha mostrado pero no se ha guardado en el sistema.
                       </p>
                     </div>
                   </div>
@@ -312,7 +379,8 @@ const SuccessModal = ({ onClose, quoteData, clientData }) => {
 SuccessModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   quoteData: PropTypes.array.isRequired,
-  clientData: PropTypes.object.isRequired
+  clientData: PropTypes.object.isRequired,
+  threadId: PropTypes.string
 };
 
 export default SuccessModal;

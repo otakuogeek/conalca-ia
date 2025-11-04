@@ -420,6 +420,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           onClose={() => handleCloseModal('success')}
           clientData={clientData}
           quoteData={quoteData}
+          threadId={clientData.threadId}
         />
       )}
     </div>

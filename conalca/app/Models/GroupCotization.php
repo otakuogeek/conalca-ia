@@ -21,6 +21,8 @@ class GroupCotization extends Model
         'kit_derrames',
         'pictogramas',
         'cargo_type',
+        'openai_thread_id',
+        'created_from_chat',
     ];
 
     protected $casts = [
@@ -29,6 +31,7 @@ class GroupCotization extends Model
         'combustible' => 'boolean',
         'kit_derrames' => 'boolean',
         'pictogramas' => 'boolean',
+        'created_from_chat' => 'boolean',
     ];
 
     public function cotizaciones() {
