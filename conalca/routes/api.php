@@ -357,6 +357,11 @@ Route::prefix('chat')->group(function () {
         ->name('api.quote.save.from.chat');
 });
 
+// Ruta para enviar emails de cotización
+Route::post('/send-quote-email', [App\Http\Controllers\Api\QuoteEmailController::class, 'sendQuoteEmail'])
+    ->middleware('auth')
+    ->name('api.send.quote.email');
+
 // ═══════════════════════════════════════════════════════════════
 // Arcangel API Routes - Integración con sistema Arcangel
 // ═══════════════════════════════════════════════════════════════

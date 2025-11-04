@@ -43,6 +43,8 @@ const Modal = ({ children, onClose, size = 'default', showCloseButton = true }) 
         return 'max-w-full sm:max-w-6xl lg:max-w-7xl';
       case 'full':
         return 'max-w-full mx-2 sm:mx-4';
+      case 'full-screen':
+        return 'max-w-full mx-1 sm:mx-2 w-[98vw] h-[95vh]';
       default:
         return 'max-w-md sm:max-w-lg';
     }
@@ -87,7 +89,7 @@ const Modal = ({ children, onClose, size = 'default', showCloseButton = true }) 
 Modal.propTypes = {
   children: PropTypes.node.isRequired,
   onClose: PropTypes.func.isRequired,
-  size: PropTypes.oneOf(['small', 'medium', 'large', 'extra-large', 'full', 'default']),
+  size: PropTypes.oneOf(['small', 'medium', 'large', 'extra-large', 'full', 'full-screen', 'default']),
   showCloseButton: PropTypes.bool
 };
 

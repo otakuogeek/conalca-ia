@@ -226,7 +226,7 @@ const PricingModal = ({
   };
 
   return (
-    <Modal onClose={onClose} size="extra-large">
+    <Modal onClose={onClose} size="full-screen">
       <style jsx>{`
         @import url('https://fonts.googleapis.com/css2?family=Product+Sans:wght@300;400;500;600;700&display=swap');
         .product-sans {
@@ -314,23 +314,23 @@ const PricingModal = ({
         </div>
 
         {/* Layout principal */}
-        <div className="flex flex-row gap-6 h-[580px]">
-          {/* Tabla de rutas y precios */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-2/4">
-            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex-shrink-0">
-              <h4 className="text-sm font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
+        <div className="flex flex-row gap-8 h-[650px]">
+          {/* Tabla de rutas y precios - mayor espacio */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-3/5">
+            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex-shrink-0">
+              <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
             </div>
             <div className="overflow-x-auto flex-1 min-h-0">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-gray-700 text-xs font-600 border-b border-gray-200 bg-gray-50">
-                    <th className="text-left px-3 py-2 product-sans">Origen</th>
-                    <th className="text-left px-3 py-2 product-sans">Destino</th>
-                    <th className="text-left px-3 py-2 product-sans">Vehículo</th>
-                    <th className="text-center px-3 py-2 product-sans">Precio Base</th>
-                    <th className="text-center px-3 py-2 product-sans">Parámetros</th>
-                    <th className="text-center px-3 py-2 product-sans">Rent.(%)</th>
-                    <th className="text-center px-3 py-2 product-sans">Valor Cliente</th>
+                  <tr className="text-gray-700 text-sm font-600 border-b border-gray-200 bg-gray-50">
+                    <th className="text-left px-4 py-3 product-sans min-w-[120px]">Origen</th>
+                    <th className="text-left px-4 py-3 product-sans min-w-[120px]">Destino</th>
+                    <th className="text-left px-4 py-3 product-sans min-w-[140px]">Vehículo</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[110px]">Precio Base</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[120px]">Parámetros</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[100px]">Rent.(%)</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[120px]">Valor Cliente</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -339,16 +339,16 @@ const PricingModal = ({
                     
                     return (
                       <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
-                        <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
+                        <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
                           {route.ciudad_origen || '-'}
                         </td>
-                        <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
+                        <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
                           {route.ciudad_destino || '-'}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-4 py-3">
                           {/* Sugerencia de la IA */}
                           {vehicleSuggestions[index] && (
-                            <div className="text-[10px] mb-1 rounded bg-blue-50 text-blue-600 px-1.5 py-0.5">
+                            <div className="text-xs mb-2 rounded bg-blue-50 text-blue-600 px-2 py-1">
                               IA sugiere: <strong>{vehicleSuggestions[index].vehicle}</strong>
                               <span className="text-gray-500"> / {vehicleSuggestions[index].bodywork}</span>
                             </div>
@@ -358,7 +358,7 @@ const PricingModal = ({
                           <select 
                             value={route.select_value || ''}
                             onChange={(e) => handleVehicleSelect(index, e.target.value)}
-                            className="w-full px-2 py-2 text-xs border border-gray-300 rounded h-10 focus:outline-none focus:ring-1 focus:ring-orange-400"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
                           >
                             <option value="">Selecciona vehículo</option>
                             {(pricings[index] || []).map(pricing => (
@@ -368,25 +368,25 @@ const PricingModal = ({
                             ))}
                           </select>
                         </td>
-                        <td className="px-3 py-2 text-center">
-                          <span className="text-xs font-600 text-gray-700 product-sans">
+                        <td className="px-4 py-3 text-center">
+                          <span className="text-sm font-600 text-gray-700 product-sans">
                             ${selectedPricings[index] ? Number(selectedPricings[index].price).toLocaleString() : '0'}
                           </span>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-4 py-3">
                           {/* Parámetros automáticos */}
                           {automaticParameters.length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                               {automaticParameters.map((param) => (
                                 <div key={param.name} className="flex flex-col items-center">
-                                  <label className={`text-[10px] font-medium mb-1 text-${param.color}-600 product-sans text-center`}>
+                                  <label className={`text-xs font-medium mb-1 text-${param.color}-600 product-sans text-center`}>
                                     {param.label}
                                   </label>
                                   <input
                                     type="number"
                                     value={route[param.name] || ''}
                                     onChange={(e) => handleParameterChange(index, param.name, e.target.value)}
-                                    className={`w-20 px-2 py-1 text-xs text-center border border-${param.color}-300 rounded focus:outline-none focus:ring-1 focus:ring-${param.color}-400 product-sans`}
+                                    className={`w-24 px-3 py-2 text-sm text-center border border-${param.color}-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-${param.color}-400 product-sans`}
                                     placeholder="$"
                                     min="0"
                                   />
@@ -394,16 +394,16 @@ const PricingModal = ({
                               ))}
                             </div>
                           ) : (
-                            <div className="text-xs text-gray-400 text-center">-</div>
+                            <div className="text-sm text-gray-400 text-center">-</div>
                           )}
                         </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-col items-center space-y-1">
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col items-center space-y-2">
                             <input 
                               type="number"
                               value={route.porcentaje || ''}
                               onChange={(e) => handlePorcentajeChange(index, e.target.value)}
-                              className={`w-20 px-3 py-2 text-sm text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent product-sans bg-white font-medium h-10 ${
+                              className={`w-24 px-3 py-2 text-sm text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent product-sans bg-white font-medium h-10 ${
                                 errors[`porcentaje_${index}`] ? 'border-red-500 bg-red-50' : 'border-gray-300'
                               }`}
                               placeholder="%" 
@@ -417,8 +417,8 @@ const PricingModal = ({
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-center">
-                          <span className="text-xs font-700 text-orange-600">
+                        <td className="px-4 py-3 text-center">
+                          <span className="text-sm font-700 text-orange-600">
                             ${Number(calculateFinalValue(index)).toLocaleString()}
                           </span>
                         </td>
@@ -431,7 +431,7 @@ const PricingModal = ({
           </div>
 
           {/* Tarjetas de rentabilidad */}
-          <div className="flex flex-row justify-between h-full space-x-3 w-2/4">
+          <div className="flex flex-row justify-between h-full space-x-4 w-2/5">
             {/* Propuesta 1: 17% */}
             <RentabilityCard
               title="PROPUESTA #1"

@@ -27,17 +27,80 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     }));
   };
 
+  const getAutomaticParameters = (clientData) => {
+    const parameters = [];
+    
+    // Parámetros por tipo de modalidad
+    if (clientData.typeBusiness === 'dta' || clientData.typeBusiness === 'otm') {
+      parameters.push({
+        name: 'candado_satelital',
+        label: 'Candado Satelital',
+        color: 'blue'
+      });
+    }
+    
+    // Parámetros por tipo de carga
+    if (clientData.cargoType === 'refrigerado') {
+      parameters.push(
+        {
+          name: 'jen_set',
+          label: 'Jen set',
+          color: 'green'
+        },
+        {
+          name: 'combustible',
+          label: 'Combustible',
+          color: 'green'
+        }
+      );
+    }
+    
+    if (clientData.cargoType === 'dangerous') {
+      parameters.push(
+        {
+          name: 'kit_derrames',
+          label: 'Kit de derrames',
+          color: 'red'
+        },
+        {
+          name: 'pictogramas',
+          label: 'Pictogramas',
+          color: 'red'
+        }
+      );
+    }
+    
+    return parameters;
+  };
+
+  const calculateRouteTotal = (route, index) => {
+    const pricing = selectedPricings[index];
+    if (!pricing || !route.porcentaje) return 0;
+    
+    const basePrice = pricing.price;
+    const porcentaje = route.porcentaje || 0;
+    const withMargin = basePrice + (basePrice * porcentaje / 100);
+    const acompanamiento = parseFloat(route.itesoltra_acompanamientovalor) || 0;
+    
+    // Agregar parámetros automáticos
+    let parametersTotal = 0;
+    const parameters = getAutomaticParameters(clientData);
+    parameters.forEach(param => {
+      parametersTotal += parseFloat(route[param.name]) || 0;
+    });
+    
+    return withMargin + acompanamiento + parametersTotal;
+  };
+
   const calculateTotal = () => {
-    return quoteData.reduce((total, route, index) => {
-      const pricing = selectedPricings[index];
-      if (pricing && route.porcentaje) {
-        const basePrice = pricing.price;
-        const withMargin = basePrice + (basePrice * route.porcentaje / 100);
-        const acompanamiento = parseFloat(route.itesoltra_acompanamientovalor) || 0;
-        return total + withMargin + acompanamiento;
-      }
-      return total;
+    const total = quoteData.reduce((total, route, index) => {
+      const routeTotal = calculateRouteTotal(route, index);
+      console.log(`Ruta ${index + 1} - Contribución al total:`, routeTotal);
+      return total + routeTotal;
     }, 0);
+    
+    console.log('Total final calculado:', total);
+    return total;
   };
 
   const handleSendQuote = async () => {
@@ -79,7 +142,16 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         const pricing = selectedPricings[index];
         const basePrice = pricing ? pricing.price : 0;
         const porcentaje = route.porcentaje || 0;
-        const finalValue = basePrice + (basePrice * porcentaje / 100);
+        const baseWithMargin = basePrice + (basePrice * porcentaje / 100);
+        
+        // Calcular parámetros automáticos
+        let parametersTotal = 0;
+        const parameters = getAutomaticParameters(clientData);
+        parameters.forEach(param => {
+          parametersTotal += parseFloat(route[param.name]) || 0;
+        });
+        
+        const finalValue = baseWithMargin + parametersTotal;
         
         return {
           ciudad_origen: String(route.ciudad_origen || ''),
@@ -93,7 +165,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           cantidad: String(route.cantidad || '1'),
           tipo_embajale: String(route.tipo_embajale || 'Bultos'),
           dimensiones_exactas: String(route.dimensiones_exactas || 'No especificado'),
-          registro_fotografico: String(route.registro_fotografico || 'No requerido')
+          registro_fotografico: String(route.registro_fotografico || 'No requerido'),
+          // Incluir parámetros automáticos
+          candado_satelital: parseFloat(route.candado_satelital) || 0,
+          jen_set: parseFloat(route.jen_set) || 0,
+          combustible: parseFloat(route.combustible) || 0,
+          kit_derrames: parseFloat(route.kit_derrames) || 0,
+          pictogramas: parseFloat(route.pictogramas) || 0
         };
       });
 
@@ -131,8 +209,51 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
       console.log('Cotización guardada exitosamente:', result);
       
-      // Simular envío de email (mantener por ahora)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Ahora enviar el email real de la cotización
+      console.log('Enviando email de cotización...');
+      
+      try {
+        const emailResponse = await fetch('/api/send-quote-email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+          },
+          body: JSON.stringify({
+            group_id: result.group_id,
+            client_email: emailData.clientEmail,
+            email_data: {
+              title: emailData.titleEmail,
+              text: emailData.promptResponse,
+              greeting: emailData.greeting,
+              client_name: emailData.clientName,
+              client_document: emailData.clientDocument,
+              client_location: emailData.clientLocation,
+              client_phone_numbers: emailData.clientPhoneNumbers,
+              asesor_name: emailData.advisorName,
+              asesor_phone: emailData.advisorPhone,
+              asesor_email: emailData.advisorEmail,
+              routes: quotesToSave,
+              total_price: calculateTotal()
+            }
+          })
+        });
+
+        const emailResult = await emailResponse.json();
+        
+        if (!emailResponse.ok) {
+          console.error('Error al enviar email:', emailResult);
+          throw new Error(emailResult.message || 'Error al enviar el email');
+        }
+        
+        console.log('Email enviado exitosamente:', emailResult);
+        
+      } catch (emailError) {
+        console.error('Error específico del email:', emailError);
+        // Mostrar warning pero no impedir continuar ya que la cotización se guardó
+        alert(`Cotización guardada exitosamente, pero hubo un error al enviar el email: ${emailError.message}. Puede reenviar desde el panel de gestión.`);
+      }
       
       onNext(); // Ir al modal de éxito con los datos guardados
     } catch (error) {
@@ -286,6 +407,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                         <th className="border border-gray-200 px-2 py-2 text-center">Origen</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Destino</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Vehículo</th>
+                        <th className="border border-gray-200 px-2 py-2 text-center">Parámetros</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Valor</th>
                       </tr>
                     </thead>
@@ -294,7 +416,39 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                         const pricing = selectedPricings[index];
                         const basePrice = pricing ? pricing.price : 0;
                         const porcentaje = route.porcentaje || 0;
-                        const finalValue = basePrice + (basePrice * porcentaje / 100);
+                        const baseWithMargin = basePrice + (basePrice * porcentaje / 100);
+                        
+                        // Debug: Log para verificar datos
+                        console.log(`Ruta ${index + 1}:`, {
+                          basePrice,
+                          porcentaje,
+                          baseWithMargin,
+                          candado_satelital: route.candado_satelital,
+                          jen_set: route.jen_set,
+                          combustible: route.combustible,
+                          kit_derrames: route.kit_derrames,
+                          pictogramas: route.pictogramas
+                        });
+                        
+                        // Calcular parámetros automáticos
+                        const automaticParameters = getAutomaticParameters(clientData);
+                        let parametersTotal = 0;
+                        const activeParameters = [];
+                        
+                        automaticParameters.forEach(param => {
+                          const value = parseFloat(route[param.name]) || 0;
+                          if (value > 0) {
+                            parametersTotal += value;
+                            activeParameters.push({
+                              ...param,
+                              value: value
+                            });
+                          }
+                        });
+                        
+                        const finalValue = baseWithMargin + parametersTotal;
+                        
+                        console.log(`Ruta ${index + 1} - Total parámetros:`, parametersTotal, 'Valor final:', finalValue);
                         
                         return (
                           <tr key={index} className="bg-orange-50 hover:bg-orange-100 transition-colors duration-150">
@@ -302,8 +456,34 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_origen || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_requerido || '-'}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center font-bold text-green-700">
-                              ${Number(finalValue).toLocaleString()}
+                            <td className="border border-gray-200 px-2 py-2 text-center">
+                              {activeParameters.length > 0 ? (
+                                <div className="space-y-1">
+                                  {activeParameters.map((param, paramIndex) => (
+                                    <div key={paramIndex} className={`text-${param.color}-600 font-medium`}>
+                                      <div className="text-[10px]">{param.label}</div>
+                                      <div className="text-xs">${param.value.toLocaleString()}</div>
+                                    </div>
+                                  ))}
+                                  <div className="text-[10px] text-gray-500 mt-1">
+                                    Total: ${parametersTotal.toLocaleString()}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">
+                              <div className="space-y-1">
+                                <div className="font-bold text-green-700">
+                                  ${Number(finalValue).toLocaleString()}
+                                </div>
+                                {parametersTotal > 0 && (
+                                  <div className="text-[10px] text-gray-500">
+                                    Base: ${baseWithMargin.toLocaleString()} + Param: ${parametersTotal.toLocaleString()}
+                                  </div>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -311,6 +491,49 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                     </tbody>
                   </table>
                 </div>
+                
+                {/* Información de parámetros aplicados automáticamente */}
+                {(() => {
+                  const appliedParameters = getAutomaticParameters(clientData);
+                  const hasAnyParameterValues = quoteData.some(route => 
+                    appliedParameters.some(param => parseFloat(route[param.name]) > 0)
+                  );
+                  
+                  if (appliedParameters.length > 0) {
+                    return (
+                      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h4 className="text-xs font-semibold text-blue-800 mb-2 flex items-center">
+                          <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                          </svg>
+                          Parámetros aplicados automáticamente
+                        </h4>
+                        <div className="text-xs text-blue-700">
+                          <div className="space-y-1">
+                            {clientData.typeBusiness === 'dta' && (
+                              <div>• <strong>Modalidad DTA:</strong> Incluye Candado Satelital automáticamente</div>
+                            )}
+                            {clientData.typeBusiness === 'otm' && (
+                              <div>• <strong>Modalidad OTM:</strong> Incluye Candado Satelital automáticamente</div>
+                            )}
+                            {clientData.cargoType === 'refrigerado' && (
+                              <div>• <strong>Carga Refrigerada:</strong> Incluye Jen set y Combustible automáticamente</div>
+                            )}
+                            {clientData.cargoType === 'dangerous' && (
+                              <div>• <strong>Mercancía Peligrosa:</strong> Incluye Kit de derrames y Pictogramas automáticamente</div>
+                            )}
+                          </div>
+                          {hasAnyParameterValues && (
+                            <div className="mt-2 text-blue-600 font-medium">
+                              ✓ Los costos de estos parámetros están incluidos en el valor total de cada ruta
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
                 
                 <div className="mt-3 flex justify-end">
                   <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
