@@ -874,31 +874,7 @@ const ChatModal = ({
                     </p>
                     
                     {/* Botón para forzar limpieza del estado */}
-                    <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                      <button
-                        onClick={() => {
-                          console.log('🧹 Limpiando estado de procesamiento forzadamente');
-                          if (pollingInterval) {
-                            clearInterval(pollingInterval);
-                            setPollingInterval(null);
-                          }
-                          setCurrentRunId(null);
-                          setProcessingMessage(null);
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
-                      >
-                        🔄 Reiniciar Chat
-                      </button>
-                      
-                      {clientData.threadId && (
-                        <button
-                          onClick={() => checkForOrphanMessages(clientData.threadId)}
-                          className="bg-orange-600 hover:bg-orange-700 text-white text-xs px-3 py-1 rounded transition-colors duration-200 product-sans"
-                        >
-                          🔍 Revisar Mensajes
-                        </button>
-                      )}
-                    </div>
+                   
                   </div>
                 </div>
               ) : (

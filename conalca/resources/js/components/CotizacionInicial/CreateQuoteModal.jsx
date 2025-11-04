@@ -260,18 +260,6 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                 )}
               </div>
 
-              {/* Tipo de cliente establecido automáticamente como CONTADO */}
-              <div className="space-y-2 sm:space-y-3">
-                <div className="flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                  </svg>
-                  <span className="text-[#898989] text-xs sm:text-sm font-medium">
-                    Tipo de cliente: <span className="text-[#FF7C32] font-semibold">CONTADO</span>
-                  </span>
-                </div>
-              </div>
-
               {/* Tipo de operación */}
               <div className="space-y-2 sm:space-y-3">
                 <label className="block text-[#898989] text-xs sm:text-sm font-medium">
