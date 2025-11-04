@@ -49,57 +49,100 @@ class QuoteAssistantService
             return $client->openai_thread_id;
         }
 
-        $request = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->post(self::$openai_uri . '/threads');
+        try {
+            $request = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->post(self::$openai_uri . '/threads');
 
-        if ($request->status() == 200 && $request->json()['object'] == 'thread') {
-            $client->openai_thread_id = $request->json()['id'];
+            if ($request->status() == 200 && $request->json()['object'] == 'thread') {
+                $client->openai_thread_id = $request->json()['id'];
+                $client->save();
+
+                return $client->openai_thread_id;
+            }
+            
+            Log::error('Failed to create thread', [
+                'status' => $request->status(),
+                'response' => $request->json()
+            ]);
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('OpenAI connection error - falling back to local thread ID', [
+                'error' => $e->getMessage(),
+                'client_id' => $client->id
+            ]);
+            
+            // Crear un thread ID local temporal cuando OpenAI no esté disponible
+            $fallbackThreadId = 'local_thread_' . $client->id . '_' . time();
+            $client->openai_thread_id = $fallbackThreadId;
             $client->save();
-
-            return $client->openai_thread_id;
+            
+            return $fallbackThreadId;
         }
-        
-        Log::error('Failed to create thread', [
-            'status' => $request->status(),
-            'response' => $request->json()
-        ]);
-        
-        return null;
     }
 
     public static function getMessages($thread_id)
     {
         self::initToken();
-        $request = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->get(self::$openai_uri . '/threads/' . $thread_id . '/messages?order=asc&limit=50');
+        
+        // Si es un thread local temporal, retornar array vacío
+        if (str_starts_with($thread_id, 'local_thread_')) {
+            return [];
+        }
+        
+        try {
+            $request = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->get(self::$openai_uri . '/threads/' . $thread_id . '/messages?order=asc&limit=50');
 
-        $messages = [];
-        if ($request->status() == 200) {
+            $messages = [];
+            if ($request->status() == 200) {
+                $payload = $request->json('data');
+                Log::info("New messages: ", $payload);
 
-            $payload = $request->json('data');
-
-            Log::info("New messages: ", $payload);
-
-            foreach ($payload as $message) {
-                if (isset($message['content'][0]['text']['value'])) {
-                    $messages[] = [
-                        'id' => $message['id'],
-                        'text' => $message['content'][0]['text']['value'],
-                        'created_at' => Carbon::parse($message['created_at']),
-                        'role' => $message['role'],
-                    ];
+                foreach ($payload as $message) {
+                    if (isset($message['content'][0]['text']['value'])) {
+                        $messages[] = [
+                            'id' => $message['id'],
+                            'text' => $message['content'][0]['text']['value'],
+                            'created_at' => Carbon::parse($message['created_at']),
+                            'role' => $message['role'],
+                        ];
+                    }
                 }
             }
-        }
 
-        return $messages;
+            return $messages;
+        } catch (\Exception $e) {
+            Log::error('Error getting messages from OpenAI', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id
+            ]);
+            return [];
+        }
     }
 
     public static function createMessage($thread_id, $text)
     {
         self::initToken();
+        
+        // Si es un thread local temporal, no intentar crear mensaje en OpenAI
+        if (str_starts_with($thread_id, 'local_thread_')) {
+            Log::info('Thread local detectado, omitiendo creación de mensaje en OpenAI');
+            return [
+                'id' => 'local_msg_' . time(),
+                'text' => $text,
+                'created_at' => Carbon::now(),
+                'role' => 'user',
+            ];
+        }
         
         Log::info('Creando mensaje en OpenAI:', [
             'thread_id' => $thread_id,
@@ -107,56 +150,78 @@ class QuoteAssistantService
             'token_available' => !empty(self::$private_token)
         ]);
         
-        // Verificar si hay runs activos antes de crear el mensaje
-        $runsRequest = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->get(self::$openai_uri . '/threads/' . $thread_id . '/runs');
-        
-        if ($runsRequest->status() == 200) {
-            $runs = $runsRequest->json();
-            $activeRuns = array_filter($runs['data'], function($run) {
-                return in_array($run['status'], ['queued', 'in_progress', 'requires_action']);
-            });
+        try {
+            // Verificar si hay runs activos antes de crear el mensaje
+            $runsRequest = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->get(self::$openai_uri . '/threads/' . $thread_id . '/runs');
             
-            if (!empty($activeRuns)) {
-                Log::warning('Hay runs activos, esperando para crear mensaje:', [
-                    'thread_id' => $thread_id,
-                    'active_runs' => count($activeRuns)
-                ]);
-                // No crear el mensaje si hay runs activos
-                return null;
+            if ($runsRequest->status() == 200) {
+                $runs = $runsRequest->json();
+                $activeRuns = array_filter($runs['data'], function($run) {
+                    return in_array($run['status'], ['queued', 'in_progress', 'requires_action']);
+                });
+                
+                if (!empty($activeRuns)) {
+                    Log::warning('Hay runs activos, esperando para crear mensaje:', [
+                        'thread_id' => $thread_id,
+                        'active_runs' => count($activeRuns)
+                    ]);
+                    // No crear el mensaje si hay runs activos
+                    return null;
+                }
             }
-        }
-        
-        $request = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->post(self::$openai_uri . '/threads/' . $thread_id . '/messages', [
+            
+            $request = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->post(self::$openai_uri . '/threads/' . $thread_id . '/messages', [
                     'role' => 'user',
                     'content' => $text
                 ]);
 
-        if ($request->status() == 200) {
-            $message = $request->json();
-            Log::info('Mensaje creado exitosamente:', ['message_id' => $message['id']]);
-            return [
-                'id' => $message['id'],
-                'text' => $message['content'][0]['text']['value'],
-                'created_at' => Carbon::parse($message['created_at']),
-                'role' => $message['role'],
-            ];
-        } else {
-            Log::error('Error al crear mensaje en OpenAI:', [
-                'status' => $request->status(),
-                'response' => $request->json()
-            ]);
-        }
+            if ($request->status() == 200) {
+                $message = $request->json();
+                Log::info('Mensaje creado exitosamente:', ['message_id' => $message['id']]);
+                return [
+                    'id' => $message['id'],
+                    'text' => $message['content'][0]['text']['value'],
+                    'created_at' => Carbon::parse($message['created_at']),
+                    'role' => $message['role'],
+                ];
+            } else {
+                Log::error('Error al crear mensaje en OpenAI:', [
+                    'status' => $request->status(),
+                    'response' => $request->json()
+                ]);
+            }
 
-        return null;
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception creating message in OpenAI:', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id
+            ]);
+            return null;
+        }
     }
 
     public static function runAssistant($thread_id, $type_business)
     {
         self::initToken();
+        
+        // Si es un thread local temporal, no intentar ejecutar asistente
+        if (str_starts_with($thread_id, 'local_thread_')) {
+            Log::info('Thread local detectado, omitiendo ejecución de asistente');
+            return [
+                'id' => 'local_run_' . time()
+            ];
+        }
         
         Log::info('Ejecutando asistente:', [
             'thread_id' => $thread_id,
@@ -181,35 +246,47 @@ class QuoteAssistantService
 
         Log::info('Usando asistente:', ['assistant_id' => $assistant_id]);
 
-        $request = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->post(self::$openai_uri . '/threads/' . $thread_id . '/runs', [
-            'assistant_id' => $assistant_id
-        ]);
+        try {
+            $request = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->post(self::$openai_uri . '/threads/' . $thread_id . '/runs', [
+                    'assistant_id' => $assistant_id
+                ]);
 
-        if ($request->status() == 200) {
-            $message = $request->json();
-            Log::info("Run assistant creado:", ['run_id' => $message['id'] ?? 'no_id']);
-            if (isset($message['id'])) {
-                return [
-                    'id' => $message['id']
-                ];
-            } else if (isset($message['content'][0]['text']['value'])) {
-                return [
-                    'id' => $message['id'],
-                    'text' => $message['content'][0]['text']['value'],
-                    'created_at' => Carbon::parse($message['created_at']),
-                    'role' => $message['role'],
-                ];
+            if ($request->status() == 200) {
+                $message = $request->json();
+                Log::info("Run assistant creado:", ['run_id' => $message['id'] ?? 'no_id']);
+                if (isset($message['id'])) {
+                    return [
+                        'id' => $message['id']
+                    ];
+                } else if (isset($message['content'][0]['text']['value'])) {
+                    return [
+                        'id' => $message['id'],
+                        'text' => $message['content'][0]['text']['value'],
+                        'created_at' => Carbon::parse($message['created_at']),
+                        'role' => $message['role'],
+                    ];
+                }
+            } else {
+                Log::error('Error al ejecutar asistente:', [
+                    'status' => $request->status(),
+                    'response' => $request->json()
+                ]);
             }
-        } else {
-            Log::error('Error al ejecutar asistente:', [
-                'status' => $request->status(),
-                'response' => $request->json()
-            ]);
-        }
 
-        return null;
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception running assistant:', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id,
+                'type_business' => $type_business
+            ]);
+            return null;
+        }
     }
 
 
@@ -424,6 +501,12 @@ class QuoteAssistantService
     {
         self::initToken();
         
+        // Si es un thread/run local temporal, retornar finished
+        if (str_starts_with($thread_id, 'local_thread_') || str_starts_with($run_id, 'local_run_')) {
+            Log::info('Thread/run local detectado, retornando finished');
+            return 'finished';
+        }
+        
         // Verificar caché para evitar reprocesamiento
         $cacheKey = "run_status_{$thread_id}_{$run_id}";
         $cachedResult = Cache::get($cacheKey);
@@ -432,90 +515,106 @@ class QuoteAssistantService
             return $cachedResult['data'] ?? $cachedResult['status'];
         }
         
-        $request = Http::withHeaders([
-            'OpenAI-Beta' => 'assistants=v2'
-        ])->withToken(self::$private_token)->get(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id);
-
-        if ($request->status() == 200) {
-            $message = $request->json();
-            Log::info("Current run status: ", [$message]);
-            
-            if (isset($message['status']) && $message['status'] == 'requires_action' && isset($message['required_action']['type']) && $message['required_action']['type'] == 'submit_tool_outputs') {
-                Log::info("Tool calls: ", $message['required_action']['submit_tool_outputs']['tool_calls']);
-                $tool_calls = $message['required_action']['submit_tool_outputs']['tool_calls'];
-                $tool_outputs = [];
-                $all_data = [];
-                foreach ($tool_calls as $tool_call) {
-                    $call_id = $tool_call['id'];
-                    $arguments = json_decode($tool_call['function']['arguments'], true);
-                    $tool_outputs[] = [
-                        'tool_call_id' => $call_id,
-                        'output' => json_encode($arguments) // Convertir array a string JSON
-                    ];
-                    $all_data[] = $arguments;
-                }
-                $request = Http::withHeaders([
+        try {
+            $request = Http::timeout(10)
+                ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
-                ])->withToken(self::$private_token)
-                ->post(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id . '/submit_tool_outputs', [
-                    'tool_outputs' => $tool_outputs
-                ]);
-                Log::info("Submit tool outputs: ", $request->json());
+                ])
+                ->withToken(self::$private_token)
+                ->get(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id);
 
-                // Guardar datos extraídos en caché
-                Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $all_data], 3600);
+            if ($request->status() == 200) {
+                $message = $request->json();
+                Log::info("Current run status: ", [$message]);
+                
+                if (isset($message['status']) && $message['status'] == 'requires_action' && isset($message['required_action']['type']) && $message['required_action']['type'] == 'submit_tool_outputs') {
+                    Log::info("Tool calls: ", $message['required_action']['submit_tool_outputs']['tool_calls']);
+                    $tool_calls = $message['required_action']['submit_tool_outputs']['tool_calls'];
+                    $tool_outputs = [];
+                    $all_data = [];
+                    foreach ($tool_calls as $tool_call) {
+                        $call_id = $tool_call['id'];
+                        $arguments = json_decode($tool_call['function']['arguments'], true);
+                        $tool_outputs[] = [
+                            'tool_call_id' => $call_id,
+                            'output' => json_encode($arguments) // Convertir array a string JSON
+                        ];
+                        $all_data[] = $arguments;
+                    }
+                    
+                    $submitRequest = Http::timeout(10)
+                        ->withHeaders([
+                            'OpenAI-Beta' => 'assistants=v2'
+                        ])
+                        ->withToken(self::$private_token)
+                        ->post(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run_id . '/submit_tool_outputs', [
+                            'tool_outputs' => $tool_outputs
+                        ]);
+                    
+                    Log::info("Submit tool outputs: ", $submitRequest->json());
 
-                return $all_data; // array de rutas
-            } else if (isset($message['status']) && $message['status'] == 'completed') {
-                // El run está completado, intentar extraer datos del texto
-                Log::info('Run completado, intentando extraer datos del texto...');
-                $messages = self::getMessages($thread_id);
-                $extractedData = self::extractQuoteDataFromText($messages);
-                
-                if ($extractedData && count($extractedData) > 0) {
-                    Log::info('Datos extraídos del texto:', $extractedData);
-                    // Guardar en caché
-                    Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $extractedData], 3600);
-                    return $extractedData;
-                }
-                
-                // Verificar si el asistente indica que las cotizaciones están completadas
-                $lastMessage = '';
-                if (is_array($messages) && count($messages) > 0) {
-                    foreach ($messages as $msg) {
-                        if (isset($msg['role']) && $msg['role'] === 'assistant') {
-                            $lastMessage = $msg['text'] ?? '';
-                            break;
+                    // Guardar datos extraídos en caché
+                    Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $all_data], 3600);
+
+                    return $all_data; // array de rutas
+                } else if (isset($message['status']) && $message['status'] == 'completed') {
+                    // El run está completado, intentar extraer datos del texto
+                    Log::info('Run completado, intentando extraer datos del texto...');
+                    $messages = self::getMessages($thread_id);
+                    $extractedData = self::extractQuoteDataFromText($messages);
+                    
+                    if ($extractedData && count($extractedData) > 0) {
+                        Log::info('Datos extraídos del texto:', $extractedData);
+                        // Guardar en caché
+                        Cache::put($cacheKey, ['status' => 'completed_with_data', 'data' => $extractedData], 3600);
+                        return $extractedData;
+                    }
+                    
+                    // Verificar si el asistente indica que las cotizaciones están completadas
+                    $lastMessage = '';
+                    if (is_array($messages) && count($messages) > 0) {
+                        foreach ($messages as $msg) {
+                            if (isset($msg['role']) && $msg['role'] === 'assistant') {
+                                $lastMessage = $msg['text'] ?? '';
+                                break;
+                            }
                         }
                     }
-                }
-                
-                $completionIndicators = [
-                    'cotizaciones.*han sido creadas exitosamente',
-                    'cotizaciones.*fueron creadas',
-                    'cotizaciones.*ya fueron creadas', 
-                    'cotizaciones.*están listas',
-                    'cotizaciones.*completada.*exitosamente',
-                    'solicitud.*completada exitosamente',
-                    'proceso.*completado.*éxito'
-                ];
-                
-                foreach ($completionIndicators as $pattern) {
-                    if (preg_match('/' . $pattern . '/i', $lastMessage)) {
-                        Log::info('Asistente indica que las cotizaciones están completadas:', ['pattern' => $pattern]);
-                        // Guardar en caché para evitar repetir polling
-                        Cache::put($cacheKey, ['status' => 'finished_with_indication'], 3600);
-                        return 'finished_with_indication';
+                    
+                    $completionIndicators = [
+                        'cotizaciones.*han sido creadas exitosamente',
+                        'cotizaciones.*fueron creadas',
+                        'cotizaciones.*ya fueron creadas', 
+                        'cotizaciones.*están listas',
+                        'cotizaciones.*completada.*exitosamente',
+                        'solicitud.*completada exitosamente',
+                        'proceso.*completado.*éxito'
+                    ];
+                    
+                    foreach ($completionIndicators as $pattern) {
+                        if (preg_match('/' . $pattern . '/i', $lastMessage)) {
+                            Log::info('Asistente indica que las cotizaciones están completadas:', ['pattern' => $pattern]);
+                            // Guardar en caché para evitar repetir polling
+                            Cache::put($cacheKey, ['status' => 'finished_with_indication'], 3600);
+                            return 'finished_with_indication';
+                        }
                     }
+                    
+                    // Guardar estado finished en caché
+                    Cache::put($cacheKey, ['status' => 'finished'], 3600);
+                    return 'finished';
                 }
-                
-                // Guardar estado finished en caché
-                Cache::put($cacheKey, ['status' => 'finished'], 3600);
-                return 'finished';
             }
-        }
 
-        return null;
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception checking run status:', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id,
+                'run_id' => $run_id
+            ]);
+            return null;
+        }
     }
 
     /**
@@ -625,7 +724,8 @@ USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques informac
 
         try {
             $response = Http::withToken(self::$token)
-                ->timeout(30)
+                ->timeout(10)
+                ->retry(2, 100)
                 ->post('https://api.openai.com/v1/chat/completions', [
                     'model' => 'gpt-4o-mini',
                     'messages' => $messages,
@@ -658,6 +758,14 @@ USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques informac
             Log::error('Excepción en processMessages:', [
                 'message' => $e->getMessage()
             ]);
+            
+            // Verificar si es un error de conexión específico
+            if (str_contains($e->getMessage(), 'Could not resolve host') || 
+                str_contains($e->getMessage(), 'api.openai.com') ||
+                str_contains($e->getMessage(), 'cURL error 6')) {
+                
+                throw new \Exception('Servicio de chat temporalmente no disponible. Verifica tu conexión a internet.');
+            }
             
             throw $e;
         }

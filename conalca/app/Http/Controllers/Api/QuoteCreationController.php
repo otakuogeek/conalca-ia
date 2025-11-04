@@ -67,7 +67,16 @@ class QuoteCreationController extends Controller
 
             // Obtener el cliente y crear/obtener thread de OpenAI
             $client = Client::find($request->client_id);
-            $threadId = QuoteAssistantService::getThread($client);
+            
+            try {
+                $threadId = QuoteAssistantService::getThread($client);
+            } catch (\Exception $openaiError) {
+                Log::warning('OpenAI no disponible, continuando sin thread', [
+                    'error' => $openaiError->getMessage(),
+                    'client_id' => $client->id
+                ]);
+                $threadId = null;
+            }
 
             return response()->json([
                 'success' => true,
@@ -75,6 +84,7 @@ class QuoteCreationController extends Controller
                     'group_id' => $group->id,
                     'thread_id' => $threadId,
                     'client' => $client,
+                    'openai_available' => !is_null($threadId) && !str_starts_with($threadId, 'local_thread_'),
                     'parametros_aplicados' => [
                         'candado_satelital' => $group->candado_satelital,
                         'jen_set' => $group->jen_set,

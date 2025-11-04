@@ -38,7 +38,7 @@ class ChatController extends Controller
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . config('services.openai.api_key'),
                 'Content-Type' => 'application/json',
-            ])->timeout(30)->post('https://api.openai.com/v1/chat/completions', [
+            ])->timeout(10)->retry(2, 100)->post('https://api.openai.com/v1/chat/completions', [
                 'model' => config('services.openai.model', 'gpt-4o-mini'),
                 'messages' => $messages,
                 'max_tokens' => 500,
@@ -75,6 +75,22 @@ class ChatController extends Controller
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
+
+            // Verificar si es un error de conexión DNS/red específico
+            if (str_contains($e->getMessage(), 'Could not resolve host') || 
+                str_contains($e->getMessage(), 'api.openai.com') ||
+                str_contains($e->getMessage(), 'cURL error 6')) {
+                
+                Log::warning('Error de conectividad con OpenAI detectado', [
+                    'error' => $e->getMessage()
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Servicio de chat temporalmente no disponible. Intenta nuevamente en unos momentos.',
+                    'error_type' => 'connectivity_issue'
+                ], 503); // Service Unavailable
+            }
 
             return response()->json([
                 'success' => false,
@@ -146,12 +162,27 @@ class ChatController extends Controller
             }
 
             // Obtener o crear thread
-            $threadId = $request->thread_id ?: QuoteAssistantService::getThread($client);
-            if (!$threadId) {
+            $threadId = $request->thread_id;
+            
+            try {
+                if (!$threadId) {
+                    $threadId = QuoteAssistantService::getThread($client);
+                }
+                
+                if (!$threadId) {
+                    throw new \Exception('No se pudo crear/obtener el thread de conversación');
+                }
+            } catch (\Exception $openaiError) {
+                Log::warning('OpenAI no disponible para chat quote', [
+                    'error' => $openaiError->getMessage(),
+                    'client_id' => $client->id
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'error' => 'No se pudo crear/obtener el thread de conversación'
-                ], 500);
+                    'error' => 'Servicio de chat temporalmente no disponible. Intenta nuevamente en unos momentos.',
+                    'error_type' => 'openai_unavailable'
+                ], 503);
             }
 
             // Verificar si hay un run activo antes de crear el mensaje

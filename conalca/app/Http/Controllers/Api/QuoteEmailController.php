@@ -14,6 +14,11 @@ class QuoteEmailController extends Controller
     public function sendQuoteEmail(Request $request)
     {
         try {
+            Log::info('Datos recibidos para envío de email', [
+                'request_data' => $request->all(),
+                'user_id' => auth()->id()
+            ]);
+
             // Validar datos requeridos
             $request->validate([
                 'group_id' => 'required|integer|exists:group_cotizations,id',

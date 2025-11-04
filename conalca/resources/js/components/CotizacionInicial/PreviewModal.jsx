@@ -209,6 +209,15 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
       console.log('Cotización guardada exitosamente:', result);
       
+      // Verificar el group_id antes de enviar el email
+      const groupId = result.data?.group_id || result.group_id;
+      console.log('Group ID para email:', groupId);
+      console.log('Estructura del result:', result);
+      
+      if (!groupId) {
+        throw new Error('No se pudo obtener el group_id de la respuesta del servidor');
+      }
+      
       // Ahora enviar el email real de la cotización
       console.log('Enviando email de cotización...');
       
@@ -221,7 +230,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
           },
           body: JSON.stringify({
-            group_id: result.group_id,
+            group_id: groupId,
             client_email: emailData.clientEmail,
             email_data: {
               title: emailData.titleEmail,
