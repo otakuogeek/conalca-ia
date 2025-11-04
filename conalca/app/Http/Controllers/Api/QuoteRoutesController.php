@@ -70,6 +70,7 @@ class QuoteRoutesController extends Controller
                     'tipo_producto' => $routeData['tipo_producto'] ?? 'Mercancía general',
                     'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                     'valor_declarado' => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
+                    'pricing_id' => null, // Agregar pricing_id como nulo inicialmente
                     'estado' => 'creada',
                     'decision_cliente' => 'pendiente',
                     'created_at' => now(),

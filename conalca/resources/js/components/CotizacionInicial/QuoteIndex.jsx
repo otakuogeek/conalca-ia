@@ -1,7 +1,6 @@
 // resources/js/components/CotizacionInicial/QuoteIndex.jsx
 import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import QuoteList from './QuoteList';
 import QuoteModal from './QuoteModal';
 import CreateQuoteModal from './CreateQuoteModal';
 import ChatModal from './ChatModal';
@@ -15,9 +14,10 @@ export const quoteBus = new EventEmitter();
 
 const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   // Estados principales
-  const [quotes, setQuotes] = useState(initialQuotes);
+  const [quotes, setQuotes] = useState([]);
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingQuotes, setLoadingQuotes] = useState(true);
   
   // Estados de modales
   const [showModal, setShowModal] = useState(false);
@@ -62,7 +62,18 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     console.log('QuoteIndex - clientData changed:', clientData);
   }, [clientData]);
 
+  // Función simplificada para emitir refresh - los datos se manejan en ChannelsWithCustomColumns
+  const refreshQuotations = () => {
+    console.log('QuoteIndex - Emitiendo evento de refresh');
+    quoteBus.emit('refreshQuotations');
+  };
+
   // Efectos
+  useEffect(() => {
+    // Ya no necesitamos cargar cotizaciones aquí - lo hace ChannelsWithCustomColumns
+    console.log('QuoteIndex montado - las cotizaciones se cargan en ChannelsWithCustomColumns');
+  }, []);
+
   useEffect(() => {
     // Configurar listeners del event bus
     quoteBus.on('openModal', handleOpenModal);
@@ -258,6 +269,10 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         setClientData(updatedClientData);
         console.log('QuoteIndex - clientData actualizado:', updatedClientData);
         
+        // Emitir evento para que ChannelsWithCustomColumns se refresque
+        refreshQuotations();
+        console.log('QuoteIndex - Evento de refresh emitido');
+        
         // Continuar al siguiente paso
         handleCloseModal('create');
         handleOpenModal('chat');
@@ -348,11 +363,12 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           </button>
         </div>
 
-        {/* Lista de cotizaciones */}
-        <QuoteList 
-          quotes={quotes}
-          onOpenQuote={(quote) => handleOpenModal('view', quote)}
-        />
+        {/* Mensaje informativo - las cotizaciones se muestran en las columnas abajo */}
+        <div className="w-full mt-4">
+          <p className="text-gray-600 text-sm">
+            Las cotizaciones aparecen organizadas en las columnas de abajo según su estado.
+          </p>
+        </div>
       </section>
 
       {/* Modales */}

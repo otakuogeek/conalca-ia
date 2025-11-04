@@ -15,6 +15,7 @@ import { Toaster, toast } from 'react-hot-toast';
 import { FiTrash } from 'react-icons/fi';
 import { RiInsertColumnLeft } from "react-icons/ri";
 import TransitGroupModal from './TransitGroupModal';
+import { quoteBus } from '../CotizacionInicial/QuoteIndex';
 
 /* ------------- 🔥 1. COLUMNAS FIJAS ------------------------------ *
  * Quitamos las dos que ya no se usan y añadimos "Completada".
@@ -53,10 +54,30 @@ function ChannelsWithCustomColumns() {
   }, []);
 
   /* --------------------- GET GROUPS ----------------------------- */
-  useEffect(() => {
+  const loadGroups = () => {
     fetchGroupQuotations().then(res => {
+      console.log('ChannelsWithCustomColumns - Datos de API:', res.data);
+      console.log('ChannelsWithCustomColumns - Grupos encontrados:', res.data.data);
       setGroups(res.data.data || []);
     });
+  };
+
+  useEffect(() => {
+    loadGroups();
+  }, []);
+
+  /* -------------- ESCUCHAR EVENTOS DE REFRESH ------------------ */
+  useEffect(() => {
+    const handleRefresh = () => {
+      console.log('ChannelsWithCustomColumns: Refreshing quotations...');
+      loadGroups();
+    };
+
+    quoteBus.on('refreshQuotations', handleRefresh);
+    
+    return () => {
+      quoteBus.off('refreshQuotations', handleRefresh);
+    };
   }, []);
 
   // Ya no abrimos modal; redirigimos a una página dedicada.
@@ -175,7 +196,7 @@ function ChannelsWithCustomColumns() {
       updateGroupStatus(draggableId,
         destCol.name === 'Pre-Solicitud' ? 'borrador' : destCol.name
       )
-        .then(() => fetchGroupQuotations().then(res => setGroups(res.data.data || [])))
+        .then(() => loadGroups())
         .then(() => toast.success('Estado actualizado correctamente.'))
         .catch(err  => {
           console.error(err);
@@ -291,8 +312,7 @@ function ChannelsWithCustomColumns() {
                             if (!window.confirm("¿Eliminar columna personalizada?")) return;
                             deleteUserColumn(col.id).then(() => {
                               setCustomColumns(cs => cs.filter(c => c.id !== col.id));
-                              fetchGroupQuotations()
-                                .then(r => setGroups(r.data.data || []));
+                              loadGroups();
                             });
                           }}
                           title="Eliminar columna"

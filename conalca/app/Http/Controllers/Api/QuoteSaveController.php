@@ -55,6 +55,10 @@ class QuoteSaveController extends Controller
                 // Obtener un pricing por defecto para las cotizaciones del chat
                 $defaultPricing = \App\Models\Pricing::first();
                 
+                // Calcular precio final si se envió desde el frontend
+                $finalValue = $routeData['finalValue'] ?? 0;
+                $porcentaje = $routeData['porcentaje'] ?? 0;
+                
                 $cotizacion = CotizacionModel::create([
                     'pricing_id' => $defaultPricing ? $defaultPricing->id : 61,
                     'group_cotization_id' => $group->id,
@@ -65,6 +69,8 @@ class QuoteSaveController extends Controller
                     'tipo_producto' => $routeData['tipo_producto'] ?? '',
                     'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Camión sencillo',
                     'valor_declarado' => $this->extractNumericValue($routeData['valor_declarado'] ?? '0'),
+                    'valor' => $finalValue, // Guardar el precio final calculado
+                    'porcentaje' => $porcentaje, // Guardar el porcentaje aplicado
                     'cantidad' => $routeData['cantidad'] ?? '1',
                     'tipo_embajale' => $routeData['tipo_embajale'] ?? 'Bultos',
                     'dimensiones_exactas' => $routeData['dimensiones_exactas'] ?? 'No especificado',

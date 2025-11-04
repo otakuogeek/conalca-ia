@@ -8,64 +8,19 @@ const SuccessModal = ({ onClose, quoteData, clientData, threadId }) => {
   const [emailSent, setEmailSent] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [groupId, setGroupId] = useState(null);
-  const [saveError, setSaveError] = useState(null);
-
-  // Función para guardar la cotización en el backend
-  const saveQuoteToBackend = async () => {
-    try {
-      console.log('Guardando cotización en backend:', {
-        client_id: clientData.clientId,
-        quote_data: quoteData,
-        thread_id: threadId,
-        type_business: clientData.typeBusiness || 'Terrestre'
-      });
-
-      const response = await fetch('/api/chat/save-quote-from-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-        },
-        body: JSON.stringify({
-          client_id: clientData.clientId,
-          quote_data: quoteData,
-          thread_id: threadId,
-          type_business: clientData.typeBusiness || 'Terrestre'
-        })
-      });
-
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(result.error || 'Error al guardar la cotización');
-      }
-
-      console.log('Cotización guardada exitosamente:', result);
-      setGroupId(result.data.group_id);
-      setEmailSent(true);
-      setIsLoading(false);
-
-    } catch (error) {
-      console.error('Error guardando cotización:', error);
-      setSaveError(error.message);
-      setIsLoading(false);
-    }
-  };
+  const [saveError, setSaveError] = useState(null); // No hay error - la cotización fue guardada exitosamente en PreviewModal
 
   // Guardar la cotización automáticamente al cargar el modal
   useEffect(() => {
-    if (quoteData && clientData && clientData.clientId) {
-      saveQuoteToBackend();
-    } else {
-      // Si no hay datos suficientes, simular el guardado anterior
-      const timer = setTimeout(() => {
-        setEmailSent(true);
-        setIsLoading(false);
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [quoteData, clientData, threadId]);
+    // La cotización ya fue guardada en PreviewModal, solo simular el proceso
+    console.log('SuccessModal: La cotización ya fue guardada en PreviewModal');
+    const timer = setTimeout(() => {
+      setEmailSent(true);
+      setIsLoading(false);
+      setSaveError(null); // Asegurar que no hay error
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   const calculateTotal = () => {
     return quoteData.reduce((total, route) => {

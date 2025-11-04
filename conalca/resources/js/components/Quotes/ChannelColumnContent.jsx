@@ -142,7 +142,7 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-900">
-                      {group.client?.name ?? "Cliente no asignado"}
+                      {group.client?.cliente ?? group.client?.name ?? "Cliente no asignado"}
                     </p>
                     <p className="text-xs text-gray-500">Cliente</p>
                   </div>
@@ -152,9 +152,11 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
               {/* LISTA DE COTIZACIONES */}
               <div className="flex flex-col px-6 py-4 gap-3">
                 {group.cotizaciones.map((quote, i) => {
+                  // Usar el precio guardado directamente o calcular si no existe
+                  const valorGuardado = parseFloat(quote.valor ?? 0);
                   const precioBase = parseFloat(quote.pricing?.price ?? 0);
                   const porcentaje = parseFloat(quote.porcentaje ?? 0);
-                  const total = precioBase + (precioBase * porcentaje) / 100;
+                  const total = valorGuardado > 0 ? valorGuardado : (precioBase + (precioBase * porcentaje) / 100);
 
                   const solicitudCompletada =
                     quote.solicitud && quote.solicitud.estado === "completada";

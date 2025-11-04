@@ -53,12 +53,26 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
     setSaving(true);
     
+    // Validar datos requeridos antes de enviar
+    if (!clientData.clientId) {
+      alert('Error: No se ha seleccionado un cliente válido.');
+      setSaving(false);
+      return;
+    }
+
+    if (!quoteData || quoteData.length === 0) {
+      alert('Error: No hay rutas de cotización para guardar.');
+      setSaving(false);
+      return;
+    }
+    
     try {
       console.log('Guardando cotización en backend...', {
         clientData,
         quoteData,
         selectedPricings
       });
+      console.log('QuoteData estructura:', JSON.stringify(quoteData, null, 2));
 
       // Preparar los datos para el nuevo sistema de guardado
       const quotesToSave = quoteData.map((route, index) => {
@@ -68,19 +82,26 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         const finalValue = basePrice + (basePrice * porcentaje / 100);
         
         return {
-          ciudad_origen: route.ciudad_origen,
-          ciudad_destino: route.ciudad_destino,
-          peso_mercancia: route.peso_mercancia,
-          tipo_producto: route.tipo_producto,
-          vehiculo_requerido: route.vehiculo_requerido,
-          valor_declarado: route.valor_declarado,
+          ciudad_origen: String(route.ciudad_origen || ''),
+          ciudad_destino: String(route.ciudad_destino || ''),
+          peso_mercancia: String(route.peso_mercancia || ''),
+          tipo_producto: String(route.tipo_producto || ''),
+          vehiculo_requerido: String(route.vehiculo_requerido || ''),
+          valor_declarado: String(route.valor_declarado || ''),
           finalValue: finalValue,
           porcentaje: porcentaje,
-          cantidad: route.cantidad || '1',
-          tipo_embajale: route.tipo_embajale || 'Bultos',
-          dimensiones_exactas: route.dimensiones_exactas || 'No especificado',
-          registro_fotografico: route.registro_fotografico || 'No requerido'
+          cantidad: String(route.cantidad || '1'),
+          tipo_embajale: String(route.tipo_embajale || 'Bultos'),
+          dimensiones_exactas: String(route.dimensiones_exactas || 'No especificado'),
+          registro_fotografico: String(route.registro_fotografico || 'No requerido')
         };
+      });
+
+      console.log('Datos a enviar:', {
+        client_id: clientData.clientId,
+        quote_data: quotesToSave,
+        thread_id: clientData.threadId || null,
+        type_business: clientData.typeBusiness || 'Terrestre'
       });
 
       // Llamar a nuestro nuevo endpoint para guardar la cotización
@@ -101,8 +122,11 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
       const result = await response.json();
       
+      console.log('Respuesta del servidor:', result);
+      
       if (!response.ok) {
-        throw new Error(result.error || 'Error al guardar la cotización');
+        console.error('Error del servidor:', response.status, result);
+        throw new Error(result.message || result.error || 'Error al guardar la cotización');
       }
 
       console.log('Cotización guardada exitosamente:', result);
