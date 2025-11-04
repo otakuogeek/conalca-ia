@@ -236,6 +236,11 @@ Route::prefix('audio')->group(function () {
 // Cotización Cliente API
 Route::get('grupo-cotizacion/{id}', [App\Http\Controllers\Api\CotizacionClienteController::class, 'getGroupData'])->name('api.grupo-cotizacion.show');
 
+// Recuperación de grupos de cotización para continuar progreso
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('groups/{id}/recover', [App\Http\Controllers\Api\GroupRecoveryController::class, 'recover'])->name('api.groups.recover');
+});
+
 // Búsqueda en tiempo real de empresas
 Route::get('companies/search', [App\Http\Controllers\Api\CompanySearchController::class, 'search'])->name('api.companies.search');
 

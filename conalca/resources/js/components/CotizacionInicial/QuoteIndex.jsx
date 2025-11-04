@@ -68,10 +68,127 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     quoteBus.emit('refreshQuotations');
   };
 
+  // Función para continuar cotización desde un grupo existente
+  const handleContinueQuotation = async (groupId, searchParam) => {
+    try {
+      setLoading(true);
+      console.log('Recuperando datos del grupo:', groupId);
+      
+      // Llamar al backend para obtener los datos del grupo
+      const response = await fetch(`/api/groups/${groupId}/recover`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Error al recuperar los datos del grupo');
+      }
+      
+      const result = await response.json();
+      console.log('Datos recuperados:', result);
+      
+      if (result.success) {
+        const { client, group, cotizaciones } = result.data;
+        
+        // Restaurar datos del cliente
+        setClientData(prev => ({
+          ...prev,
+          search: searchParam || client.documento || '',
+          clientId: client.id,
+          clientName: client.cliente || client.name,
+          documentClient: client.documento,
+          clientCompanyName: client.cliente || client.name,
+          clientLocation: client.ciudad,
+          clientPhoneNumbers: client.telefono,
+          clientPersonalCell: client.telefono,
+          clientEmail: client.email,
+          clientAddress: client.direccion,
+          clientBranchOffice: client.branch_office || '',
+          clientSalesRepresentative: client.vendedor_nombre || '',
+          clientContact: client.contacto,
+          clientCargo: client.cargo,
+          clientType: 'cash', // Siempre contado
+          operationType: group.operation_type || '',
+          typeBusiness: group.type || '',
+          groupId: group.id,
+          threadId: group.openai_thread_id
+        }));
+        
+        // Si hay cotizaciones, restaurar los datos de rutas
+        if (cotizaciones && cotizaciones.length > 0) {
+          const routeData = cotizaciones.map(cot => ({
+            ciudad_origen: cot.ciudad_origen,
+            ciudad_destino: cot.ciudad_destino,
+            codigo_dane_origen: cot.ciudad_origen_dane,
+            codigo_dane_destino: cot.ciudad_destino_dane,
+            peso_mercancia: cot.peso_mercancia,
+            cantidad: cot.cantidad,
+            tipo_embajale: cot.tipo_embajale,
+            dimensiones_exactas: cot.dimensiones_exactas,
+            valor_declarado: cot.valor_declarado,
+            tipo_mercancia: cot.tipo_mercancia,
+            porcentaje: cot.porcentaje,
+            select_value: cot.pricing_id,
+            vehiculo_requerido: cot.pricing?.vehicle_type || '',
+            // Restaurar parámetros automáticos
+            candado_satelital: cot.candado_satelital || 0,
+            jen_set: cot.jen_set || 0,
+            combustible: cot.combustible || 0,
+            kit_derrames: cot.kit_derrames || 0,
+            pictogramas: cot.pictogramas || 0
+          }));
+          
+          setQuoteData(routeData);
+          
+          // Si ya hay precios configurados, ir directo al modal de precios
+          const hasPricings = cotizaciones.some(cot => cot.pricing_id);
+          if (hasPricings) {
+            console.log('Cotización con precios encontrada, abriendo PricingModal');
+            setShowPricingModal(true);
+            setStep(2);
+          } else {
+            console.log('Cotización sin precios, abriendo ChatModal');
+            setShowChatModal(true);
+            setStep(1);
+          }
+        } else {
+          // No hay rutas, empezar desde el chat
+          console.log('Grupo sin rutas, abriendo ChatModal');
+          setShowChatModal(true);
+          setStep(1);
+        }
+        
+        // Mostrar mensaje de recuperación exitosa
+        console.log('✅ Cotización recuperada exitosamente');
+        
+      } else {
+        throw new Error(result.message || 'Error al recuperar la cotización');
+      }
+      
+    } catch (error) {
+      console.error('Error al continuar cotización:', error);
+      alert('Error al recuperar la cotización. Por favor, intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Efectos
   useEffect(() => {
     // Ya no necesitamos cargar cotizaciones aquí - lo hace ChannelsWithCustomColumns
     console.log('QuoteIndex montado - las cotizaciones se cargan en ChannelsWithCustomColumns');
+    
+    // Verificar si hay un parámetro "continue" en la URL para recuperar progreso
+    const urlParams = new URLSearchParams(window.location.search);
+    const continueGroupId = urlParams.get('continue');
+    const searchParam = urlParams.get('search');
+    
+    if (continueGroupId) {
+      console.log('Detectado parámetro continue:', continueGroupId);
+      handleContinueQuotation(continueGroupId, searchParam);
+    }
   }, []);
 
   useEffect(() => {

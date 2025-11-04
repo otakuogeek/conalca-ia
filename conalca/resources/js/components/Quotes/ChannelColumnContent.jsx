@@ -21,6 +21,18 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
     window.open(`/cotizacion/grupo/${groupId}/responder`, '_blank');
   };
 
+  const handleContinueQuote = (group) => {
+    // Obtener información del cliente para reconstruir la URL
+    const clientDocument = group.client?.documento;
+    if (clientDocument) {
+      // Redirigir a la página de cotizaciones con el cliente pre-cargado
+      window.location.href = `/cotizacion?search=${clientDocument}&continue=${group.id}`;
+    } else {
+      // Si no hay documento, redirigir solo con el ID del grupo
+      window.location.href = `/cotizacion?continue=${group.id}`;
+    }
+  };
+
   if (!groups || groups.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
@@ -62,6 +74,17 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
             >
               {/* Botones de acción flotantes */}
               <div className="absolute top-4 right-4 flex gap-2 z-10">
+                {/* Botón "Continuar cotización" para grupos incompletos */}
+                {(group.status?.toLowerCase() === "pre-solicitud" && group.cotizaciones.length === 0) && (
+                  <button
+                    title="Continuar cotización incompleta"
+                    onClick={() => handleContinueQuote(group)}
+                    className="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
+                  >
+                    <FaRegEdit className="w-4 h-4" />
+                  </button>
+                )}
+
                 {/* Botón "En tránsito" */}
                 {(group.status?.toLowerCase() === "en tránsito" ||
                   group.status?.toLowerCase() === "en transito") && (

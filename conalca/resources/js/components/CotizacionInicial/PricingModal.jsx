@@ -95,6 +95,65 @@ const PricingModal = ({
     }
   };
 
+  const handleParameterChange = (routeIndex, parameterName, value) => {
+    setQuoteData(prev => prev.map((route, index) => 
+      index === routeIndex 
+        ? { ...route, [parameterName]: parseFloat(value) || 0 }
+        : route
+    ));
+  };
+
+  const getAutomaticParameters = (route) => {
+    const parameters = [];
+    
+    // Parámetros por tipo de modalidad
+    if (clientData.typeBusiness === 'dta' || clientData.typeBusiness === 'otm') {
+      parameters.push({
+        name: 'candado_satelital',
+        label: 'Candado Satelital',
+        required: true,
+        color: 'blue'
+      });
+    }
+    
+    // Parámetros por tipo de carga
+    if (clientData.cargoType === 'refrigerado') {
+      parameters.push(
+        {
+          name: 'jen_set',
+          label: 'Jen set',
+          required: true,
+          color: 'green'
+        },
+        {
+          name: 'combustible',
+          label: 'Combustible',
+          required: true,
+          color: 'green'
+        }
+      );
+    }
+    
+    if (clientData.cargoType === 'dangerous') {
+      parameters.push(
+        {
+          name: 'kit_derrames',
+          label: 'Kit de derrames',
+          required: true,
+          color: 'red'
+        },
+        {
+          name: 'pictogramas',
+          label: 'Pictogramas',
+          required: true,
+          color: 'red'
+        }
+      );
+    }
+    
+    return parameters;
+  };
+
   const handlePorcentajeChange = (routeIndex, value) => {
     const porcentaje = parseFloat(value) || 0;
     
@@ -135,8 +194,15 @@ const PricingModal = ({
     const porcentaje = route.porcentaje || 0;
     const acompanamiento = parseFloat(route.itesoltra_acompanamientovalor) || 0;
     
+    // Agregar costos de parámetros automáticos
+    let parametersTotal = 0;
+    const parameters = getAutomaticParameters(route);
+    parameters.forEach(param => {
+      parametersTotal += parseFloat(route[param.name]) || 0;
+    });
+    
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    return valueWithMargin + acompanamiento;
+    return valueWithMargin + acompanamiento + parametersTotal;
   };
 
   const canContinue = () => {
@@ -262,74 +328,103 @@ const PricingModal = ({
                     <th className="text-left px-3 py-2 product-sans">Destino</th>
                     <th className="text-left px-3 py-2 product-sans">Vehículo</th>
                     <th className="text-center px-3 py-2 product-sans">Precio Base</th>
+                    <th className="text-center px-3 py-2 product-sans">Parámetros</th>
                     <th className="text-center px-3 py-2 product-sans">Rent.(%)</th>
                     <th className="text-center px-3 py-2 product-sans">Valor Cliente</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {quoteData.map((route, index) => (
-                    <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
-                      <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
-                        {route.ciudad_origen || '-'}
-                      </td>
-                      <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
-                        {route.ciudad_destino || '-'}
-                      </td>
-                      <td className="px-3 py-2">
-                        {/* Sugerencia de la IA */}
-                        {vehicleSuggestions[index] && (
-                          <div className="text-[10px] mb-1 rounded bg-blue-50 text-blue-600 px-1.5 py-0.5">
-                            IA sugiere: <strong>{vehicleSuggestions[index].vehicle}</strong>
-                            <span className="text-gray-500"> / {vehicleSuggestions[index].bodywork}</span>
-                          </div>
-                        )}
-                        
-                        {/* Selector de vehículo */}
-                        <select 
-                          value={route.select_value || ''}
-                          onChange={(e) => handleVehicleSelect(index, e.target.value)}
-                          className="w-full px-2 py-2 text-xs border border-gray-300 rounded h-10 focus:outline-none focus:ring-1 focus:ring-orange-400"
-                        >
-                          <option value="">Selecciona vehículo</option>
-                          {(pricings[index] || []).map(pricing => (
-                            <option key={pricing.id} value={pricing.id}>
-                              {pricing.vehicle_type}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="text-xs font-600 text-gray-700 product-sans">
-                          ${selectedPricings[index] ? Number(selectedPricings[index].price).toLocaleString() : '0'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-col items-center space-y-1">
-                          <input 
-                            type="number"
-                            value={route.porcentaje || ''}
-                            onChange={(e) => handlePorcentajeChange(index, e.target.value)}
-                            className={`w-20 px-3 py-2 text-sm text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent product-sans bg-white font-medium h-10 ${
-                              errors[`porcentaje_${index}`] ? 'border-red-500 bg-red-50' : 'border-gray-300'
-                            }`}
-                            placeholder="%" 
-                            min="17" 
-                            max="100" 
-                          />
-                          {errors[`porcentaje_${index}`] && (
-                            <span className="text-red-500 text-xs text-center product-sans">
-                              Min 17%
-                            </span>
+                  {quoteData.map((route, index) => {
+                    const automaticParameters = getAutomaticParameters(route);
+                    
+                    return (
+                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
+                        <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
+                          {route.ciudad_origen || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs font-500 text-gray-700 product-sans">
+                          {route.ciudad_destino || '-'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {/* Sugerencia de la IA */}
+                          {vehicleSuggestions[index] && (
+                            <div className="text-[10px] mb-1 rounded bg-blue-50 text-blue-600 px-1.5 py-0.5">
+                              IA sugiere: <strong>{vehicleSuggestions[index].vehicle}</strong>
+                              <span className="text-gray-500"> / {vehicleSuggestions[index].bodywork}</span>
+                            </div>
                           )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="text-xs font-700 text-orange-600">
-                          ${Number(calculateFinalValue(index)).toLocaleString()}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                          
+                          {/* Selector de vehículo */}
+                          <select 
+                            value={route.select_value || ''}
+                            onChange={(e) => handleVehicleSelect(index, e.target.value)}
+                            className="w-full px-2 py-2 text-xs border border-gray-300 rounded h-10 focus:outline-none focus:ring-1 focus:ring-orange-400"
+                          >
+                            <option value="">Selecciona vehículo</option>
+                            {(pricings[index] || []).map(pricing => (
+                              <option key={pricing.id} value={pricing.id}>
+                                {pricing.vehicle_type}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="text-xs font-600 text-gray-700 product-sans">
+                            ${selectedPricings[index] ? Number(selectedPricings[index].price).toLocaleString() : '0'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          {/* Parámetros automáticos */}
+                          {automaticParameters.length > 0 ? (
+                            <div className="space-y-2">
+                              {automaticParameters.map((param) => (
+                                <div key={param.name} className="flex flex-col items-center">
+                                  <label className={`text-[10px] font-medium mb-1 text-${param.color}-600 product-sans text-center`}>
+                                    {param.label}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    value={route[param.name] || ''}
+                                    onChange={(e) => handleParameterChange(index, param.name, e.target.value)}
+                                    className={`w-20 px-2 py-1 text-xs text-center border border-${param.color}-300 rounded focus:outline-none focus:ring-1 focus:ring-${param.color}-400 product-sans`}
+                                    placeholder="$"
+                                    min="0"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-400 text-center">-</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-col items-center space-y-1">
+                            <input 
+                              type="number"
+                              value={route.porcentaje || ''}
+                              onChange={(e) => handlePorcentajeChange(index, e.target.value)}
+                              className={`w-20 px-3 py-2 text-sm text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent product-sans bg-white font-medium h-10 ${
+                                errors[`porcentaje_${index}`] ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                              }`}
+                              placeholder="%" 
+                              min="17" 
+                              max="100" 
+                            />
+                            {errors[`porcentaje_${index}`] && (
+                              <span className="text-red-500 text-xs text-center product-sans">
+                                Min 17%
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="text-xs font-700 text-orange-600">
+                            ${Number(calculateFinalValue(index)).toLocaleString()}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -346,6 +441,7 @@ const PricingModal = ({
               onSelect={() => applyGlobalPorcentaje(17)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
+              clientData={clientData}
             />
 
             {/* Propuesta 2: 24% */}
@@ -357,6 +453,7 @@ const PricingModal = ({
               onSelect={() => applyGlobalPorcentaje(24)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
+              clientData={clientData}
             />
 
             {/* Propuesta 3: 32% */}
@@ -368,6 +465,7 @@ const PricingModal = ({
               onSelect={() => applyGlobalPorcentaje(32)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
+              clientData={clientData}
             />
           </div>
         </div>
@@ -400,17 +498,76 @@ const PricingModal = ({
   );
 };
 
-const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quoteData, selectedPricings }) => {
+const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quoteData, selectedPricings, clientData }) => {
   const calculateTotal = () => {
     return Object.keys(selectedPricings).reduce((total, index) => {
       const pricing = selectedPricings[index];
-      if (pricing) {
+      const route = quoteData[index];
+      if (pricing && route) {
         const basePrice = pricing.price;
         const withMargin = basePrice + (basePrice * percentage / 100);
-        return total + withMargin;
+        
+        // Agregar parámetros automáticos
+        let parametersTotal = 0;
+        const parameters = getAutomaticParameters();
+        parameters.forEach(param => {
+          parametersTotal += parseFloat(route[param.name]) || 0;
+        });
+        
+        return total + withMargin + parametersTotal;
       }
       return total;
     }, 0);
+  };
+
+  const getAutomaticParameters = () => {
+    const parameters = [];
+    
+    // Parámetros por tipo de modalidad
+    if (clientData.typeBusiness === 'dta' || clientData.typeBusiness === 'otm') {
+      parameters.push({
+        name: 'candado_satelital',
+        label: 'Candado Satelital',
+        required: true,
+        color: 'blue'
+      });
+    }
+    
+    if (clientData.cargoType === 'refrigerado') {
+      parameters.push(
+        {
+          name: 'jen_set',
+          label: 'Jen set',
+          required: true,
+          color: 'green'
+        },
+        {
+          name: 'combustible',
+          label: 'Combustible',
+          required: true,
+          color: 'green'
+        }
+      );
+    }
+    
+    if (clientData.cargoType === 'dangerous') {
+      parameters.push(
+        {
+          name: 'kit_derrames',
+          label: 'Kit de derrames',
+          required: true,
+          color: 'red'
+        },
+        {
+          name: 'pictogramas',
+          label: 'Pictogramas',
+          required: true,
+          color: 'red'
+        }
+      );
+    }
+    
+    return parameters;
   };
 
   return (
@@ -440,19 +597,35 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
         <div className="border-t border-gray-200 pt-2 flex-1 w-full flex flex-col items-center justify-center">
           {/* Lista de precios por ruta */}
           <div className="flex flex-col space-y-3 mb-2 w-full items-center justify-center">
-            {quoteData.map((route, index) => (
-              <div key={index} className="flex flex-col items-center w-full">
-                <div className="text-xs text-gray-500 product-sans mb-1 text-center">
-                  {(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+            {quoteData.map((route, index) => {
+              const pricing = selectedPricings[index];
+              let finalRoutePrice = 0;
+              
+              if (pricing) {
+                const basePrice = pricing.price;
+                const withMargin = basePrice + (basePrice * percentage / 100);
+                
+                // Agregar parámetros automáticos
+                let parametersTotal = 0;
+                const parameters = getAutomaticParameters();
+                parameters.forEach(param => {
+                  parametersTotal += parseFloat(route[param.name]) || 0;
+                });
+                
+                finalRoutePrice = withMargin + parametersTotal;
+              }
+              
+              return (
+                <div key={index} className="flex flex-col items-center w-full">
+                  <div className="text-xs text-gray-500 product-sans mb-1 text-center">
+                    {(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                  </div>
+                  <div className="text-xs font-600 text-orange-600 product-sans text-center">
+                    ${Number(finalRoutePrice).toLocaleString()}
+                  </div>
                 </div>
-                <div className="text-xs font-600 text-orange-600 product-sans text-center">
-                  ${selectedPricings[index] 
-                    ? Number(selectedPricings[index].price + selectedPricings[index].price * percentage / 100).toLocaleString()
-                    : '0'
-                  }
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           
           <div className="border-t border-gray-200 pt-2 mt-auto w-full flex flex-col items-center justify-center">
@@ -488,7 +661,8 @@ RentabilityCard.propTypes = {
   isActive: PropTypes.bool.isRequired,
   onSelect: PropTypes.func.isRequired,
   quoteData: PropTypes.array.isRequired,
-  selectedPricings: PropTypes.object.isRequired
+  selectedPricings: PropTypes.object.isRequired,
+  clientData: PropTypes.object.isRequired
 };
 
 export default PricingModal;
