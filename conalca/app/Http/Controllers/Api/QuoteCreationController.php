@@ -40,6 +40,7 @@ class QuoteCreationController extends Controller
             Log::info('Creando grupo de cotización con parámetros automáticos', [
                 'user_id' => $userId,
                 'client_id' => $request->client_id,
+                'operation_type' => $request->operation_type,
                 'type_business' => $request->type_business,
                 'cargo_type' => $request->cargo_type,
                 'parametros_automaticos' => [
@@ -56,6 +57,7 @@ class QuoteCreationController extends Controller
                 'user_id' => $userId,
                 'client_id' => $request->client_id,
                 'type' => $request->type_business,
+                'operation_type' => $request->operation_type,
                 'status' => 'borrador',
                 'candado_satelital' => $request->candado_satelital ?? false,
                 'cargo_type' => $request->cargo_type,

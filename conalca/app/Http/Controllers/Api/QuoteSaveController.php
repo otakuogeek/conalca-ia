@@ -24,7 +24,8 @@ class QuoteSaveController extends Controller
             'quote_data.*.vehiculo_requerido' => 'nullable|string',
             'quote_data.*.valor_declarado' => 'nullable|string',
             'thread_id' => 'nullable|string',
-            'type_business' => 'required|string'
+            'type_business' => 'required|string',
+            'operation_type' => 'nullable|string'
         ]);
 
         DB::beginTransaction();
@@ -45,6 +46,7 @@ class QuoteSaveController extends Controller
                 'user_id' => $userId,
                 'client_id' => $request->client_id,
                 'type' => $request->type_business,
+                'operation_type' => $request->operation_type,
                 'status' => 'Pre-Solicitud', // Estado inicial para la columna
                 'openai_thread_id' => $request->thread_id,
                 'created_from_chat' => true

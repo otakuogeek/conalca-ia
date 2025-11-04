@@ -296,6 +296,10 @@ Route::prefix('chat')->group(function () {
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.quote');
         
+    Route::post('/clear-stuck-runs', [App\Http\Controllers\Api\ChatController::class, 'clearStuckRuns'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.clear.stuck.runs');
+        
     Route::get('/messages/{threadId}', [App\Http\Controllers\Api\ChatController::class, 'getMessages'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.messages');

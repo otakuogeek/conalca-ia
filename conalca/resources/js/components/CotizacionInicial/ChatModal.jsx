@@ -442,10 +442,29 @@ const ChatModal = ({
           })
         });
 
-        // Manejar tanto respuestas exitosas como conflictos (409) que indican procesamiento activo
+        // Manejar respuestas exitosas, conflictos (409) y timeouts (503/500)
         let data;
-        if (response.ok || response.status === 409) {
+        if (response.ok || response.status === 409 || response.status === 503) {
           data = await response.json();
+        } else if (response.status === 500) {
+          // Error interno del servidor (probablemente timeout)
+          console.error('❌ Error 500 - Timeout del servidor');
+          setInputMessage(messageText); // Restaurar mensaje
+          setProcessingMessage(null);
+          
+          // Mostrar mensaje de error más amigable
+          const errorMessage = {
+            role: 'system',
+            text: '⚠️ El servidor está experimentando demoras. Por favor, intenta nuevamente en unos momentos.',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'error',
+            isTemporary: false
+          };
+          
+          if (onUpdateMessages) {
+            onUpdateMessages(prev => [...prev, errorMessage]);
+          }
+          return;
         } else {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -490,6 +509,28 @@ const ChatModal = ({
           setInputMessage(messageText);
           // Quitar mensaje de "Pensando..."
           setProcessingMessage(null);
+          
+          // Manejo específico para diferentes tipos de errores
+          let errorText = '⚠️ ';
+          if (data.error && (data.error.includes('timeout') || data.error.includes('cURL') || data.error.includes('Connection timed out'))) {
+            errorText += 'El servicio está experimentando demoras. Por favor, intenta nuevamente en unos momentos.';
+          } else if (data.error && data.error.includes('maximum execution time')) {
+            errorText += 'La consulta está tomando más tiempo del esperado. Por favor, intenta con una pregunta más específica.';
+          } else {
+            errorText += 'Ha ocurrido un error temporal. Por favor, intenta nuevamente.';
+          }
+          
+          const errorMessage = {
+            role: 'system',
+            text: errorText,
+            created_at: new Date().toLocaleTimeString(),
+            status: 'error',
+            isTemporary: true
+          };
+          
+          if (onUpdateMessages) {
+            onUpdateMessages(prev => [...prev, errorMessage]);
+          }
         }
       } catch (error) {
         console.error('Error enviando mensaje:', error);
@@ -497,6 +538,28 @@ const ChatModal = ({
         setInputMessage(messageText);
         // Quitar mensaje de "Pensando..."
         setProcessingMessage(null);
+        
+        // Mostrar mensaje de error amigable
+        let errorText = '⚠️ ';
+        if (error.message && error.message.includes('NetworkError')) {
+          errorText += 'Error de conexión. Verifica tu conexión a internet y intenta nuevamente.';
+        } else if (error.message && error.message.includes('timeout')) {
+          errorText += 'La conexión está tardando demasiado. Por favor, intenta nuevamente.';
+        } else {
+          errorText += 'Ha ocurrido un error de conexión. Por favor, intenta nuevamente.';
+        }
+        
+        const errorMessage = {
+          role: 'system',
+          text: errorText,
+          created_at: new Date().toLocaleTimeString(),
+          status: 'error',
+          isTemporary: true
+        };
+        
+        if (onUpdateMessages) {
+          onUpdateMessages(prev => [...prev, errorMessage]);
+        }
       } finally {
         setIsSending(false);
       }

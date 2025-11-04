@@ -26,6 +26,11 @@ const PricingModal = ({
     generateVehicleSuggestions();
   }, [quoteData]);
 
+  // Actualizar valores finales cuando se selecciona un pricing
+  useEffect(() => {
+    // No actualizar automáticamente para evitar loops
+  }, []);
+
   const loadPricingsForRoutes = async () => {
     setLoading(true);
     try {
@@ -219,7 +224,27 @@ const PricingModal = ({
 
   const handleContinue = () => {
     if (canContinue()) {
-      onNext();
+      // Calcular y guardar los valores finales antes de continuar
+      const updatedQuoteData = quoteData.map((route, index) => {
+        const finalValue = calculateFinalValue(index);
+        console.log(`PricingModal - Ruta ${index + 1}:`, {
+          basePrice: selectedPricings[index]?.price,
+          porcentaje: route.porcentaje,
+          finalValue: finalValue
+        });
+        return {
+          ...route,
+          finalValue: finalValue
+        };
+      });
+      
+      // Actualizar el estado con los valores finales
+      setQuoteData(updatedQuoteData);
+      
+      // Pequeño delay para asegurar que el estado se actualice antes de continuar
+      setTimeout(() => {
+        onNext();
+      }, 100);
     } else {
       alert('Completa todos los campos requeridos antes de continuar.');
     }

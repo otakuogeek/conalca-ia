@@ -137,6 +137,9 @@ class ChatController extends Controller
 
     public function quoteChat(Request $request)
     {
+        // Aumentar el tiempo límite para este endpoint específico
+        set_time_limit(120); // 2 minutos para llamadas de chat
+        
         $request->validate([
             'message' => 'required|string|min:1',
             'thread_id' => 'nullable|string',
@@ -227,10 +230,22 @@ class ChatController extends Controller
             // Ejecutar el asistente
             $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
             if (!$run || !isset($run['id'])) {
+                // Si OpenAI falla, implementar fallback
+                Log::warning('OpenAI assistant falló, implementando fallback', [
+                    'client_id' => $request->client_id,
+                    'thread_id' => $threadId
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'error' => 'No se pudo ejecutar el asistente'
-                ], 500);
+                    'error' => 'openai_timeout',
+                    'message' => 'El asistente está experimentando demoras. Por favor, intenta de nuevo en unos momentos.',
+                    'data' => [
+                        'thread_id' => $threadId,
+                        'should_retry' => true,
+                        'retry_after' => 10 // segundos
+                    ]
+                ], 503); // Service Unavailable
             }
 
             // Actualizar el cliente con el run_id activo
@@ -382,6 +397,53 @@ class ChatController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Error interno del servidor: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Limpiar runs colgados de un cliente específico
+     */
+    public function clearStuckRuns(Request $request)
+    {
+        $request->validate([
+            'client_id' => 'required|integer'
+        ]);
+
+        try {
+            $client = \App\Models\Client::find($request->client_id);
+            if (!$client) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Cliente no encontrado'
+                ], 404);
+            }
+
+            // Limpiar run actual si existe
+            if ($client->openai_current_run) {
+                Log::info('Limpiando run colgado', [
+                    'client_id' => $client->id,
+                    'old_run_id' => $client->openai_current_run
+                ]);
+
+                $client->openai_current_run = null;
+                $client->save();
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Runs limpiados exitosamente'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error limpiando runs colgados', [
+                'error' => $e->getMessage(),
+                'client_id' => $request->client_id ?? 'unknown'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Error interno del servidor'
             ], 500);
         }
     }

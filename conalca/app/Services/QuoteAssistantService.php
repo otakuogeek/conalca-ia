@@ -152,7 +152,8 @@ class QuoteAssistantService
         
         try {
             // Verificar si hay runs activos antes de crear el mensaje
-            $runsRequest = Http::timeout(10)
+            $runsRequest = Http::timeout(20)  // Aumentado de 10 a 20 segundos
+                ->retry(3, 1000)  // Retry 3 veces con 1 segundo de espera
                 ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
                 ])
@@ -175,7 +176,8 @@ class QuoteAssistantService
                 }
             }
             
-            $request = Http::timeout(10)
+            $request = Http::timeout(20)  // Aumentado de 10 a 20 segundos
+                ->retry(3, 1000)  // Retry 3 veces con 1 segundo de espera
                 ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
                 ])
@@ -247,7 +249,8 @@ class QuoteAssistantService
         Log::info('Usando asistente:', ['assistant_id' => $assistant_id]);
 
         try {
-            $request = Http::timeout(10)
+            $request = Http::timeout(30)  // Aumentado a 30 segundos
+                ->retry(2, 2000)  // Solo 2 reintentos con 2 segundos
                 ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
                 ])
@@ -258,7 +261,10 @@ class QuoteAssistantService
 
             if ($request->status() == 200) {
                 $message = $request->json();
-                Log::info("Run assistant creado:", ['run_id' => $message['id'] ?? 'no_id']);
+                Log::info("Run assistant creado exitosamente:", [
+                    'run_id' => $message['id'] ?? 'no_id',
+                    'status' => $message['status'] ?? 'unknown'
+                ]);
                 if (isset($message['id'])) {
                     return [
                         'id' => $message['id']
@@ -272,9 +278,11 @@ class QuoteAssistantService
                     ];
                 }
             } else {
-                Log::error('Error al ejecutar asistente:', [
+                Log::error('Error al ejecutar asistente - HTTP Status:', [
                     'status' => $request->status(),
-                    'response' => $request->json()
+                    'response' => $request->json(),
+                    'thread_id' => $thread_id,
+                    'assistant_id' => $assistant_id
                 ]);
             }
 
@@ -283,7 +291,8 @@ class QuoteAssistantService
             Log::error('Exception running assistant:', [
                 'error' => $e->getMessage(),
                 'thread_id' => $thread_id,
-                'type_business' => $type_business
+                'type_business' => $type_business,
+                'error_type' => get_class($e)
             ]);
             return null;
         }

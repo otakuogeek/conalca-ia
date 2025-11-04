@@ -13,6 +13,7 @@ class GroupCotization extends Model
         'user_id',
         'client_id',
         'type',
+        'operation_type',
         'reference',
         'status',
         'candado_satelital',
