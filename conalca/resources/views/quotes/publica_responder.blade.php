@@ -16,7 +16,7 @@
 <body>
     <div class="container">
         <h2>Responder Cotización Grupo #{{ $grupo->id }}</h2>
-        <p>Cliente: <b>{{ $grupo->client->name ?? '' }}</b></p>
+        <p>Cliente: <b>{{ $grupo->client->cliente ?? $grupo->client->name ?? '' }}</b></p>
         <p>Referencia: <b>{{ $grupo->reference ?? '-' }}</b></p>
         <form method="POST" action="{{ route('cotizacion.publica.responder', $grupo->id) }}">
             @csrf
@@ -36,7 +36,7 @@
                                 {{ $cot->ciudad_origen }} - {{ $cot->ciudad_destino }}
                             </td>
                             <td>{{ $cot->vehiculo_requerido ?? '-' }}</td>
-                            <td>${{ number_format(optional($cot->pricing)->price + optional($cot->pricing)->price * ($cot->porcentaje/100), 0) }}</td>
+                            <td>${{ number_format($cot->valor > 0 ? $cot->valor : (optional($cot->pricing)->price + optional($cot->pricing)->price * ($cot->porcentaje/100)), 0) }}</td>
                             <td class="actions">
                                 <label>
                                     <input type="radio" name="decisiones[{{ $cot->id }}]" value="aceptada"

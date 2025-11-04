@@ -36,11 +36,17 @@ class GroupQuotationController extends Controller
                             'solicitud' => $cotizacion->solicitud // Esto mostrará null o el objeto cargado
                         ]);
                     }
-                $group->valor_total = $group->cotizaciones->where('decision_cliente','aceptada') 
-                    ->sum(function ($quote) {
-                        $precioBase = floatval($quote->pricing->price ?? 0);
-                        $porcentaje = floatval($quote->porcentaje ?? 0);
-                        return $precioBase + ($precioBase * $porcentaje / 100);
+                $group->valor_total = $group->cotizaciones->sum(function ($quote) {
+                    // Usar el valor guardado directamente o calcular si no existe
+                    $valorGuardado = floatval($quote->valor ?? 0);
+                    if ($valorGuardado > 0) {
+                        return $valorGuardado;
+                    }
+                    
+                    // Fallback al cálculo manual si no hay valor guardado
+                    $precioBase = floatval($quote->pricing->price ?? 0);
+                    $porcentaje = floatval($quote->porcentaje ?? 0);
+                    return $precioBase + ($precioBase * $porcentaje / 100);
                 });
                 return $group;
             });
