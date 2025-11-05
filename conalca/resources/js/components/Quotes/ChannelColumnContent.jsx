@@ -13,9 +13,18 @@ import Wizard from "../SolicitudWizard/Wizard";
 export default function ChannelColumnContent({ groups = [], onTransitoGroupClick = () => {} }) {
   const [wizardOpen, setWizardOpen]   = useState(false);
   const [cotizacionId, setCotizacion] = useState(null);
+  const [groupId, setGroupId] = useState(null);
 
-  const openWizard = (id) => { setCotizacion(id); setWizardOpen(true); };
-  const closeWizard= ()    => { setWizardOpen(false); setCotizacion(null); };
+  const openWizard = (id, gId = null) => { 
+    setCotizacion(id); 
+    setGroupId(gId);
+    setWizardOpen(true); 
+  };
+  const closeWizard= ()    => { 
+    setWizardOpen(false); 
+    setCotizacion(null); 
+    setGroupId(null);
+  };
 
   const goToResponsePage = (groupId) => {
     window.open(`/cotizacion/grupo/${groupId}/responder`, '_blank');
@@ -234,7 +243,7 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                             !solicitudCompletada &&
                             quote.decision_cliente?.toLowerCase() === "aceptada" && (
                               <button title="Crear solicitud"
-                                  onClick={()=>openWizard(quote.id)}
+                                  onClick={()=>openWizard(quote.id, group.id)}
                                   className="bg-gradient-to-r from-emerald-500 to-emerald-600 text-white p-2 rounded-lg">
                                   <FaRegEdit className="w-4 h-4"/>
                               </button>
@@ -265,6 +274,7 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
         <Wizard
           open={wizardOpen}
           cotizacionId={cotizacionId}
+          groupId={groupId}
           onClose={closeWizard}
         />
       )}

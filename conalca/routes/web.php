@@ -769,6 +769,11 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
         Route::get('/{cotizacion}/prefill',
             [SolicitudTransporteController::class,'prefill'])
             ->name('solicitud.prefill');
+            
+        /* ④  NUEVA RUTA – Prefill desde Grupo de Cotización             */
+        Route::get('/group/{group_id}/prefill',
+            [SolicitudTransporteController::class,'prefillFromGroup'])
+            ->name('solicitud.group.prefill');
     });
 
     Route::prefix('catalog')->controller(CatalogController::class)->group(function () {

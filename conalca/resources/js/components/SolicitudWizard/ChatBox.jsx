@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import OpenAI from 'openai';
 import EventEmitter from 'eventemitter3';
+import { searchVendedores, searchCiudades, searchClientes } from '../../api/solicitud';
 
 export const chatBus = new EventEmitter();
 
@@ -11,6 +12,7 @@ const openai = new OpenAI({
   apiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
   dangerouslyAllowBrowser: true
 });
+
 /* ---------- Voz a texto (Web Speech API) ---------- */
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const isSpeechApi = !!SpeechRec;           // true en Chrome/Edge
@@ -38,285 +40,205 @@ const ALIAS = {
 
   'vendedor'           : 'vendedor',
 
-  'tipo de operacion'  : 'tipo_operacion',
-  'tipo de operación'  : 'tipo_operacion',
+  'valor mercancia'    : 'valor_mercancia',
+  'valor mercancía'    : 'valor_mercancia',
+  'valor'              : 'valor_mercancia',
+
+  'cantidad mercancia' : 'cantidad_mercancia',
+  'cantidad mercancía' : 'cantidad_mercancia',
+  'cantidad'           : 'cantidad_mercancia',
+
   'tipo operacion'     : 'tipo_operacion',
+  'tipo operación'     : 'tipo_operacion',
+  'operacion'          : 'tipo_operacion',
+  'operación'          : 'tipo_operacion',
 
-  'centro de costo'          : 'centro_costo_despacho',
-  'centro de costo despacho' : 'centro_costo_despacho',
+  'centro costo despacho' : 'centro_costo_despacho',
+  'centro de costo'       : 'centro_costo_despacho',
+  'centro costo'          : 'centro_costo_despacho',
 
-  // STEP 2
-  // Paso 2 – Detalle  (los que todavía faltaban)
-  'destino'                     : 'destino',
-  'cantidad de mercancia'       : 'cantidad_mercancia',
-  'peso'                        : 'peso',
-  'flete conductor'             : 'flete_conductor',
-  'flete ministerio'            : 'flete_ministerio',
-  'tarifa cliente'              : 'tarifa_cliente',
-  'valor de mercancia'          : 'valor_mercancia',
-  'clase de vehículo'           : 'clase_vehiculo',
-  'carrocería'                  : 'carroceria',
-  'mínimo modelo'               : 'minimo_modelo',
-  'producto_codigo' : 'producto',
-  'codigo producto' : 'producto',
-  'empaque_codigo'  : 'empaque',
-  'codigo empaque'  : 'empaque',
+  'condicion despacho'    : 'condicion_despacho',
+  'condición despacho'    : 'condicion_despacho',
+  'condiciones despacho'  : 'condicion_despacho',
+  'condición de despacho' : 'condicion_despacho',
 
-  'tipo de flete'         : 'tipo_flete',
-  'flete'                 : 'tipo_flete',
+  'condicion facturacion' : 'condicion_facturacion',
+  'condición facturación' : 'condicion_facturacion',
+  'condiciones facturacion': 'condicion_facturacion',
+  'condición de facturación': 'condicion_facturacion',
 
-  'tipo de tarifa'        : 'tipo_tarifa',
-  'tarifa'                : 'tipo_tarifa',
+  'tipo mercancia'     : 'tipo_mercancia',
+  'tipo mercancía'     : 'tipo_mercancia',
+  'mercancia'          : 'tipo_mercancia',
+  'mercancía'          : 'tipo_mercancia',
+  'producto'           : 'tipo_mercancia',
 
-  'cargue por cuenta de'  : 'cargue_cuenta_de',
-  'cargue cuenta de'      : 'cargue_cuenta_de',
+  'peso'               : 'peso',
+  'peso total'         : 'peso',
+  'peso kg'            : 'peso',
+  'kilogramos'         : 'peso',
+  'kg'                 : 'peso',
+  'kilos'              : 'peso',
 
-  'descargue cuenta de'     : 'descargue_cuenta_de',
+  'origen'             : 'origen',
+  'ciudad origen'      : 'origen',
+  'desde'              : 'origen',
 
-  'seguro por cuenta de'  : 'seguro_cuenta_de',
-  'seguro cuenta de'      : 'seguro_cuenta_de',
+  'destino'            : 'destino',
+  'ciudad destino'     : 'destino',
+  'hacia'              : 'destino',
 
-  'kit seguridad'         : 'kit_seguridad',
-
-  'tipo de remesa'        : 'tipo_remesa_rndc',
-  'remesa rndc'           : 'tipo_remesa_rndc',
-
-  'telefono despachador' : 'fuente_solicitud',
-  'telefono atencion'    : 'fuente_solicitud',
-  'distribucion'         : 'tipo_operacion',
-
-  // nombres con espacios tal como los escribes en el prompt
-  'cantidad de mercancía' : 'cantidad_mercancia',
-
-  'valor de mercancía'    : 'valor_mercancia',
-
-  'producto código'       : 'producto',
-  'empaque código'        : 'empaque',
-
-  'cantidad de vehículos' : 'cantidad_vehiculos',
-
-  'descargue por cuenta de': 'descargue_cuenta_de',
-
-  'kit de seguridad'      : 'kit_seguridad',
-  'tipo de remesa rndc'   : 'tipo_remesa_rndc',
-  'descripción de la mercancía' : 'descripcion_mercancia',
-
-  // STEP 3
-  'fecha de cargue'        : 'fecha_cargue',
-  'hora de cargue'         : 'hora_cargue',
-  'remitente'              : 'remitente',
-  'destinatario'           : 'destinatario',
-  'contacto'               : 'contacto',
-  'promesa de servicio'    : 'promesa_servicio',
-  'documento de transporte': 'documento_transporte',
-  'observacion cargue'     : 'observacion_cargue',
-  'observación cargue'     : 'observacion_cargue',
-  // Paso 3 – Cargue
-  'observación de cargue'   : 'observacion_cargue',   // tilde
-  'observacion de cargue'   : 'observacion_cargue',   // sin tilde
-  'hora cargue'              : 'hora_cargue',          // por si escriben sin “de”
-  
-
-  // Alias adicionales para contenedor y variantes
-  'requiere_contenedor' : 'contenedor',
-  'requiere contenedor' : 'contenedor',
-  'usa contenedor'      : 'contenedor',
-  'uso contenedor'      : 'contenedor',
-  'contenedor'          : 'contenedor',
-  'contentedor'         : 'contenedor',   // error común
-  'contendor'           : 'contenedor',
-  'sin contenedor'      : 'contenedor',
-
-  // STEP 5
+  'contenedor'         : 'contenedor',
   'modalidad internacional' : 'modalidad_internacional',
-  'modalidad de transporte internacional' : 'modalidad_internacional',
-  'internacionalizada' : 'modalidad_internacional'
+  'modalidad'               : 'modalidad_internacional',
+  'vehiculo acompañamiento' : 'vehiculo_acom',
+  'vehículo acompañamiento' : 'vehiculo_acom',
+  'vehiculos acompañamiento': 'vehiculo_acom',
+  'vehículos acompañamiento': 'vehiculo_acom',
+  'vehiculo_acom'           : 'vehiculo_acom'
 };
 
-const normalizeKey = (raw) => {
-  const base = (raw || '').toLowerCase().trim();
-  const noAccent = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  return ALIAS[base] ?? ALIAS[noAccent] ?? raw;
-};
+/* ---------- normalizar campos ---------- */
+function normalizeKey(key) {
+  if (!key) return '';
+  const k = String(key).toLowerCase().trim();
+  return ALIAS[k] || k;
+}
 
-
-// helpers arriba (opcional)
-const stripQuotes = s => String(s ?? '').trim().replace(/^['"]+|['"]+$/g, '');
-
-const parseSpanishInt = (s) => {
-  const m = s.match(/\d+/);
-  if (m) return String(Math.max(0, parseInt(m[0], 10)));
-  const map = {
-    'cero':0,'uno':1,'una':1,'dos':2,'tres':3,'cuatro':4,'cinco':5,'seis':6,'siete':7,'ocho':8,'nueve':9,'diez':10,
-    'once':11,'doce':12,'trece':13,'catorce':14,'quince':15,'dieciseis':16,'dieciséis':16,'diecisiete':17,
-    'dieciocho':18,'diecinueve':19,'veinte':20
-  };
-  const v = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,' ');
-  for (const [k,val] of Object.entries(map)) {
-    if (v.includes(k)) return String(val);
-  }
-  return '';
-};
-
-const normalizeValue = (field, rawValue) => {
-  // 1) limpia comillas y espacios
-  const rawClean = stripQuotes(rawValue);
-  const v = rawClean
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .trim();
+/* ---------- normalizar valores según el campo ---------- */
+function normalizeValue(field, rawValue) {
+  if (!rawValue) return '';
+  let value = String(rawValue).trim();
 
   switch (field) {
-    case 'tipo_viaje': {
-      if (/^nac/.test(v) || /nacional/.test(v)) return 'NACIONAL';
-      if (/^urb/.test(v) || /(urbano|local|ciudad)/.test(v)) return 'URBANO';
-      if (/^int/.test(v) || /(internacional|exterior|fuera)/.test(v)) return 'INTERNACIONAL';
-      return rawClean.toUpperCase();
-    }
-    case 'moneda': {
-      if (/^(cop|m.?n.?)$/.test(v) || /(peso|col|colombia)/.test(v) || v === '$') return 'PESOS';
-      if (/^(usd|us\$|u\$s|dll?s?)$/.test(v) || /(dolar|dolares)/.test(v)) return 'DOLARES';
-      return rawClean.toUpperCase();
-    }
-    case 'contenedor': {
-      if (
-        v === 'no' ||
-        /(^|\s)no(\s|$)/.test(v) ||
-        /(sin\s+contenedor|no\s+requiere|no\s+usa|no\s+utiliza|no\s+necesita)/.test(v)
-      ) return 'NO';
-      if (
-        v === 'si' ||
-        /(requiere|con\s+contenedor|usa|utiliza|necesita)/.test(v)
-      ) return 'SI';
-      if (/^si$/i.test(rawClean)) return 'SI';
-      if (/^no$/i.test(rawClean)) return 'NO';
-      return rawClean.toUpperCase();
-    }
-    case 'modalidad_internacional': {
-      // Mapeo estricto a las 4 opciones
-      if (/^otm$/.test(v) || /terrestre\smultimodal/.test(v)) return 'OTM';
-      if (/^dta$/.test(v) || /transito\saduanero/.test(v))   return 'DTA';
-      if (/^dtai$/.test(v))                                  return 'DTAI';
-      if (/nacionalizad/.test(v))                            return 'NACIONALIZADA';
-      // fallback: intenta upper-case exacto por si ya viene bien
-      const up = rawClean.toUpperCase().replace(/\s+/g,'');
-      if (['OTM','DTA','DTAI','NACIONALIZADA'].includes(up)) return up;
-      return up; // igual la verás en el select como no-seleccionado si no coincide
-    }
-    case "vehiculo_acom": {
-      const n = parseSpanishInt(rawClean);
-      return n || "0";
-    }
-    case 'tipo_flete': {
-      if (/cupo/.test(v))           return 'CUPO';
-      if (/consolida/.test(v))      return 'CONSOLIDADO';
-      if (/expres/.test(v))         return 'EXPRESO';
-      if (/galon/.test(v))          return 'GALON';
-      if (/van/.test(v))            return 'VAN';
-      if (/contenedor/.test(v))     return 'CONTENEDOR';
-      return 'CARGA SUELTA';        // default
-    }
-    case 'tipo_tarifa': {
-      if (/peso/.test(v))  return 'PESO';
-      if (/galon/.test(v)) return 'GALON';
-      return 'GENERAL';
-    }
-    case 'cargue_cuenta_de':
-    case 'descargue_cuenta_de': {
-      if (/empresa/.test(v))       return 'EMPRESA';
-      if (/destinat/.test(v))      return 'DESTINATARIO';
-      return 'CLIENTE';
-    }
-    case 'seguro_cuenta_de': {
-      return /empresa/.test(v) ? 'EMPRESA' : 'CLIENTE';
-    }
-    case 'kit_seguridad': {
-      return /(no|sin)/.test(v) ? 'NO' : 'SI';
-    }
-    case 'tipo_remesa_rndc': {
-      if (/vac(i|í)o/.test(v))   return 'CONTENEDOR VACIO';
-      if (/cargad/.test(v))      return 'CONTENEDOR CARGADO';
-      return 'REMESA GENERAL';
-    }
-    case 'fuente_solicitud': {
-      if (/despachador/.test(v))          return 'TELEFONO DESPACHADOR';
-      if (/atencion/.test(v))            return 'TELEFONO ATENCION CLIENTE';
-      if (/mail|correo/.test(v))         return 'MAIL';
-      if (/fax/.test(v))                 return 'FAX';
-      if (/sia/.test(v))                 return 'SIA';
-      if (/web|pagina/.test(v))          return 'PAGINA WEB';
-      return rawClean.toUpperCase();
-    }
-    case 'tipo_operacion': {
-      if (/import/.test(v))              return 'IMPORTACION';
-      if (/export/.test(v))              return 'EXPORTACION';
-      return 'DISTRIBUCION';
-    }
-    // --------------------- STEP 3 ---------------
-    case 'fecha_cargue':
-    case 'remitente':
-    case 'destinatario':
-    case 'documento_transporte':
-    case 'contacto': {
-      return rawClean;        // lo deja tal cual
-    }
-    case 'promesa_servicio': {
-      // convierte "hoy", "mañana", "dd/mm/aaaa" → YYYY-MM-DD
-      if (/hoy/.test(v))      return new Date().toISOString().slice(0,10);
-      if (/mañana/.test(v)) {
-        const d = new Date(); d.setDate(d.getDate()+1);
-        return d.toISOString().slice(0,10);
-      }
-      // dd/mm/aaaa o dd-mm-aaaa
-      const m = rawClean.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-      if (m) {
-        const [ , d, mo, y ] = m;
-        // Y si el año viene en 2 dígitos, lo expande a 4 (ej: 24 → 2024)
-        const year = y.length === 2 ? (parseInt(y,10)<50?'20'+y:'19'+y) : y.padStart(4,'0');
-        return `${year}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
-      }
-      return rawClean;
-    }
-    case 'hora_cargue': {
-      // "16:00", "4 pm", "4pm"
-      const h = rawClean.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-      if (!h) return rawClean;
-      let hh = parseInt(h[1],10);
-      const mm = h[2] ?? '00';
-      if (/pm/i.test(h[3] || '') && hh < 12) hh += 12;
-      if (/am/i.test(h[3] || '') && hh === 12) hh = 0;
-      return `${String(hh).padStart(2,'0')}:${mm}`;
-    }
+    case 'tipo_viaje':
+      const tipoUpper = value.toUpperCase();
+      if (tipoUpper.includes('NACIONAL')) return 'NACIONAL';
+      if (tipoUpper.includes('INTERNACIONAL')) return 'INTERNACIONAL';
+      if (tipoUpper.includes('URBANO')) return 'URBANO';
+      return tipoUpper;
+
+    case 'moneda':
+      const monedaUpper = value.toUpperCase();
+      if (monedaUpper.includes('PESO') || monedaUpper.includes('COP')) return 'PESOS';
+      if (monedaUpper.includes('DOLAR') || monedaUpper.includes('USD') || monedaUpper.includes('DOLLAR')) return 'DOLARES';
+      return monedaUpper;
+
+    case 'contenedor':
+      const contenedorUpper = value.toUpperCase();
+      if (contenedorUpper.includes('SI') || contenedorUpper.includes('SÍ') || contenedorUpper.includes('YES')) return 'SI';
+      if (contenedorUpper.includes('NO')) return 'NO';
+      return contenedorUpper;
+
+    case 'modalidad_internacional':
+      const modalidadUpper = value.toUpperCase();
+      if (modalidadUpper.includes('OTM')) return 'OTM';
+      if (modalidadUpper.includes('DTA')) return 'DTA';
+      if (modalidadUpper.includes('DTAI')) return 'DTAI';
+      if (modalidadUpper.includes('NACIONALIZADA')) return 'NACIONALIZADA';
+      return modalidadUpper;
+
+    case 'peso':
+    case 'valor_mercancia':
+    case 'cantidad_mercancia':
+    case 'vehiculo_acom':
+      // Extraer solo números y puntos/comas
+      const number = value.replace(/[^\d.,]/g, '').replace(',', '.');
+      return number;
+
     default:
-      return rawClean;
+      return value;
   }
+}
+
+/* ---------- Funciones de búsqueda ---------- */
+const getFunctions = () => {
+  return [
+    {
+      name: 'buscar_vendedores',
+      description: 'Busca vendedores en el sistema',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Término de búsqueda para vendedores'
+          }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'buscar_ciudades',
+      description: 'Busca ciudades en el sistema',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Término de búsqueda para ciudades'
+          }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'buscar_clientes',
+      description: 'Busca clientes en el sistema',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Término de búsqueda para clientes'
+          }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'rellenar',
+      description: 'Rellena un campo específico del formulario',
+      parameters: {
+        type: 'object',
+        properties: {
+          field: {
+            type: 'string',
+            description: 'Nombre del campo a rellenar'
+          },
+          value: {
+            type: 'string',
+            description: 'Valor para el campo'
+          }
+        },
+        required: ['field', 'value']
+      }
+    }
+  ];
 };
 
-/* ---------- Función (tool) que el modelo puede llamar ---------- */
-const FUNCTIONS = [{
-  name: 'rellenar',
-  description: 'Rellena un campo del wizard',
-  parameters: {
-    type: 'object',
-    properties: {
-      field: { type: 'string', description: 'Nombre del campo a rellenar' },
-      value: { type: 'string', description: 'Valor a colocar en el campo' }
-    },
-    required: ['field', 'value']
-  }
-}];
+const FUNCTIONS = getFunctions();
 
+/* ---------- Prompt del sistema ---------- */
+const FUNCTION_DESCRIPTIONS = `
 
-/* ---------- Instrucciones reforzadas para el modelo ---------- */
-// const SYSTEM_PROMPT = `
-// Eres un asistente que ayuda a llenar un formulario de "Encabezado".
-// Siempre que el usuario entregue datos de campos, debes llamar a la función "rellenar"
-// una vez por cada campo detectado. Repite tantas llamadas como sean necesarias
-// hasta completar todos los campos posibles en ese mensaje. No des una respuesta final
-// hasta que no hayas intentado rellenar todos los campos posibles.
+# Funciones disponibles:
 
-// Campos válidos y formatos esperados:
+## rellenar(field, value)
+Rellena un campo específico del formulario de cotización. Usa esta función cada vez que detectes información que debe ir en un campo específico.
 
+## buscar_vendedores(query)
+Busca vendedores en el sistema. Ejemplo: buscar_vendedores("juan")
+
+## buscar_ciudades(query)
+Busca ciudades en el sistema. Ejemplo: buscar_ciudades("bogota")
+
+## buscar_clientes(query)
+Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
+
+# Campos del formulario:
+
+// PASO 1 - Información básica
 // tipo_viaje: uno de [NACIONAL, URBANO, INTERNACIONAL]
 // moneda: uno de [PESOS, DOLARES]
 // fuente_solicitud: texto libre (p.ej. "TELEFONO DESPACHADOR")
@@ -327,41 +249,24 @@ const FUNCTIONS = [{
 // tipo_operacion: texto libre (p.ej. "DISTRIBUCION")
 // centro_costo_despacho: debe ser uno de los centros válidos (p.ej. "CONALCA BOGOTA", "CONALCA CALI", "CONALCA MEDELLIN")
 // cliente_codigo: numérico/string (p.ej. "2551")
+
+// PASO 2 - Origen y destino
+// origen: nombre de ciudad (p.ej. "Bogotá")
+// destino: nombre de ciudad (p.ej. "Medellín")
+
+// PASO 3 - Información de mercancía
+// tipo_mercancia: tipo de producto/mercancía (p.ej. "ALIMENTOS")
+// peso: peso en kg como número (p.ej. "500")
+// cantidad_mercancia: cantidad como número (p.ej. "100")
+// valor_mercancia: valor monetario como número (p.ej. "1000000")
+
+// PASO 4 - Contenedor
 // contenedor: uno de [SI, NO] (indica si requiere contenedor)
+
+// PASO 5 - Internacional
 // modalidad_internacional: uno de [OTM, DTA, DTAI, NACIONALIZADA]
 
-// Instrucciones:
-
-// Si el usuario usa sinónimos o lenguaje natural, convierte al nombre de campo correcto y al valor exacto de las opciones de select.
-// Ejemplos:
-// • "viaje nacional" -> tipo_viaje = "NACIONAL"
-// • "en dólares" / "USD" -> moneda = "DOLARES"
-// • "no se requiere el uso del contenedor", "sin contenedor" -> contenedor = "NO"
-// • "sí requiere contenedor", "usa contenedor" -> contenedor = "SI"
-// Cuando detectes varios campos en un mismo mensaje, llama a "rellenar" múltiples veces, una por cada campo.
-// `;
-
-// const SYSTEM_PROMPT = `
-// Eres un asistente que ayuda a llenar un formulario de "Encabezado".
-// Siempre que el usuario entregue datos de campos, debes llamar a la función "rellenar"
-// una vez por cada campo detectado. Repite tantas llamadas como sean necesarias
-// hasta completar todos los campos posibles en ese mensaje. No des una respuesta final
-// hasta que no hayas intentado rellenar todos los campos posibles.
-
-// Campos válidos y formatos esperados:
-
-// tipo_viaje: uno de [NACIONAL, URBANO, INTERNACIONAL]
-// moneda: uno de [PESOS, DOLARES]
-// fuente_solicitud: texto libre (p.ej. "TELEFONO DESPACHADOR")
-// condicion_despacho: texto libre
-// condicion_facturacion: texto libre
-// ciudad_facturacion: código DANE numérico como string (p.ej. "11001000")
-// vendedor: código de vendedor como string/numérico (p.ej. "53165050")
-// tipo_operacion: texto libre (p.ej. "DISTRIBUCION")
-// centro_costo_despacho: debe ser uno de los centros válidos (p.ej. "CONALCA BOGOTA", "CONALCA CALI", "CONALCA MEDELLIN")
-// cliente_codigo: numérico/string (p.ej. "2551")
-// contenedor: uno de [SI, NO] (indica si requiere contenedor)
-// modalidad_internacional: uno de [OTM, DTA, DTAI, NACIONALIZADA]
+// PASO 6 - Acompañamiento
 // vehiculo_acom: número entero como string (p.ej. "2") que indica la cantidad de vehículos de acompañamiento
 
 // Instrucciones:
@@ -401,33 +306,12 @@ PASO 1 - Datos básicos:
 PASO 2 - Detalle del servicio:
 - origen: "Bogotá"
 - destino: "Medellín"
-- cantidad_mercancia: "100"
-- peso: "500"
-- valor_mercancia: "25000000"
-- flete_conductor: "150000"
-- flete_ministerio: "50000"
-- producto: "Alimentos"
-- empaque: "Cajas"
-- cantidad_vehiculos: "1"
-- tipo_flete: "CARGA SUELTA"
-- tipo_tarifa: "PESO"
-- cargue_cuenta_de: "CLIENTE"
-- descargue_cuenta_de: "DESTINATARIO"
-- seguro_cuenta_de: "CLIENTE"
-- kit_seguridad: "SI"
-- tipo_remesa_rndc: "REMESA GENERAL"
-- descripcion_mercancia: "Productos alimenticios envasados"
-- tarifa_cliente: "300000"
 
-PASO 3 - Cargue:
-- fecha_cargue: "2025-10-10"
-- hora_cargue: "08:00"
-- remitente: "123"
-- destinatario: "456"
-- contacto: "300-555-1234"
-- promesa_servicio: "2025-10-12"
-- documento_transporte: "DOC001"
-- observacion_cargue: "Carga frágil, manejar con cuidado"
+PASO 3 - Información de mercancía:
+- tipo_mercancia: "ALIMENTOS"
+- peso: "500"
+- cantidad_mercancia: "100"
+- valor_mercancia: "1000000"
 
 PASO 4 - Contenedor:
 - contenedor: "NO"
@@ -470,14 +354,6 @@ export default function ChatBox() {
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const messagesEndRef = useRef(null);
-  
-  // Inicializar OpenAI
-  const openai = new OpenAI({
-    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true
-  });
-  
-  console.log('✅ OpenAI inicializado correctamente');
 
   // Helper para agregar mensajes
   const pushMsg = m => {
@@ -592,257 +468,188 @@ export default function ChatBox() {
     console.log('✅ Agregando mensaje del usuario:', userMsg);
     pushMsg(userMsg);
     
-    // Limpiar input INMEDIATAMENTE
+    // Limpiar input inmediatamente
     setUserInput('');
-    console.log('� Input limpiado');
+    console.log('🧹 Input limpiado');
     
-    // Preparar conversación
-    const convo = [...messages, userMsg];
+    // Obtener histórico completo para OpenAI
+    const newHistory = [...messages, userMsg];
+    console.log('📚 Historia completa:', newHistory.length, 'mensajes');
+    
     setIsProcessing(true);
+    console.log('⏳ Procesando...');
     
     try {
-      console.log('🤖 Iniciando comunicación con OpenAI...');
-      await runChat(convo);
-      console.log('✅ Respuesta de OpenAI recibida');
+      await runChat(newHistory);
+      console.log('✅ runChat completado exitosamente');
     } catch (error) {
-      console.error('❌ Error en OpenAI:', error);
+      console.error('❌ Error en runChat:', error);
       pushMsg({ 
         role: 'assistant', 
-        content: `⚠️ Error: ${error.message || 'No se pudo procesar tu solicitud'}` 
+        content: '❌ Error al procesar tu mensaje. Verifica la conexión y vuelve a intentar.' 
       });
     } finally {
       setIsProcessing(false);
+      console.log('🏁 Procesamiento terminado');
     }
   };
 
-  /* Crear instancia SpeechRecognition una sola vez */
-  // useEffect(() => {
-  //   if (!SpeechRec) return;          // navegador sin soporte
-  //   const rec = new SpeechRec();
-  //   rec.lang = 'es-CO';              // ajusta idioma
-  //   rec.interimResults = true;
-
-  //   rec.onstart = () => setListening(true);
-  //   rec.onend   = () => setListening(false);
-
-  //   rec.onresult = (e) => {
-  //     const texto = Array.from(e.results)
-  //       .map(r => r[0].transcript)
-  //       .join('');
-  //     inputRef.current.value = texto;
-  //   };
-  //   recognitionRef.current = rec;
-
-  //   return () => rec && rec.stop();
-  // }, []);
-
-  /* ---------- Inicializa la fuente de audio según el navegador ---------- */
-  useEffect(() => {
-    if (isSpeechApi) {
-      /* ----- Chrome / Edge / Safari macOS (cuando lo habiliten) ----- */
-      const rec = new SpeechRec();
-      rec.lang = 'es-CO';
-      rec.interimResults = true;
-
-      rec.onstart  = () => setListening(true);
-      rec.onend    = () => setListening(false);
-      rec.onresult = (e) => {
-        const texto = Array.from(e.results)
-          .map(r => r[0].transcript)
-          .join('');
-        setUserInput(texto); // ✅ Actualizar estado en lugar del ref
-      };
-
-      recognitionRef.current = rec;
-      return () => rec.stop();
-    }
-
-    /* ----- iOS: preparamos MediaRecorder + Whisper ------------------ */
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mr     = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        recorderRef.current = mr;
-
-        mr.onstart = () => {
-          chunksRef.current = [];
-          setListening(true);
-        };
-
-        mr.ondataavailable = (e) => chunksRef.current.push(e.data);
-
-        mr.onstop = async () => {
-          setListening(false);
-          const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-          const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
-
-          try {
-            const txt = await openai.audio.transcriptions.create({
-              file,
-              model: 'whisper-1',
-              response_format: 'text',
-              language: 'es'
-            });
-
-            setUserInput(txt); // ✅ Actualizar estado en lugar del ref
-          } catch (err) {
-            console.error('Whisper error', err);
-            alert('Error al transcribir audio');
-          }
-        };
-      } catch (err) {
-        console.error('Mic permission', err);
-      }
-    })();
-  }, []);
-
-  // const toggleMic = () => {
-  //   const rec = recognitionRef.current;
-  //   if (!rec) return alert('Tu navegador no soporta reconocimiento de voz');
-  //   if (listening) rec.stop();
-  //   else {
-  //     inputRef.current.focus();
-  //     rec.start();
-  //   }
-  // };
-
-  const toggleMic = () => {
-    if (isSpeechApi) {
-      const rec = recognitionRef.current;
-      if (!rec) return alert('Tu navegador no soporta reconocimiento de voz');
-      listening ? rec.stop() : rec.start();
+  /* ---------- Reconocimiento de voz ---------- */
+  const startListening = () => {
+    if (!isSpeechApi) {
+      alert('Reconocimiento de voz no soportado en este navegador');
       return;
     }
 
-    // – iOS –
-    const mr = recorderRef.current;
-    if (!mr) return alert('No se pudo inicializar el micrófono');
-    if (listening) mr.stop();
-    else           mr.start();
+    recognitionRef.current = new SpeechRec();
+    recognitionRef.current.lang = 'es-ES';
+    recognitionRef.current.continuous = false;
+    recognitionRef.current.interimResults = false;
+
+    recognitionRef.current.onstart = () => {
+      setListening(true);
+      console.log('🎤 Reconocimiento iniciado');
+    };
+
+    recognitionRef.current.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      console.log('🗣️ Transcripción:', transcript);
+      setUserInput(transcript);
+    };
+
+    recognitionRef.current.onerror = (event) => {
+      console.error('❌ Error en reconocimiento:', event.error);
+      setListening(false);
+    };
+
+    recognitionRef.current.onend = () => {
+      setListening(false);
+      console.log('🎤 Reconocimiento terminado');
+    };
+
+    recognitionRef.current.start();
   };
 
-  /* ---------- RETURN (responsive) ---------- */
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+  };
+
+  /* ---------- Manejo de teclado ---------- */
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  /* ---------- Render ---------- */
   return (
-    <div className="flex flex-col h-full w-full">
-      {/* LISTA DE MENSAJES */}
-      <div
-        ref={el => el && el.scrollTo(0, el.scrollHeight)}   /* auto-scroll */
-        className="flex-1 overflow-y-auto px-3 py-4 sm:px-6 space-y-3"
-      >
-        {messages
-          .filter(m => m.role !== 'function' && m.content)
-          .map((m, i) => (
-            <div
-              key={i}
-              className={`
-                rounded-xl px-4 py-2 text-sm leading-relaxed break-words
-                max-w-[80%] sm:max-w-md
-                ${m.role === 'user'
-                  ? 'ml-auto bg-gradient-to-br from-orange-400 to-orange-500 text-white'
-                  : 'mr-auto bg-gray-100 text-gray-800'}
-              `}
-            >
-              {m.content}
-            </div>
-          ))}
-        
-        {/* Indicador de procesamiento */}
-        {isProcessing && (
-          <div className="mr-auto bg-gray-100 text-gray-800 rounded-xl px-4 py-2 max-w-md">
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></span>
-              </div>
-              <span className="text-xs text-gray-500">Procesando...</span>
-            </div>
-          </div>
-        )}
-        
-        {/* Marcador para auto-scroll */}
-        <div ref={messagesEndRef} />
+    <div className="chat-box bg-white rounded-lg shadow-lg border border-gray-200 h-full flex flex-col">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-orange-600 to-orange-700 text-white p-4 rounded-t-lg">
+        <h3 className="font-semibold text-lg flex items-center">
+          <span className="mr-2">🤖</span>
+          Asistente de Cotización
+        </h3>
+        <p className="text-orange-100 text-sm mt-1">
+          Dime los detalles y llenaré el formulario automáticamente
+        </p>
       </div>
 
-      {/* FOOTER (input + mic + enviar) */}
-      <div
-        className="
-          sticky bottom-0 left-0 right-0
-          flex items-center gap-2
-          bg-white/90 backdrop-blur border-t
-          p-3 sm:p-4
-        "
-      >
-        {/* INPUT */}
-        <input
-          id="chat-message-input"
-          name="chat-message"
-          type="text"
-          autoComplete="off"
-          ref={inputRef}
-          value={userInput}
-          onChange={(e) => setUserInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !isProcessing && send()}
-          disabled={isProcessing}
-          className={`
-            flex-1 text-sm sm:text-base
-            text-gray-900
-            border rounded-md px-3 py-2
-            focus:outline-none focus:ring-2 focus:ring-orange-500
-            placeholder:text-gray-400
-            ${isProcessing ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
-          `}
-          placeholder={
-            isProcessing 
-              ? 'Procesando...' 
-              : listening 
-                ? 'Escuchando…' 
-                : 'Escribe aquí…'
-          }
-        />
-
-        {/* MIC */}
-        <button
-          type="button"
-          onClick={toggleMic}
-          className={`
-            flex-shrink-0 w-10 h-10 sm:w-11 sm:h-11
-            rounded-full grid place-items-center transition-colors
-            ${listening
-              ? 'bg-green-500 animate-pulse text-white'
-              : 'bg-gray-200 hover:bg-gray-300 text-gray-700'}
-          `}
-          title={listening ? 'Detener dictado' : 'Dictar con micrófono'}
-        >
-          {listening ? (
-            /* stop icon */
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <rect x="6" y="6" width="8" height="8" />
-            </svg>
-          ) : (
-            /* mic icon */
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 12a3 3 0 0 0 3-3V4a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3z" />
-              <path d="M5 10.5a.5.5 0 0 1 1 0A2 2 0 0 0 8 12a2 2 0 0 0 2-1.5.5.5 0 0 1 1 0A3 3 0 0 1 8 13a3 3 0 0 1-3-2.5z" />
-              <path d="M10 14.5V13h1a.5.5 0 0 0 0-1H5a.5.5 0 0 0 0 1h1v1.5a.5.5 0 0 0 1 0V13h2v1.5a.5.5 0 0 0 1 0z" />
-            </svg>
+      {/* Messages */}
+      <div className="flex-1 p-4 overflow-y-auto max-h-96 min-h-64">
+        <div className="space-y-4">
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                msg.role === 'user' 
+                  ? 'bg-orange-600 text-white' 
+                  : 'bg-gray-100 text-gray-800'
+              }`}>
+                <p className="text-sm">{msg.content}</p>
+              </div>
+            </div>
+          ))}
+          
+          {isProcessing && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg max-w-xs lg:max-w-md">
+                <div className="flex items-center space-x-2">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                  </div>
+                  <span className="text-sm text-gray-500">Procesando...</span>
+                </div>
+              </div>
+            </div>
           )}
-        </button>
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
 
-        {/* ENVIAR */}
-        <button
-          onClick={send}
-          disabled={isProcessing || !userInput.trim()}
-          className={`
-            flex-shrink-0 text-white text-sm sm:text-base
-            px-4 sm:px-5 py-2 rounded-md transition-colors
-            ${isProcessing || !userInput.trim()
-              ? 'bg-gray-300 cursor-not-allowed'
-              : 'bg-orange-500 hover:bg-orange-600'}
-          `}
-        >
-          {isProcessing ? 'Enviando...' : 'Enviar'}
-        </button>
+      {/* Input */}
+      <div className="border-t border-gray-200 p-4">
+        <div className="flex items-center space-x-2">
+          <div className="flex-1">
+            <textarea
+              ref={inputRef}
+              value={userInput}
+              onChange={(e) => setUserInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Ejemplo: Envío nacional de 500kg de alimentos de Bogotá a Medellín"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              rows="2"
+              disabled={isProcessing}
+            />
+          </div>
+          
+          {/* Botón de voz */}
+          {isSpeechApi && (
+            <button
+              onClick={listening ? stopListening : startListening}
+              className={`p-2 rounded-lg transition-colors ${
+                listening 
+                  ? 'bg-red-500 hover:bg-red-600 text-white' 
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+              }`}
+              disabled={isProcessing}
+              title={listening ? 'Detener grabación' : 'Grabar mensaje'}
+            >
+              {listening ? (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 2a4 4 0 00-4 4v4a4 4 0 008 0V6a4 4 0 00-4-4zM6 10V6a4 4 0 118 0v4a6 6 0 01-12 0z" clipRule="evenodd" />
+                  <path d="M7 16h6v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                </svg>
+              )}
+            </button>
+          )}
+          
+          {/* Botón enviar */}
+          <button
+            onClick={send}
+            disabled={!userInput.trim() || isProcessing}
+            className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            {isProcessing ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -7,11 +7,11 @@ import {
   FiChevronRight  // botón siguiente
 } from 'react-icons/fi';
 
-export default function Step4({data={},onNext,onPrev,loading}){
+export default function Step4({data={},formData={},onNext,onPrev,loading}){
 
   const co=data.contenedor||{};
   const [form,setForm]=useState({
-    contenedor: co.contenedor || 'NO'  // SI / NO
+    contenedor: formData.contenedor || co.contenedor || 'NO'  // SI / NO
   });
 
   useEffect(()=>{
@@ -60,7 +60,7 @@ export default function Step4({data={},onNext,onPrev,loading}){
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={onPrev}
+          onClick={() => onPrev(form)}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás

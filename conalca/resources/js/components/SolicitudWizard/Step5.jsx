@@ -7,11 +7,11 @@ import {
   FiChevronRight  // botón siguiente
 } from 'react-icons/fi';
 
-export default function Step5({data={},onNext,onPrev,loading}){
+export default function Step5({data={},formData={},onNext,onPrev,loading}){
 
   const i=data.internacional||{};
   const [form,setForm]=useState({
-     modalidad_internacional: i.modalidad_internacional || ''
+     modalidad_internacional: formData.modalidad_internacional || i.modalidad_internacional || ''
   });
 
   useEffect(()=>{
@@ -19,6 +19,15 @@ export default function Step5({data={},onNext,onPrev,loading}){
     chatBus.on('fill-field',f);
     return()=>chatBus.off('fill-field',f);
   },[]);
+
+  // Actualizar form cuando cambien los datos del prefill
+  useEffect(() => {
+    const i = data.internacional || {};
+    setForm(prevForm => ({
+      ...prevForm,
+      modalidad_internacional: formData.modalidad_internacional || i.modalidad_internacional || prevForm.modalidad_internacional
+    }));
+  }, [data, formData]);
 
   const submit=e=>{e.preventDefault(); onNext(form);};
 
@@ -64,7 +73,7 @@ export default function Step5({data={},onNext,onPrev,loading}){
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={onPrev}
+          onClick={() => onPrev(form)}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás

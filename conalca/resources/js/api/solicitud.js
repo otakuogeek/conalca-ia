@@ -57,6 +57,12 @@ export const fetchPrefill = (cotizacionId) =>
     headers: { 'X-CSRF-TOKEN': getCsrfToken() },
   });
 
+/* Prefill desde grupo de cotización:  GET /solicitud/group/{group_id}/prefill   */
+export const fetchGroupPrefill = (groupId) =>
+  axios.get(`${SOLICITUD_API}/group/${groupId}/prefill`, {
+    headers: { 'X-CSRF-TOKEN': getCsrfToken() },
+  });
+
 /* =========================================================================
  *  Solicitud de transporte  (wizard)
  * =========================================================================*/

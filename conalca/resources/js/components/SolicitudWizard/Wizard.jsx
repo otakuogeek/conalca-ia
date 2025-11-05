@@ -5,7 +5,8 @@ import EventEmitter from 'eventemitter3';
 import {
   saveStep,
   fetchSolicitud,
-  fetchPrefill      // ← NUEVO
+  fetchPrefill,      // ← NUEVO
+  fetchGroupPrefill  // ← NUEVO PARA GRUPOS
 } from '../../api/solicitud';
 
 import Step1 from './Step1';
@@ -80,36 +81,83 @@ const emitAll = (obj) => {
 
 /* ───── componente ───────────────────────────────────────── */
 
-export default function Wizard({ open, cotizacionId, onClose }) {
+export default function Wizard({ open, cotizacionId, groupId, onClose }) {
   const [current, setCurrent] = useState(1);
   const [localData, setLocal] = useState({});
   const [loading, setLoading] = useState(false);
+  
+  // Estado para persistir datos del formulario entre pasos
+  const [formData, setFormData] = useState({
+    step1: {},
+    step2: {},
+    step3: {},
+    step4: {},
+    step5: {},
+    step6: {}
+  });
 
-  /* ─── al cambiar de cotización ────────────────────────── */
+  // Emitir cambio de paso al ChatBox
   useEffect(() => {
-    if (!cotizacionId) return;
+    console.log('📍 Wizard: Emitiendo cambio de paso a', current);
+    chatBus.emit('step-changed', current);
+  }, [current]);
+
+  /* ─── al cambiar de cotización o grupo ────────────────────────── */
+  useEffect(() => {
+    if (!cotizacionId && !groupId) return;
 
     const load = async () => {
       setCurrent(1);
-      /* 1) ¿ya existe una Solicitud? */
-      const { data: solicitud } = await fetchSolicitud(cotizacionId);
+      
+      // Limpiar datos del formulario al cargar nueva cotización/grupo
+      setFormData({
+        step1: {},
+        step2: {},
+        step3: {},
+        step4: {},
+        step5: {},
+        step6: {}
+      });
+      
+      if (groupId) {
+        /* Cargar desde grupo de cotización */
+        console.log('🔄 Cargando prefill desde grupo:', groupId);
+        try {
+          const { data: prefillData } = await fetchGroupPrefill(groupId);
+          console.log('✅ Prefill desde grupo cargado:', prefillData);
+          
+          const shaped = reshapePrefill(prefillData);
+          setLocal(shaped);
+          emitAll(shaped);
+          
+          console.log('📝 Datos aplicados al wizard desde grupo:', shaped);
+        } catch (error) {
+          console.error('❌ Error cargando prefill desde grupo:', error);
+        }
+        return;
+      }
+      
+      if (cotizacionId) {
+        /* 1) ¿ya existe una Solicitud? */
+        const { data: solicitud } = await fetchSolicitud(cotizacionId);
 
-      if (solicitud) {
-        setLocal(solicitud);
-        // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
-        // emitAll(solicitud);
-      } else {
-        /* 2) si no, traemos el pre-fill plano y lo re-armamos */
-        const { data: pre } = await fetchPrefill(cotizacionId);
-        const reshaped = reshapePrefill(pre);
-        setLocal(reshaped);
-        // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
-        // emitAll(pre);            // se emite el plano (el bot sólo necesita pares k/v)
+        if (solicitud) {
+          setLocal(solicitud);
+          // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
+          // emitAll(solicitud);
+        } else {
+          /* 2) si no, traemos el pre-fill plano y lo re-armamos */
+          const { data: pre } = await fetchPrefill(cotizacionId);
+          const reshaped = reshapePrefill(pre);
+          setLocal(reshaped);
+          // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
+          // emitAll(pre);            // se emite el plano (el bot sólo necesita pares k/v)
+        }
       }
     };
 
     load();
-  }, [cotizacionId]);
+  }, [cotizacionId, groupId]);
 
   /* ─── escuchar rellenos on-the-fly desde ChatBox ──────── */
   useEffect(() => {
@@ -135,6 +183,13 @@ export default function Wizard({ open, cotizacionId, onClose }) {
 
   const sendStep = async (stepKey, fields) => {
     setLoading(true);
+
+    // Guardar datos del formulario en el estado global
+    const stepNumber = stepKey.replace('step_', '');
+    setFormData(prev => ({
+      ...prev,
+      [`step${stepNumber}`]: fields
+    }));
 
     try {
       const { data: resp } = await saveStep({
@@ -163,26 +218,60 @@ export default function Wizard({ open, cotizacionId, onClose }) {
     }
   };
 
-  const commonProps = { loading, data: localData };
+  // Función para navegar hacia atrás sin guardar
+  const goToPrevStep = (currentStepFields = {}) => {
+    // Guardar datos actuales del paso antes de ir hacia atrás
+    const stepNumber = current;
+    setFormData(prev => ({
+      ...prev,
+      [`step${stepNumber}`]: { ...prev[`step${stepNumber}`], ...currentStepFields }
+    }));
+    
+    if (current > 1) {
+      setCurrent(current - 1);
+    }
+  };
+
+  // Función para navegar hacia adelante sin guardar
+  const goToNextStep = (currentStepFields = {}) => {
+    // Guardar datos actuales del paso antes de ir hacia adelante
+    const stepNumber = current;
+    setFormData(prev => ({
+      ...prev,
+      [`step${stepNumber}`]: { ...prev[`step${stepNumber}`], ...currentStepFields }
+    }));
+    
+    if (current < TOTAL) {
+      setCurrent(current + 1);
+    }
+  };
+
+  const commonProps = { 
+    loading, 
+    data: localData, 
+    formData: formData[`step${current}`] || {},  // Datos persistidos del paso actual
+    goToPrevStep,
+    goToNextStep
+  };
 
   const render = () => {
     switch (current) {
       case 1: return <Step1 {...commonProps}
                             onNext={d => sendStep('step_1', d)} />;
       case 2: return <Step2 {...commonProps}
-                            onPrev={() => setCurrent(1)}
+                            onPrev={(fields) => goToPrevStep(fields)}
                             onNext={d => sendStep('step_2', d)} />;
       case 3: return <Step3 {...commonProps}
-                            onPrev={() => setCurrent(2)}
+                            onPrev={(fields) => goToPrevStep(fields)}
                             onNext={d => sendStep('step_3', d)} />;
       case 4: return <Step4 {...commonProps}
-                            onPrev={() => setCurrent(3)}
+                            onPrev={(fields) => goToPrevStep(fields)}
                             onNext={d => sendStep('step_4', d)} />;
       case 5: return <Step5 {...commonProps}
-                            onPrev={() => setCurrent(4)}
+                            onPrev={(fields) => goToPrevStep(fields)}
                             onNext={d => sendStep('step_5', d)} />;
       case 6: return <Step6 {...commonProps}
-                            onPrev={() => setCurrent(5)}
+                            onPrev={(fields) => goToPrevStep(fields)}
                             onNext={d => sendStep('step_6', d)} />;
       default: return null;
     }
@@ -249,5 +338,6 @@ export default function Wizard({ open, cotizacionId, onClose }) {
 Wizard.propTypes = {
   open        : PropTypes.bool.isRequired,
   cotizacionId: PropTypes.number,
+  groupId     : PropTypes.number,  // ← NUEVO
   onClose     : PropTypes.func.isRequired,
 };

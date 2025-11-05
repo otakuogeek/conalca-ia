@@ -28,49 +28,61 @@ import { FaWeight } from 'react-icons/fa';
 
 
 
-export default function Step2({ data = {}, onNext, onPrev, loading }) {
+export default function Step2({ data = {}, formData = {}, onNext, onPrev, loading }) {
 
   const d = data.detalle || {};
+  
+  // Detectar tipo de operación
+  const operationType = data.operation_flow?.type || data.tipo_operacion || '';
+  const isImportExport = operationType === 'IMPORTACION' || operationType === 'EXPORTACION';
 
   const [form, setForm] = useState({
     /* ciudades */
-    origen                 : d.origen  || '',
-    origen_label           : d.origen_label  || '',
-    destino                : d.destino || '',
-    destino_label          : d.destino_label || '',
-
-    cantidad_mercancia     : d.cantidad_mercancia     || '',
-    peso                   : d.peso                   || '',
-    valor_mercancia        : d.valor_mercancia        || '',
+    origen                 : formData.origen                 || d.origen  || '',
+    origen_label           : formData.origen_label           || d.origen_label  || '',
+    destino                : formData.destino                || d.destino || '',
+    destino_label          : formData.destino_label          || d.destino_label || '',
+    
+    // NUEVO: Campo específico para exportaciones
+    lugar_recogida_contenedor: formData.lugar_recogida_contenedor || d.lugar_recogida_contenedor || '',
+    lugar_recogida_contenedor_label: formData.lugar_recogida_contenedor_label || d.lugar_recogida_contenedor_label || '',
+    
+    // NUEVO: Tipo de carga para import/export
+    tipo_carga             : formData.tipo_carga             || d.tipo_carga || '',
+    
+    // Campos existentes para distribución
+    cantidad_mercancia     : formData.cantidad_mercancia     || d.cantidad_mercancia     || '',
+    peso                   : formData.peso                   || d.peso                   || '',
+    valor_mercancia        : formData.valor_mercancia        || d.valor_mercancia        || '',
 
     /* catálogo producto / empaque */
-    producto               : d.producto        || '',
-    producto_label         : d.producto_label  || '',
-    empaque                : d.empaque         || '',
-    empaque_label          : d.empaque_label   || '',
+    producto               : formData.producto               || d.producto        || '',
+    producto_label         : formData.producto_label         || d.producto_label  || '',
+    empaque                : formData.empaque                || d.empaque         || '',
+    empaque_label          : formData.empaque_label          || d.empaque_label   || '',
 
-    cantidad_vehiculos     : d.cantidad_vehiculos     || '',
+    cantidad_vehiculos     : formData.cantidad_vehiculos     || d.cantidad_vehiculos     || '',
 
     /* clase y carrocería de vehículo */
-    clase_vehiculo         : d.clase_vehiculo        || '',
-    clase_vehiculo_label   : d.clase_vehiculo_label  || '',
-    carroceria             : d.carroceria            || '',
-    carroceria_label       : d.carroceria_label      || '',
+    clase_vehiculo         : formData.clase_vehiculo         || d.clase_vehiculo        || '',
+    clase_vehiculo_label   : formData.clase_vehiculo_label   || d.clase_vehiculo_label  || '',
+    carroceria             : formData.carroceria             || d.carroceria            || '',
+    carroceria_label       : formData.carroceria_label       || d.carroceria_label      || '',
 
     /* demás campos sin cambios */
-    minimo_modelo          : d.minimo_modelo          || '',
-    tipo_flete             : d.tipo_flete             || '',
-    flete_conductor        : d.flete_conductor        || '',
-    flete_ministerio       : d.flete_ministerio       || '',
-    tipo_tarifa            : d.tipo_tarifa            || '',
-    tarifa_cliente         : d.tarifa_cliente         || '',
-    cargue_cuenta_de       : d.cargue_cuenta_de       || '',
-    descargue_cuenta_de    : d.descargue_cuenta_de    || '',
-    seguro_cuenta_de       : d.seguro_cuenta_de       || '',
-    descripcion_mercancia  : d.descripcion_mercancia  || '',
-    kit_seguridad          : d.kit_seguridad          || '',
-    sub_cliente            : d.sub_cliente            || '',
-    tipo_remesa_rndc       : d.tipo_remesa_rndc       || ''
+    minimo_modelo          : formData.minimo_modelo          || d.minimo_modelo          || '',
+    tipo_flete             : formData.tipo_flete             || d.tipo_flete             || '',
+    flete_conductor        : formData.flete_conductor        || d.flete_conductor        || '',
+    flete_ministerio       : formData.flete_ministerio       || d.flete_ministerio       || '',
+    tipo_tarifa            : formData.tipo_tarifa            || d.tipo_tarifa            || '',
+    tarifa_cliente         : formData.tarifa_cliente         || d.tarifa_cliente         || '',
+    cargue_cuenta_de       : formData.cargue_cuenta_de       || d.cargue_cuenta_de       || '',
+    descargue_cuenta_de    : formData.descargue_cuenta_de    || d.descargue_cuenta_de    || '',
+    seguro_cuenta_de       : formData.seguro_cuenta_de       || d.seguro_cuenta_de       || '',
+    descripcion_mercancia  : formData.descripcion_mercancia  || d.descripcion_mercancia  || '',
+    kit_seguridad          : formData.kit_seguridad          || d.kit_seguridad          || '',
+    sub_cliente            : formData.sub_cliente            || d.sub_cliente            || '',
+    tipo_remesa_rndc       : formData.tipo_remesa_rndc       || d.tipo_remesa_rndc       || ''
   });
   /* ------------------------------------------------------------------ */
   /*  VALIDACIÓN                                                        */
@@ -78,31 +90,48 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
   const [submitted, setSubmitted] = useState(false);
   const isEmpty  = v => v === '' || v === null || v === undefined;
 
-  /* todos los campos que son obligatorios en este paso */
-  const required = [
-    'origen',
-    'destino',
-    'cantidad_mercancia',
-    'peso',
-    'valor_mercancia',
-    'producto',
-    'empaque',
-    'cantidad_vehiculos',
-    'clase_vehiculo',
-    'carroceria',
-    'minimo_modelo',
-    'tipo_flete',
-    'flete_conductor',
-    'flete_ministerio',
-    'tipo_tarifa',
-    'tarifa_cliente',
-    'cargue_cuenta_de',
-    'descargue_cuenta_de',
-    'seguro_cuenta_de',
-    'kit_seguridad',
-    'tipo_remesa_rndc',
-    'descripcion_mercancia'
-  ];
+  /* campos obligatorios según tipo de operación */
+  const getRequiredFields = () => {
+    if (isImportExport) {
+      // Para importaciones y exportaciones
+      const baseFields = ['origen', 'destino', 'tipo_carga'];
+      
+      // Si es exportación, agregar lugar de recogida del contenedor
+      if (operationType === 'EXPORTACION') {
+        baseFields.push('lugar_recogida_contenedor');
+      }
+      
+      return baseFields;
+    } else {
+      // Para distribución (campos originales)
+      return [
+        'origen',
+        'destino',
+        'cantidad_mercancia',
+        'peso',
+        'valor_mercancia',
+        'producto',
+        'empaque',
+        'cantidad_vehiculos',
+        'clase_vehiculo',
+        'carroceria',
+        'minimo_modelo',
+        'tipo_flete',
+        'flete_conductor',
+        'flete_ministerio',
+        'tipo_tarifa',
+        'tarifa_cliente',
+        'cargue_cuenta_de',
+        'descargue_cuenta_de',
+        'seguro_cuenta_de',
+        'kit_seguridad',
+        'tipo_remesa_rndc',
+        'descripcion_mercancia'
+      ];
+    }
+  };
+
+  const required = getRequiredFields();
 
   /* ¿el campo tiene error? (solo después de enviar) */
   const hasError = name => submitted && isEmpty(form[name]);
@@ -162,6 +191,12 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
       getCityName(form.destino).then(n => n && setForm(p => ({ ...p, destino_label: n })));
   }, [form.origen, form.origen_label, form.destino, form.destino_label]);
 
+  /* lugar recogida contenedor (para exportaciones) */
+  useEffect(() => {
+    if (form.lugar_recogida_contenedor && !form.lugar_recogida_contenedor_label)
+      getCityName(form.lugar_recogida_contenedor).then(n => n && setForm(p => ({ ...p, lugar_recogida_contenedor_label: n })));
+  }, [form.lugar_recogida_contenedor, form.lugar_recogida_contenedor_label]);
+
   /* producto */
   useEffect(() => {
     if (form.producto && !form.producto_label)
@@ -195,16 +230,23 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
     const faltantes = required.filter(f => isEmpty(form[f]));
     if (faltantes.length) return;        // hay campos vacíos ⇒ no avanzamos
 
-    /* armamos el payload sin los “label” ---------------------------- */
+    /* armamos el payload sin los "label" ---------------------------- */
     const {
       origen_label,
       destino_label,
+      lugar_recogida_contenedor_label,
       producto_label,
       empaque_label,
       clase_vehiculo_label,
       carroceria_label,
       ...payload
     } = form;
+
+    // Mantener información del flujo de operación
+    payload.operation_flow = data.operation_flow || {
+      type: operationType,
+      isImportExport: isImportExport
+    };
 
     onNext(payload);
   };
@@ -269,21 +311,95 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
           />
         </div>
 
-        {/* ───── Cantidad mercancía ───── */}
-        <div>
-          <label htmlFor="cantidad_mercancia" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
-            <FiBox className="text-orange-500" /> Cantidad de mercancía
-          </label>
-          <input
-            id="cantidad_mercancia"
-            name="cantidad_mercancia"
-            type="number"
-            value={form.cantidad_mercancia}
-            onChange={change}
-            className={`w-full rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500
-              border ${hasError('cantidad_mercancia') ? 'border-red-500' : 'border-orange-300'}`}
-          />
-        </div>
+        {/* ───── Campo específico para EXPORTACIONES: Lugar de recogida del contenedor ───── */}
+        {operationType === 'EXPORTACION' && (
+          <div className={`md:col-span-2 ${hasError('lugar_recogida_contenedor') ? 'border border-red-500 rounded p-1' : ''}`}>
+            <label htmlFor="lugar_recogida_contenedor" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
+              <FiMapPin className="text-green-500" /> Donde recoge el contenedor vacío
+            </label>
+            <AsyncSearchSelect
+              id="lugar_recogida_contenedor"
+              load={searchCiudades}
+              getOpt={c => ({ value: c.ciudad_codigodane, label: c.ciudad_nombre })}
+              value={
+                form.lugar_recogida_contenedor
+                  ? { value: form.lugar_recogida_contenedor, label: form.lugar_recogida_contenedor_label || form.lugar_recogida_contenedor }
+                  : null
+              }
+              onChange={opt =>
+                setForm(p => ({
+                  ...p,
+                  lugar_recogida_contenedor: opt?.value || '',
+                  lugar_recogida_contenedor_label: opt?.label || ''
+                }))
+              }
+            />
+          </div>
+        )}
+
+        {/* ───── Campo específico para IMPORTACIONES/EXPORTACIONES: Tipo de carga ───── */}
+        {isImportExport && (
+          <div className={`md:col-span-2 ${hasError('tipo_carga') ? 'border border-red-500 rounded p-1' : ''}`}>
+            <label htmlFor="tipo_carga" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
+              <FiBox className={operationType === 'IMPORTACION' ? 'text-blue-500' : 'text-green-500'} /> 
+              Tipo de carga
+            </label>
+            <div className="relative">
+              <FiBox className={`absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${operationType === 'IMPORTACION' ? 'text-blue-400' : 'text-green-400'}`} />
+              <select
+                id="tipo_carga"
+                name="tipo_carga"
+                value={form.tipo_carga}
+                onChange={change}
+                className={`
+                  w-full py-2 pl-11 pr-3 rounded-md
+                  border ${hasError('tipo_carga') ? 'border-red-500' : 'border-gray-300'}
+                  focus:ring-2 focus:ring-orange-500 focus:border-orange-500
+                `}
+                required
+              >
+                <option value="">— Seleccionar tipo de carga —</option>
+                <option value="CARGA_SUELTA">Carga suelta</option>
+                <option value="CARGA_CONTENEDORIZADA">Carga contenedorizada</option>
+              </select>
+            </div>
+            {form.tipo_carga && (
+              <div className={`mt-2 p-3 rounded-lg text-xs ${
+                form.tipo_carga === 'CARGA_SUELTA' 
+                  ? 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                  : 'bg-blue-50 text-blue-700 border border-blue-200'
+              }`}>
+                {form.tipo_carga === 'CARGA_SUELTA' 
+                  ? '⚠️ Carga suelta seleccionada: No se generarán valores de devolución automáticamente.'
+                  : '📦 Carga contenedorizada seleccionada: Se aplicarán valores de devolución según parametrización del módulo de Pricing.'
+                }
+              </div>
+            )}
+          </div>
+        )}
+
+     
+
+        {/* ═══════════════════════════════════════════════════════════════════════ */}
+        {/* CAMPOS ESPECÍFICOS PARA DISTRIBUCIÓN (OCULTOS EN IMPORT/EXPORT)        */}
+        {/* ═══════════════════════════════════════════════════════════════════════ */}
+        {!isImportExport && (
+          <>
+            {/* ───── Cantidad mercancía ───── */}
+            <div>
+              <label htmlFor="cantidad_mercancia" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
+                <FiBox className="text-orange-500" /> Cantidad de mercancía
+              </label>
+              <input
+                id="cantidad_mercancia"
+                name="cantidad_mercancia"
+                type="number"
+                value={form.cantidad_mercancia}
+                onChange={change}
+                className={`w-full rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500
+                  border ${hasError('cantidad_mercancia') ? 'border-red-500' : 'border-orange-300'}`}
+              />
+            </div>
 
         {/* ───── Peso ───── */}
         <div>
@@ -643,6 +759,9 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
             required
           />
         </div>
+          </>
+        )}
+
       </div>{/* grid end */}
 
       {/* ───── Descripción mercancía ───── */}
@@ -665,7 +784,7 @@ export default function Step2({ data = {}, onNext, onPrev, loading }) {
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={onPrev}
+          onClick={() => onPrev(form)}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás

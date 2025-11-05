@@ -22,24 +22,28 @@ import {
   FiLoader
 } from 'react-icons/fi';
 
-export default function Step1({ data = {}, onNext, loading }) {
+export default function Step1({ data = {}, formData = {}, onNext, loading }) {
   const [form, setForm] = useState({
-    tipo_viaje            : data.tipo_viaje            || '',
-    moneda                : data.moneda                || '',
-    fuente_solicitud      : data.fuente_solicitud      || '',
-    condicion_despacho    : data.condicion_despacho    || '',
-    condicion_facturacion : data.condicion_facturacion || '',
+    tipo_viaje            : formData.tipo_viaje            || data.tipo_viaje            || '',
+    moneda                : formData.moneda                || data.moneda                || '',
+    fuente_solicitud      : formData.fuente_solicitud      || data.fuente_solicitud      || '',
+    condicion_despacho    : formData.condicion_despacho    || data.condicion_despacho    || '',
+    condicion_facturacion : formData.condicion_facturacion || data.condicion_facturacion || '',
     /* combos dinámicos -------------------------------- */
-    ciudad_facturacion        : data.ciudad_facturacion        || '',
-    ciudad_facturacion_label  : data.ciudad_facturacion_label  || '',
-    vendedor                  : data.vendedor                  || '',
-    vendedor_label            : data.vendedor_label            || '',
-    cliente_codigo            : data.cliente_codigo            || '',
-    cliente_nombre            : data.cliente_nombre            || '',
+    ciudad_facturacion        : formData.ciudad_facturacion        || data.ciudad_facturacion        || '',
+    ciudad_facturacion_label  : formData.ciudad_facturacion_label  || data.ciudad_facturacion_label  || '',
+    vendedor                  : formData.vendedor                  || data.vendedor                  || '',
+    vendedor_label            : formData.vendedor_label            || data.vendedor_label            || '',
+    cliente_codigo            : formData.cliente_codigo            || data.cliente_codigo            || '',
+    cliente_nombre            : formData.cliente_nombre            || data.cliente_nombre            || '',
     /* -------------------------------------------------- */
-    tipo_operacion         : data.tipo_operacion        || '',
-    centro_costo_despacho  : data.centro_costo_despacho || ''
+    tipo_operacion         : formData.tipo_operacion        || data.tipo_operacion        || '',
+    centro_costo_despacho  : formData.centro_costo_despacho || data.centro_costo_despacho || ''
   });
+
+  // Estado para manejar la validación de tipo de operación
+  const [operationType, setOperationType] = useState(formData.tipo_operacion || data.tipo_operacion || '');
+  const [showOperationInfo, setShowOperationInfo] = useState(false);
   /* ------------------------------------------------------------------ */
   /*  VALIDACIÓN                                                        */
   /* ------------------------------------------------------------------ */
@@ -68,17 +72,80 @@ export default function Step1({ data = {}, onNext, loading }) {
   /* log de depuración */
   useEffect(() => console.log('[Step1 state]', form), [form]);
 
+  /* Inicializar estado de tipo de operación */
+  useEffect(() => {
+    if (data.tipo_operacion) {
+      setOperationType(data.tipo_operacion);
+      setShowOperationInfo(data.tipo_operacion === 'IMPORTACION' || data.tipo_operacion === 'EXPORTACION');
+    }
+  }, [data.tipo_operacion]);
+
   /* chat → auto-fill */
   useEffect(() => {
-    const fill = (field, value) => {
+    const fill = async (field, value) => {
       console.log('📝 Step1 recibió fill-field:', field, '=', value);
-      setForm(prev => ({ ...prev, [field]: value }));
+      
+      // Si es vendedor y solo viene el código, buscar el label automáticamente
+      if (field === 'vendedor' && value && !form.vendedor_label) {
+        try {
+          const label = await fetchSellerLabel(value);
+          setForm(prev => ({ 
+            ...prev, 
+            [field]: value,
+            vendedor_label: label 
+          }));
+        } catch (error) {
+          console.error('Error buscando label para vendedor:', error);
+          setForm(prev => ({ ...prev, [field]: value }));
+        }
+      }
+      // Si es ciudad y solo viene el código, buscar el label automáticamente  
+      else if (field === 'ciudad_facturacion' && value && !form.ciudad_facturacion_label) {
+        try {
+          const label = await fetchCityLabel(value);
+          setForm(prev => ({ 
+            ...prev, 
+            [field]: value,
+            ciudad_facturacion_label: label 
+          }));
+        } catch (error) {
+          console.error('Error buscando label para ciudad:', error);
+          setForm(prev => ({ ...prev, [field]: value }));
+        }
+      }
+      // Si es cliente y solo viene el código, buscar el label automáticamente
+      else if (field === 'cliente_codigo' && value && !form.cliente_nombre) {
+        try {
+          const label = await fetchClientLabel(value);
+          setForm(prev => ({ 
+            ...prev, 
+            [field]: value,
+            cliente_nombre: label 
+          }));
+        } catch (error) {
+          console.error('Error buscando label para cliente:', error);
+          setForm(prev => ({ ...prev, [field]: value }));
+        }
+      }
+      // Para otros campos, actualizar directamente
+      else {
+        setForm(prev => ({ ...prev, [field]: value }));
+      }
     };
     chatBus.on('fill-field', fill);
     return () => chatBus.off('fill-field', fill);
   }, []);
 
-  const change  = e => setForm({ ...form, [e.target.name]: e.target.value });
+  const change = e => {
+    const { name, value } = e.target;
+    setForm({ ...form, [name]: value });
+    
+    // Manejar cambio de tipo de operación
+    if (name === 'tipo_operacion') {
+      setOperationType(value);
+      setShowOperationInfo(value === 'IMPORTACION' || value === 'EXPORTACION');
+    }
+  };
 
   const submit = e => {
     e.preventDefault();
@@ -95,6 +162,13 @@ export default function Step1({ data = {}, onNext, loading }) {
       cliente_nombre,
       ...payload
     } = form;
+    
+    // Agregar información del tipo de operación para los siguientes pasos
+    payload.operation_flow = {
+      type: form.tipo_operacion,
+      isImportExport: form.tipo_operacion === 'IMPORTACION' || form.tipo_operacion === 'EXPORTACION'
+    };
+    
     onNext(payload);
   };
 
@@ -303,6 +377,7 @@ export default function Step1({ data = {}, onNext, loading }) {
           </div>
         </div>
 
+     
         {/* ────────── Condición despacho ────────── */}
         <div>
           <label

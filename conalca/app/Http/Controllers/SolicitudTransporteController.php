@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CotizacionModel;
 use App\Models\Email;
+use App\Models\GroupCotization;
 use App\Models\SolicitudTransporte;
 use App\Models\SolicitudTransporteAcompanamiento;
 use App\Models\SolicitudTransporteCargue;
@@ -410,5 +411,94 @@ class SolicitudTransporteController extends Controller
         ];
 
         return response()->json($data);
+    }
+
+    /**
+     * Prefill wizard desde un grupo de cotización
+     */
+    public function prefillFromGroup($groupId)
+    {
+        try {
+            Log::info('[PREFILL] Iniciando prefill para grupo: ' . $groupId);
+            
+            $grupo = GroupCotization::with(['cotizaciones', 'client', 'user'])->findOrFail($groupId);
+            
+            Log::info('[PREFILL] Grupo encontrado:', [
+                'id' => $grupo->id,
+                'client_id' => $grupo->client_id,
+                'operation_type' => $grupo->operation_type,
+                'cotizaciones_count' => $grupo->cotizaciones->count()
+            ]);
+            
+            // Tomar datos de la primera cotización como base
+            $primera_cotizacion = $grupo->cotizaciones->first();
+            
+            if (!$primera_cotizacion) {
+                Log::error('[PREFILL] Grupo sin cotizaciones');
+                return response()->json(['error' => 'Grupo sin cotizaciones'], 404);
+            }
+
+            Log::info('[PREFILL] Primera cotización:', [
+                'id' => $primera_cotizacion->id,
+                'origen' => $primera_cotizacion->ciudad_origen,
+                'destino' => $primera_cotizacion->ciudad_destino
+            ]);
+
+            /*  Mapeo  Grupo de Cotización → Wizard  */
+            $data = [
+                /* Paso 1 - Datos básicos */
+                'cliente_codigo'           => $grupo->client?->codigo,
+                'cliente_nombre'           => $grupo->client?->cliente,
+                'tipo_operacion'           => $grupo->operation_type ?: 'DISTRIBUCION',
+                'vendedor'                 => $grupo->user?->documento,
+                
+                /* Paso 2 - Detalle del servicio */
+                'origen'                   => $primera_cotizacion->ciudad_origen,
+                'destino'                  => $primera_cotizacion->ciudad_destino,
+                'peso'                     => $primera_cotizacion->peso,
+                'valor_mercancia'          => $primera_cotizacion->valor_declarado,
+                'descripcion_mercancia'    => $primera_cotizacion->tipo_mercancia,
+                'vehiculo_requerido'       => $primera_cotizacion->vehiculo_requerido,
+                
+                /* Campos específicos para import/export */
+                'tipo_carga'               => $primera_cotizacion->tipo_carga,
+                'clasificacion_contenedor' => $primera_cotizacion->clasificacion_contenedor,
+                'tipo_contenedor'          => $primera_cotizacion->tipo_contenedor,
+                'toneladas'                => $primera_cotizacion->toneladas,
+                'incluye_tara'             => $primera_cotizacion->incluye_tara,
+                'acompanamiento_seguridad' => $primera_cotizacion->acompanamiento_seguridad,
+                
+                /* Paso 5 - Modalidad internacional */
+                'modalidad_internacional'  => strtoupper($grupo->type ?: ''),
+                
+                /* Información del flujo */
+                'operation_flow' => [
+                    'type' => $grupo->operation_type,
+                    'isImportExport' => in_array($grupo->operation_type, ['IMPORTACION', 'EXPORTACION'])
+                ],
+                
+                /* Metadatos */
+                'source_group_id'          => $groupId,
+                'total_routes'             => $grupo->cotizaciones->count(),
+            ];
+
+            Log::info('[PREFILL] Datos mapeados exitosamente, total campos: ' . count($data));
+            
+            return response()->json($data);
+            
+        } catch (\Exception $e) {
+            Log::error('[PREFILL] Error en prefillFromGroup:', [
+                'group_id' => $groupId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Error interno del servidor',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 }

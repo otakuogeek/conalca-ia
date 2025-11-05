@@ -14,18 +14,18 @@ import {
   FiChevronRight    // botón siguiente
 } from 'react-icons/fi';
 
-export default function Step3({ data = {}, onNext, onPrev, loading }) {
+export default function Step3({ data = {}, formData = {}, onNext, onPrev, loading }) {
   const c = data.cargue || {};
 
   const [form, setForm] = useState({
-    fecha_cargue        : c.fecha_cargue         || '',
-    hora_cargue         : c.hora_cargue          || '',
-    remitente           : c.remitente            || '',
-    destinatario        : c.destinatario         || '',
-    contacto            : c.contacto             || '',
-    promesa_servicio    : c.promesa_servicio     || '',
-    documento_transporte: c.documento_transporte || '',
-    observacion_cargue  : c.observacion_cargue   || ''
+    fecha_cargue        : formData.fecha_cargue         || c.fecha_cargue         || '',
+    hora_cargue         : formData.hora_cargue          || c.hora_cargue          || '',
+    remitente           : formData.remitente            || c.remitente            || '',
+    destinatario        : formData.destinatario         || c.destinatario         || '',
+    contacto            : formData.contacto             || c.contacto             || '',
+    promesa_servicio    : formData.promesa_servicio     || c.promesa_servicio     || '',
+    documento_transporte: formData.documento_transporte || c.documento_transporte || '',
+    observacion_cargue  : formData.observacion_cargue   || c.observacion_cargue   || ''
   });
 
   /* chat → auto-fill */
@@ -206,7 +206,7 @@ export default function Step3({ data = {}, onNext, onPrev, loading }) {
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={onPrev}
+          onClick={() => onPrev(form)}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás

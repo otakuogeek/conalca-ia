@@ -8,7 +8,7 @@ import {
   FiCheckCircle    // botón finalizar
 } from 'react-icons/fi';
 
-export default function Step6({ data = {}, onNext, onPrev, loading }) {
+export default function Step6({ data = {}, formData = {}, onNext, onPrev, loading }) {
   /* ------------------------------------------------------------------
    *  Prefill (cuando la solicitud ya existe)
    * ----------------------------------------------------------------*/
@@ -16,13 +16,13 @@ export default function Step6({ data = {}, onNext, onPrev, loading }) {
 console.log(ac)
   const [form, setForm] = useState({
     itesoltra_vehiculoacompanamiento :
-        ac.itesoltra_vehiculoacompanamiento ?? ac.vehiculo_acom               ?? 1,
+        formData.itesoltra_vehiculoacompanamiento || (ac.itesoltra_vehiculoacompanamiento ?? ac.vehiculo_acom ?? 1),
     tipaco_codigo                    :
-        ac.tipaco_codigo              ?? ac.tipo_vehiculo_acom            ?? '',
+        formData.tipaco_codigo                    || (ac.tipaco_codigo ?? ac.tipo_vehiculo_acom ?? ''),
     itesoltra_acompanamientocuentade :
-        ac.itesoltra_acompanamientocuentade ?? ac.acompanamiento_cuenta_acom ?? '',
+        formData.itesoltra_acompanamientocuentade || (ac.itesoltra_acompanamientocuentade ?? ac.acompanamiento_cuenta_acom ?? ''),
     itesoltra_acompanamientovalor    :
-        ac.itesoltra_acompanamientovalor    ?? ac.valor_acompanante_acom     ?? '',
+        formData.itesoltra_acompanamientovalor    || (ac.itesoltra_acompanamientovalor ?? ac.valor_acompanante_acom ?? ''),
   });
 
   /* ------------------------------------------------------------------
@@ -147,7 +147,7 @@ console.log(ac)
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={onPrev}
+          onClick={() => onPrev(form)}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás

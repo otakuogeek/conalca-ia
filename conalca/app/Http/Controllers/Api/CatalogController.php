@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Client;
 use App\Models\City;
 use App\Models\Seller;
+use App\Models\User;
 use App\Models\Product;
 use App\Models\Packing;
 use App\Models\VehicleClass;
@@ -39,11 +40,38 @@ class CatalogController extends Controller
     public function vendedores(Request $r) {
         $q = $r->input('q', '');
 
-        return Seller::where('Nombre', 'like', "%$q%")
-                    ->orWhere('Codigo', 'like', "%$q%")
-                    ->orWhere('Documento', 'like', "%$q%")
+        // Buscar usuarios con rol 'ASISTENTE COMERCIAL' que tengan documento
+        $usuarios_comerciales = User::role('ASISTENTE COMERCIAL')
+                    ->whereNotNull('documento')
+                    ->where('documento', '!=', '')
+                    ->where(function($query) use ($q) {
+                        $query->where('name', 'like', "%$q%")
+                              ->orWhere('documento', 'like', "%$q%")
+                              ->orWhere('email', 'like', "%$q%");
+                    })
                     ->limit(15)
-                    ->get(['Codigo', 'Documento', 'Nombre']);
+                    ->get(['id', 'documento', 'name', 'email'])
+                    ->map(function($user) {
+                        return [
+                            'Codigo' => $user->id,
+                            'Documento' => $user->documento, 
+                            'Nombre' => $user->name
+                        ];
+                    });
+
+        // Si no hay comerciales o la búsqueda está vacía, también incluir la tabla sellers como fallback
+        if ($usuarios_comerciales->isEmpty() || empty($q)) {
+            $sellers_fallback = Seller::where('Nombre', 'like', "%$q%")
+                        ->orWhere('Codigo', 'like', "%$q%")
+                        ->orWhere('Documento', 'like', "%$q%")
+                        ->limit(5)
+                        ->get(['Codigo', 'Documento', 'Nombre']);
+            
+            // Combinar resultados (comerciales primero)
+            return $usuarios_comerciales->concat($sellers_fallback)->take(15);
+        }
+
+        return $usuarios_comerciales;
     }
 
     public function productos(Request $r) {
