@@ -6,11 +6,12 @@ import {
   FaRegEdit,
   FaTruckMoving,
   FaCheckCircle,
-  FaTimesCircle
+  FaTimesCircle,
+  FaTrash
 } from "react-icons/fa";
 import Wizard from "../SolicitudWizard/Wizard";  
 
-export default function ChannelColumnContent({ groups = [], onTransitoGroupClick = () => {} }) {
+export default function ChannelColumnContent({ groups = [], onTransitoGroupClick = () => {}, onDeleteGroup = () => {}, currentColumn = "" }) {
   const [wizardOpen, setWizardOpen]   = useState(false);
   const [cotizacionId, setCotizacion] = useState(null);
   const [groupId, setGroupId] = useState(null);
@@ -39,6 +40,15 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
     } else {
       // Si no hay documento, redirigir solo con el ID del grupo
       window.location.href = `/cotizacion?continue=${group.id}`;
+    }
+  };
+
+  const handleDeleteGroup = (group) => {
+    const groupId = group.id;
+    const groupName = `IDC00${groupId}`;
+    
+    if (window.confirm(`¿Estás seguro de que quieres eliminar el grupo ${groupName}?\n\nEsta acción no se puede deshacer.`)) {
+      onDeleteGroup(groupId);
     }
   };
 
@@ -81,53 +91,17 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
               }`}
               style={provided.draggableProps.style}
             >
-              {/* Botones de acción flotantes */}
-              <div className="absolute top-4 right-4 flex gap-2 z-10">
-                {/* Botón "Continuar cotización" para grupos incompletos */}
-                {(group.status?.toLowerCase() === "pre-solicitud" && group.cotizaciones.length === 0) && (
-                  <button
-                    title="Continuar cotización incompleta"
-                    onClick={() => handleContinueQuote(group)}
-                    className="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
-                  >
-                    <FaRegEdit className="w-4 h-4" />
-                  </button>
-                )}
-
-                {/* Botón "En tránsito" */}
-                {(group.status?.toLowerCase() === "en tránsito" ||
-                  group.status?.toLowerCase() === "en transito") && (
-                  <button
-                    title="Ver detalles de grupo en tránsito"
-                    onClick={() => onTransitoGroupClick(group)}
-                    className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
-                  >
-                    <FaTruckMoving className="w-4 h-4" />
-                  </button>
-                )}
-
-                {/* Botón "Ver" */}
-                {!NOT_ALLOWED_CUSTOM.includes(group.status?.toLowerCase()) && (
-                  <button
-                    onClick={() => window.open(`/cotizacion/grupo/${group.id}/responder`, '_blank')}
-                    className="bg-gradient-to-r from-[#FF7C32] to-[#FF6B1A] text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
-                  >
-                    <FaRegEye className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-
               {/* CABECERA DEL CARD */}
               <div className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
                 <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className="w-10 h-10 bg-gradient-to-br from-[#FF7C32] to-[#FF6B1A] rounded-xl flex items-center justify-center shadow-sm">
                       <span className="text-white font-bold text-sm">
                         {group.id.toString().slice(-2)}
                       </span>
                     </div>
-                    <div>
-                      <h6 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <h6 className="text-lg font-bold text-gray-800 flex items-center gap-2 mb-1">
                         IDC00{group.id}
                         {/* Botón Responder para grupos pendientes */}
                         {["pendiente", "aceptada"].includes(group.status?.toLowerCase()) && (
@@ -141,7 +115,18 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                           </button>
                         )}
                       </h6>
-                      <div className="flex items-center gap-3 mt-1">
+                      
+                      {/* Estado del grupo debajo del ID */}
+                      <div className={`inline-block px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm mb-2 ${
+                        group.status?.toLowerCase() === 'completada' ? 'bg-green-100 text-green-700' :
+                        group.status?.toLowerCase() === 'en tránsito' ? 'bg-blue-100 text-blue-700' :
+                        group.status?.toLowerCase() === 'en facturación' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {group.status}
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
                         <span className="text-sm text-gray-500 font-medium">
                           {group.cotizaciones.length} {group.cotizaciones.length === 1 ? 'ruta' : 'rutas'}
                         </span>
@@ -153,13 +138,51 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                     </div>
                   </div>
                   
-                  <div className={`px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm ${
-                    group.status?.toLowerCase() === 'completada' ? 'bg-green-100 text-green-700' :
-                    group.status?.toLowerCase() === 'en tránsito' ? 'bg-blue-100 text-blue-700' :
-                    group.status?.toLowerCase() === 'en facturación' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {group.status}
+                  {/* Botones de acción */}
+                  <div className="flex items-start gap-2 flex-shrink-0">
+                    {/* Botón "Eliminar" para grupos en Pre-Solicitud */}
+                    {currentColumn === "Pre-Solicitud" && (
+                      <button
+                        title="Eliminar grupo de cotización"
+                        onClick={() => handleDeleteGroup(group)}
+                        className="bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
+                      >
+                        <FaTrash className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Botón "Continuar cotización" para grupos incompletos */}
+                    {(group.status?.toLowerCase() === "pre-solicitud" && group.cotizaciones.length === 0) && (
+                      <button
+                        title="Continuar cotización incompleta"
+                        onClick={() => handleContinueQuote(group)}
+                        className="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
+                      >
+                        <FaRegEdit className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Botón "En tránsito" */}
+                    {(group.status?.toLowerCase() === "en tránsito" ||
+                      group.status?.toLowerCase() === "en transito") && (
+                      <button
+                        title="Ver detalles de grupo en tránsito"
+                        onClick={() => onTransitoGroupClick(group)}
+                        className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
+                      >
+                        <FaTruckMoving className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Botón "Ver" */}
+                    {!NOT_ALLOWED_CUSTOM.includes(group.status?.toLowerCase()) && (
+                      <button
+                        onClick={() => window.open(`/cotizacion/grupo/${group.id}/responder`, '_blank')}
+                        className="bg-gradient-to-r from-[#FF7C32] to-[#FF6B1A] text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
+                      >
+                        <FaRegEye className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

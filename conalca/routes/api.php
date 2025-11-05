@@ -407,3 +407,8 @@ Route::prefix('arcangel')->group(function () {
             ->name('api.arcangel.clear-cache');
     });
 });
+
+// Ruta para eliminar grupos de cotización
+Route::delete('/cotizacion/grupos/{id}', [App\Http\Controllers\Api\GroupQuotationController::class, 'destroy'])
+    ->middleware('auth:sanctum')
+    ->name('api.cotizacion.grupos.destroy');

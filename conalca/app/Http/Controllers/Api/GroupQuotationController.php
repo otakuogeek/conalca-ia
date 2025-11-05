@@ -95,4 +95,54 @@ class GroupQuotationController extends Controller
             'esAceptada' => false,
         ]);
     }
+
+    public function destroy($id)
+    {
+        try {
+            $user = auth()->user();
+            $group = GroupCotization::findOrFail($id);
+
+            // Verificar permisos: solo el creador del grupo o admin puede eliminarlo
+            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA' && $group->user_id != $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permisos para eliminar este grupo de cotización.'
+                ], 403);
+            }
+
+            // Verificar que el grupo esté en estado Pre-Solicitud
+            if ($group->status !== 'Pre-Solicitud' && $group->status !== 'borrador') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solo se pueden eliminar grupos en estado Pre-Solicitud.'
+                ], 400);
+            }
+
+            // Eliminar el grupo y sus cotizaciones relacionadas
+            $group->cotizaciones()->delete();
+            $group->delete();
+
+            Log::info('Grupo de cotización eliminado', [
+                'group_id' => $id,
+                'user_id' => $user->id,
+                'user_name' => $user->name
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Grupo de cotización eliminado exitosamente.'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error al eliminar grupo de cotización', [
+                'group_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno del servidor al eliminar el grupo.'
+            ], 500);
+        }
+    }
 }

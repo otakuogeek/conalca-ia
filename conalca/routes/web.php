@@ -653,6 +653,11 @@ Route::get('groups-quotes/accept/{id}', [GroupQuotationController::class, 'accep
 // Para rechazar cotización
 Route::get('groups-quotes/cancel/{id}', [GroupQuotationController::class, 'cancel'])->name('quotes.cancel');
 
+// Para eliminar grupo de cotización
+Route::delete('/groups-quotes/{id}', [GroupQuotationController::class, 'destroy'])
+    ->middleware('auth')
+    ->name('groups-quotes.destroy');
+
 Route::get('cotizacion/grupo/{id}/responder', [CotizacionClienteController::class, 'responderVista'])
     ->name('cotizacion.publica.vista');
 Route::post('cotizacion/grupo/{id}/responder', [CotizacionClienteController::class, 'guardarRespuestas'])

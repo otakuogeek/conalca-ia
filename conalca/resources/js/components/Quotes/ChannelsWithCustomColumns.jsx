@@ -216,6 +216,30 @@ function ChannelsWithCustomColumns() {
     );
   }
 
+  /* ------------- FUNCIÓN PARA ELIMINAR GRUPOS ------------------- */
+  const handleDeleteGroup = async (groupId) => {
+    try {
+      const response = await fetch(`/api/cotizacion/grupos/${groupId}`, {
+        method: 'DELETE',
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+        },
+      });
+
+      if (response.ok) {
+        toast.success('Grupo eliminado exitosamente');
+        loadGroups(); // Recargar la lista de grupos
+      } else {
+        const errorData = await response.json();
+        toast.error(errorData.message || 'Error al eliminar el grupo');
+      }
+    } catch (error) {
+      console.error('Error al eliminar grupo:', error);
+      toast.error('Error al eliminar el grupo. Intenta de nuevo.');
+    }
+  };
+
   /* ------------------ RENDER ------------------------------------ */
   const groupsByStatus = getGroupsByStatus();
   const columnsOrder   = getColumnsOrder();
@@ -328,6 +352,8 @@ function ChannelsWithCustomColumns() {
                         totalGlobal={totalGlobal}
                         showSummary={false}
                         onTransitoGroupClick={openTransitoModal}
+                        onDeleteGroup={handleDeleteGroup}
+                        currentColumn={col.name}
                       />
                     </div>
                   )}
@@ -361,6 +387,8 @@ function ChannelsWithCustomColumns() {
                     totalGlobal={totalGlobal}
                     showSummary={col.key === 'Pre-Solicitud'}
                     onTransitoGroupClick={openTransitoModal}
+                    onDeleteGroup={handleDeleteGroup}
+                    currentColumn={col.name}
                   />
                 </div>
               ))}
@@ -378,7 +406,7 @@ export default ChannelsWithCustomColumns;
 /* -----------------------------------------------------------------
  *  SUB-COMPONENTE GroupsDroppable   (sin cambios lógicos)
  * ---------------------------------------------------------------- */
-function GroupsDroppable({ droppableId, groups, totalGlobal, showSummary, onTransitoGroupClick }) {
+function GroupsDroppable({ droppableId, groups, totalGlobal, showSummary, onTransitoGroupClick, onDeleteGroup, currentColumn }) {
   return (
     <Droppable droppableId={droppableId} type="GROUP">
       {(provided, snapshot) => (
@@ -417,6 +445,8 @@ function GroupsDroppable({ droppableId, groups, totalGlobal, showSummary, onTran
           <ChannelColumnContent
             groups={groups}
             onTransitoGroupClick={onTransitoGroupClick}
+            onDeleteGroup={onDeleteGroup}
+            currentColumn={currentColumn}
           />
           {provided.placeholder}
         </div>
