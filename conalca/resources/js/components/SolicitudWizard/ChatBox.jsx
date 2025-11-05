@@ -558,97 +558,100 @@ export default function ChatBox() {
         </p>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 p-4 overflow-y-auto max-h-96 min-h-64">
-        <div className="space-y-4">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                msg.role === 'user' 
-                  ? 'bg-orange-600 text-white' 
-                  : 'bg-gray-100 text-gray-800'
-              }`}>
-                <p className="text-sm">{msg.content}</p>
-              </div>
-            </div>
-          ))}
-          
-          {isProcessing && (
-            <div className="flex justify-start">
-              <div className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg max-w-xs lg:max-w-md">
-                <div className="flex items-center space-x-2">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                    <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                  </div>
-                  <span className="text-sm text-gray-500">Procesando...</span>
+      {/* Messages Container - Expandido para ocupar más espacio */}
+      <div className="flex-1 flex flex-col min-h-0">
+        {/* Messages Area - Ocupa el espacio disponible */}
+        <div className="flex-1 p-4 overflow-y-auto" style={{minHeight: '400px', maxHeight: 'calc(100vh - 300px)'}}>
+          <div className="space-y-4">
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                  msg.role === 'user' 
+                    ? 'bg-orange-600 text-white' 
+                    : 'bg-gray-100 text-gray-800'
+                }`}>
+                  <p className="text-sm">{msg.content}</p>
                 </div>
               </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* Input */}
-      <div className="border-t border-gray-200 p-4">
-        <div className="flex items-center space-x-2">
-          <div className="flex-1">
-            <textarea
-              ref={inputRef}
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Ejemplo: Envío nacional de 500kg de alimentos de Bogotá a Medellín"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              rows="2"
-              disabled={isProcessing}
-            />
+            ))}
+            
+            {isProcessing && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg max-w-xs lg:max-w-md">
+                  <div className="flex items-center space-x-2">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                      <div className="w-2 h-2 bg-orange-600 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                    </div>
+                    <span className="text-sm text-gray-500">Procesando...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
-          
-          {/* Botón de voz */}
-          {isSpeechApi && (
+        </div>
+
+        {/* Input Area - Siempre fijo en la parte inferior */}
+        <div className="flex-shrink-0 border-t border-gray-200 p-4">
+          <div className="flex items-center space-x-2">
+            <div className="flex-1">
+              <textarea
+                ref={inputRef}
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Ejemplo: Envío nacional de 500kg de alimentos de Bogotá a Medellín"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                rows="2"
+                disabled={isProcessing}
+              />
+            </div>
+            
+            {/* Botón de voz */}
+            {isSpeechApi && (
+              <button
+                onClick={listening ? stopListening : startListening}
+                className={`p-2 rounded-lg transition-colors ${
+                  listening 
+                    ? 'bg-red-500 hover:bg-red-600 text-white' 
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                }`}
+                disabled={isProcessing}
+                title={listening ? 'Detener grabación' : 'Grabar mensaje'}
+              >
+                {listening ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 2a4 4 0 00-4 4v4a4 4 0 008 0V6a4 4 0 00-4-4zM6 10V6a4 4 0 118 0v4a6 6 0 01-12 0z" clipRule="evenodd" />
+                    <path d="M7 16h6v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 715 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+            )}
+            
+            {/* Botón enviar */}
             <button
-              onClick={listening ? stopListening : startListening}
-              className={`p-2 rounded-lg transition-colors ${
-                listening 
-                  ? 'bg-red-500 hover:bg-red-600 text-white' 
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-              }`}
-              disabled={isProcessing}
-              title={listening ? 'Detener grabación' : 'Grabar mensaje'}
+              onClick={send}
+              disabled={!userInput.trim() || isProcessing}
+              className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors"
             >
-              {listening ? (
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 2a4 4 0 00-4 4v4a4 4 0 008 0V6a4 4 0 00-4-4zM6 10V6a4 4 0 118 0v4a6 6 0 01-12 0z" clipRule="evenodd" />
-                  <path d="M7 16h6v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1z" />
+              {isProcessing ? (
+                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
               ) : (
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
                 </svg>
               )}
             </button>
-          )}
-          
-          {/* Botón enviar */}
-          <button
-            onClick={send}
-            disabled={!userInput.trim() || isProcessing}
-            className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition-colors"
-          >
-            {isProcessing ? (
-              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
-              </svg>
-            )}
-          </button>
+          </div>
         </div>
       </div>
     </div>

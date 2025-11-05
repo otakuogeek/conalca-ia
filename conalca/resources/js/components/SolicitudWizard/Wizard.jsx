@@ -325,7 +325,9 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
           <button
             onClick={onClose}
             className="absolute top-2 right-2 md:top-4 md:right-4
-                       text-3xl font-bold text-gray-600 hover:text-red-500">
+                       w-8 h-8 rounded-full bg-white bg-opacity-20 backdrop-blur-sm
+                       text-white hover:bg-opacity-30 transition-all duration-200
+                       flex items-center justify-center text-xl font-bold">
             ✕
           </button>
         </div>
