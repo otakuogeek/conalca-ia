@@ -21,6 +21,8 @@ class SolicitudTransporteContenedor extends Model
         'fecha_entrega_cont',
         'contenedor',
         'numero_cont',
+        'lugar_codigo',
+        'devolucioncontenedor',
     ];
 
     /**

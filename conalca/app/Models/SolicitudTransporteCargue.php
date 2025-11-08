@@ -26,6 +26,10 @@ class SolicitudTransporteCargue extends Model
         'remision_cliente',
         'codigo_entrega',
         'email',
+        'remitente_codigo',
+        'destinatario_codigo',
+        'promesa_servicio_hora',
+        'promesaservicio_hora',
     ];
 
     /**

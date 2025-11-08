@@ -95,11 +95,15 @@ class CatalogController extends Controller
     public function empaques(Request $r) {
         $q = $r->input('q', '');
 
-        return Packing::where('Nombre', 'like', "%$q%")
+        $result = Packing::where('Nombre', 'like', "%$q%")
                     ->orWhere('Codigo', 'like', "%$q%")
                     ->orWhere('Codigo Ministerio', 'like', "%$q%")
                     ->limit(15)
                     ->get(['Codigo', 'Codigo Ministerio', 'Nombre']);
+
+        \Log::info('[EMPAQUES] Búsqueda con q="'.$q.'", resultados: ' . $result->count());
+        
+        return $result;
     }
 
     public function clasesVehiculo(Request $r) {

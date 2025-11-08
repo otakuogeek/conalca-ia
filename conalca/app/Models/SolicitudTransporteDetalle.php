@@ -66,6 +66,7 @@ class SolicitudTransporteDetalle extends Model
         'tipo_vehiculo',
         'item',
         'load',
+        'tipo_remesa_rndc',
     ];
 
     /**

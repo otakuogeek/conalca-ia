@@ -27,6 +27,12 @@ return new class extends Migration
             $table->string('remesa_cliente')->nullable();
             $table->string('remision_cliente')->nullable();
             $table->string('codigo_entrega')->nullable();
+            $table->string('remitente_codigo')->nullable();
+            $table->string('destinatario_codigo')->nullable();
+            $table->string('promesa_servicio_hora')->nullable();
+            $table->string('promesaservicio_hora')->nullable();
+            $table->string('remesion_cliente')->nullable();
+            $table->string('codigo_entrega')->nullable();
             $table->string('email')->nullable();
             $table->timestamps();
         });

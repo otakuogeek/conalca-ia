@@ -23,6 +23,8 @@ return new class extends Migration
             $table->date('fecha_entrega_cont')->nullable();
             $table->string('contenedor')->nullable();
             $table->string('numero_cont')->nullable();
+            $table->string('lugar_codigo')->nullable();
+            $table->string('devolucioncontenedor')->nullable();
             $table->timestamps();
         });
     }

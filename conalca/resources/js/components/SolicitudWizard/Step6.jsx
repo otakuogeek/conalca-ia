@@ -15,14 +15,14 @@ export default function Step6({ data = {}, formData = {}, onNext, onPrev, loadin
   const ac = data.acompanamiento || {};
 console.log(ac)
   const [form, setForm] = useState({
-    itesoltra_vehiculoacompanamiento :
-        formData.itesoltra_vehiculoacompanamiento || (ac.itesoltra_vehiculoacompanamiento ?? ac.vehiculo_acom ?? 1),
-    tipaco_codigo                    :
-        formData.tipaco_codigo                    || (ac.tipaco_codigo ?? ac.tipo_vehiculo_acom ?? ''),
-    itesoltra_acompanamientocuentade :
-        formData.itesoltra_acompanamientocuentade || (ac.itesoltra_acompanamientocuentade ?? ac.acompanamiento_cuenta_acom ?? ''),
-    itesoltra_acompanamientovalor    :
-        formData.itesoltra_acompanamientovalor    || (ac.itesoltra_acompanamientovalor ?? ac.valor_acompanante_acom ?? ''),
+    vehiculo_acom :
+        formData.vehiculo_acom || (ac.vehiculo_acom ?? ac.itesoltra_vehiculoacompanamiento ?? 1),
+    tipo_vehiculo_acom :
+        formData.tipo_vehiculo_acom || (ac.tipo_vehiculo_acom ?? ac.tipaco_codigo ?? ''),
+    acompanamiento_cuenta_acom :
+        formData.acompanamiento_cuenta_acom || (ac.acompanamiento_cuenta_acom ?? ac.itesoltra_acompanamientocuentade ?? ''),
+    valor_acompanante_acom :
+        formData.valor_acompanante_acom || (ac.valor_acompanante_acom ?? ac.itesoltra_acompanamientovalor ?? ''),
   });
 
   /* ------------------------------------------------------------------
@@ -55,7 +55,7 @@ console.log(ac)
       {/* Nº de vehículos de acompañamiento */}
       <div>
         <label
-          htmlFor="itesoltra_vehiculoacompanamiento"
+          htmlFor="vehiculo_acom"
           className="block text-sm font-semibold mb-2 flex items-center justify-center gap-1 text-gray-800"
         >
           <FiUsers className="text-orange-500" />
@@ -63,11 +63,11 @@ console.log(ac)
         </label>
 
         <input
-          id="itesoltra_vehiculoacompanamiento"
-          name="itesoltra_vehiculoacompanamiento"
+          id="vehiculo_acom"
+          name="vehiculo_acom"
           type="number"
           min="0"
-          value={form.itesoltra_vehiculoacompanamiento}
+          value={form.vehiculo_acom}
           onChange={handle}
           placeholder="Cantidad"
           className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -78,16 +78,16 @@ console.log(ac)
       {/* Tipo ACC */}
       <div>
         <label
-          htmlFor="tipaco_codigo"
+          htmlFor="tipo_vehiculo_acom"
           className="block text-sm font-semibold mb-2 text-gray-800"
         >
           Tipo ACC
         </label>
 
         <select
-          id="tipaco_codigo"
-          name="tipaco_codigo"
-          value={form.tipaco_codigo}
+          id="tipo_vehiculo_acom"
+          name="tipo_vehiculo_acom"
+          value={form.tipo_vehiculo_acom}
           onChange={handle}
           className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
         >
@@ -101,16 +101,16 @@ console.log(ac)
       {/* ¿Quién lo asume? */}
       <div>
         <label
-          htmlFor="itesoltra_acompanamientocuentade"
+          htmlFor="acompanamiento_cuenta_acom"
           className="block text-sm font-semibold mb-2 text-gray-800"
         >
           ¿Quién lo asume?
         </label>
 
         <select
-          id="itesoltra_acompanamientocuentade"
-          name="itesoltra_acompanamientocuentade"
-          value={form.itesoltra_acompanamientocuentade}
+          id="acompanamiento_cuenta_acom"
+          name="acompanamiento_cuenta_acom"
+          value={form.acompanamiento_cuenta_acom}
           onChange={handle}
           className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
         >
@@ -123,19 +123,19 @@ console.log(ac)
       {/* Valor COP */}
       <div>
         <label
-          htmlFor="itesoltra_acompanamientovalor"
+          htmlFor="valor_acompanante_acom"
           className="block text-sm font-semibold mb-2 text-gray-800"
         >
           Valor&nbsp;COP
         </label>
 
         <input
-          id="itesoltra_acompanamientovalor"
-          name="itesoltra_acompanamientovalor"
+          id="valor_acompanante_acom"
+          name="valor_acompanante_acom"
           type="number"
           min="1"
           step="0.01"
-          value={form.itesoltra_acompanamientovalor}
+          value={form.valor_acompanante_acom}
           onChange={handle}
           placeholder="0"
           className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"

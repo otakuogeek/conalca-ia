@@ -77,6 +77,17 @@ class SolicitudTransporteController extends Controller
             );
             Log::info('[ST] Solicitud padre creada/encontrada', ['id' => $solicitud->id]);
 
+            /* -----------------------------------------------------------------
+            | 2.1. Detectar tipo de operación para completar campos faltantes
+            |-----------------------------------------------------------------*/
+            $tipoOperacion = $data['tipo_operacion'] ?? $solicitud->tipo_operacion ?? '';
+            $isImportExport = in_array($tipoOperacion, ['IMPORTACION', 'EXPORTACION']);
+            
+            Log::info('[ST] Tipo de operación detectada:', [
+                'tipo_operacion' => $tipoOperacion,
+                'is_import_export' => $isImportExport
+            ]);
+
         /* -----------------------------------------------------------------
         | 3. Guardar la información correspondiente al paso
         |-----------------------------------------------------------------*/
@@ -84,7 +95,7 @@ class SolicitudTransporteController extends Controller
 
             /* ------------   STEP 1  (Encabezado)   ------------ */
             case 'step_1':
-                $solicitud->fill([
+                $step1Data = [
                     'tipo_viaje'             => $data['tipo_viaje']            ?? null,
                     'moneda'                 => $data['moneda']                ?? null,
                     'fuente_solicitud'       => $data['fuente_solicitud']      ?? null,
@@ -97,47 +108,247 @@ class SolicitudTransporteController extends Controller
                     /* nuevos obligatorios */
                     'centro_costo_despacho'  => $data['centro_costo_despacho'] ?? null,
                     'cliente_codigo'         => $data['cliente_codigo']        ?? null,
-                ]);
+                ];
+
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $step1Data = array_merge($step1Data, [
+                        'empresa_codigo'                         => 1,
+                        'soltra_observacion'                     => 'PRUEBAS WS',
+                        'soltra_observacion_remesa'              => '',
+                        'soltra_tipoimagen'                      => '',
+                        'soltra_mandatario'                      => 1,
+                        'soltra_fechasolicitud'                  => date('Y-m-d'),
+                        'soltra_instruccionesservicio'           => '',
+                        'solser_codigo'                          => '',
+                        'soltra_mostrarvehiculodigitalizado'     => 'NO',
+                        'soltra_mostrarconductordigitalizado'    => 'NO',
+                        'usuario_codigoautorizado'               => 'BRANDON.LOPEZ',
+                        'soltra_recomendado'                     => '',
+                    ]);
+                }
+
+                $solicitud->fill($step1Data);
                 $solicitud->save();
                 break;
 
             /* ------------   STEP 2  (Detalle)   -------------- */
             case 'step_2':
+                $step2Data = [...$data, 'cotizacion_model_id' => $cotizacionId];
+                
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $defaults = [
+                        'ciudad_intermedia'     => null,
+                        'cantidad_mercancia'    => $data['cantidad_mercancia'] ?? 1,
+                        'peso'                  => $data['peso'] ?? 2000,
+                        'producto'              => $data['producto'] ?? 1,
+                        'empaque'               => $data['empaque'] ?? 1,
+                        'cantidad_vehiculos'    => $data['cantidad_vehiculos'] ?? 1,
+                        'clase_vehiculo'        => $data['clase_vehiculo'] ?? 1,
+                        'carroceria'            => $data['carroceria'] ?? 1,
+                        'minimo_modelo'         => $data['minimo_modelo'] ?? 1,
+                        'tipo_flete'            => $data['tipo_flete'] ?? 'CARGA SUELTA',
+                        'flete_conductor'       => $data['flete_conductor'] ?? 1,
+                        'flete_ministerio'      => $data['flete_ministerio'] ?? 1,
+                        'tipo_tarifa'           => $data['tipo_tarifa'] ?? 'GENERAL',
+                        'tarifa_cliente'        => $data['tarifa_cliente'] ?? 1,
+                        'valor_mercancia'       => $data['valor_mercancia'] ?? 1,
+                        'cargue_cuenta_de'      => $data['cargue_cuenta_de'] ?? 'EMPRESA',
+                        'descargue_cuenta_de'   => $data['descargue_cuenta_de'] ?? 'DESTINATARIO',
+                        'seguro_cuenta_de'      => $data['seguro_cuenta_de'] ?? 'CLIENTE',
+                        'descripcion_mercancia' => $data['descripcion_mercancia'] ?? '',
+                        'kit_seguridad'         => $data['kit_seguridad'] ?? 'NO',
+                        'sub_cliente'           => $data['sub_cliente'] ?? 1,
+                        // tipo_remesa_rndc se maneja por separado para el API - no existe en DB
+                    ];
+                    
+                    // Completar solo campos que no están ya definidos
+                    foreach ($defaults as $key => $defaultValue) {
+                        if (!array_key_exists($key, $step2Data) || empty($step2Data[$key])) {
+                            $step2Data[$key] = $defaultValue;
+                        }
+                    }
+                }
+                
+                // Filtrar campos que no existen en la tabla
+                $allowedFields = [
+                    'origen', 'destino', 'ciudad_intermedia', 'cantidad_mercancia', 'peso', 'peso_despachado',
+                    'producto', 'empaque', 'cantidad_vehiculos', 'cantidad_vehiculos_despachadas', 'clase_vehiculo',
+                    'carroceria', 'minimo_modelo', 'tipo_flete', 'flete_conductor', 'flete_ministerio',
+                    'tipo_tarifa', 'tarifa_cliente', 'tipo_documento', 'numero_documento', 'valor_mercancia',
+                    'restricciones_cliente', 'cargue_cuenta_de', 'descargue_cuenta_de', 'seguro_cuenta_de',
+                    'descripcion_mercancia', 'servicio_escolta', 'kit_seguridad', 'kit_cinchas',
+                    'guia_acompanamiento', 'observacion_detalle', 'sub_cliente', 'guia_despacho',
+                    'numero_viaje', 'numero_pedido', 'nota_entrega', 'planilla_entrega', 'numero_factura',
+                    'modelo', 'qty', 't_cbm', 'order_no', 'o_c_cliente', 'bodega', 'fecha_expiracion',
+                    'net_amt_txn', 'prec_unit', 'remark', 'addr', 'appoint_date', 'tipo_vehiculo',
+                    'item', 'load', 'cotizacion_model_id'
+                ];
+                
+                $filteredStep2Data = array_intersect_key($step2Data, array_flip($allowedFields));
+                
                 SolicitudTransporteDetalle::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    [...$data, 'cotizacion_model_id' => $cotizacionId]
+                    $filteredStep2Data
                 );
                 break;
 
             /* ------------   STEP 3  (Cargue)   --------------- */
             case 'step_3':
+                $step3Data = $data;
+                
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $defaults = [
+                        'fecha_cargue'          => $data['fecha_cargue'] ?? date('Y-m-d'),
+                        'hora_cargue'            => $data['hora_cargue'] ?? '16:00',
+                        'remitente_codigo'      => $data['remitente_codigo'] ?? 1,
+                        'destinatario_codigo'   => $data['destinatario_codigo'] ?? 1,
+                        'observacion_cargue'    => $data['observacion_cargue'] ?? 1,
+                        'promesa_servicio'      => $data['promesa_servicio'] ?? date('Y-m-d'),
+                        'promesaservicio_hora'  => $data['promesaservicio_hora'] ?? '16:00',
+                        'documento_transporte'  => $data['documento_transporte'] ?? 1,
+                        'manifiestocliente'     => $data['manifiestocliente'] ?? 1,
+                        'remesa_cliente'         => $data['remesa_cliente'] ?? 1,
+                        'remesion_cliente'       => $data['remesion_cliente'] ?? 1,
+                        'codigo_entrega'         => $data['codigo_entrega'] ?? 1,
+                        'email'                 => $data['email'] ?? 1,
+                        'contacto'              => $data['contacto'] ?? '2345678',
+                    ];
+                    
+                    // Completar solo campos que no están ya definidos
+                    foreach ($defaults as $key => $defaultValue) {
+                        if (!array_key_exists($key, $step3Data) || empty($step3Data[$key])) {
+                            $step3Data[$key] = $defaultValue;
+                        }
+                    }
+                }
+                
                 SolicitudTransporteCargue::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    $data
+                    $step3Data
                 );
                 break;
 
             /* ------------   STEP 4  (Contenedor) ------------- */
             case 'step_4':
+                $step4Data = $data;
+                
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $defaults = [
+                        'contenedor'                => $data['contenedor'] ?? 'SI',  // Para import/export usualmente SI
+                        'contenedor'                   => $data['contenedor'] ?? 10,
+                        'lugar_codigo'              => $data['lugar_codigo'] ?? 1,
+                        'cantidad_cont'       => $data['cantidad_cont'] ?? 1,
+                        'fecha_entrega_cont'   => $data['fecha_entrega_cont'] ?? date('Y-m-d'),
+                        'numero_cont'          => $data['numero_cont'] ?? 1,
+                        'devolucioncontenedor'      => $data['devolucioncontenedor'] ?? 'NO',
+                    ];
+                    
+                    // Completar solo campos que no están ya definidos
+                    foreach ($defaults as $key => $defaultValue) {
+                        if (!array_key_exists($key, $step4Data) || empty($step4Data[$key])) {
+                            $step4Data[$key] = $defaultValue;
+                        }
+                    }
+                }
+                
                 SolicitudTransporteContenedor::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    $data
+                    $step4Data
                 );
                 break;
 
-            /* ------------   STEP 5  (Internacional) ---------- */
+            /* ------------   STEP 5  (Internacional) ------------- */
             case 'step_5':
+                $step5Data = $data;
+                
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $defaults = [
+                        'tipomercanciainternacional' => $data['tipomercanciainternacional'] ?? 'DRY',
+                        'trayecto'                   => $data['trayecto'] ?? 'IMPORTACION',
+                        'observaciones_llegada'      => $data['observaciones_llegada'] ?? 'NO APLICA',
+                        'numerosirem'                => $data['numerosirem'] ?? 1,
+                        'numerowb'                   => $data['numerowb'] ?? 1,
+                        'bl_fecha'                   => $data['bl_fecha'] ?? date('Y-m-d'),
+                        'lugar_codigo_internac'      => $data['lugar_codigo_internac'] ?? 4,
+                        'fechacita'                  => $data['fechacita'] ?? date('Y-m-d'),
+                        'empresa_codigo_naviera'     => $data['empresa_codigo_naviera'] ?? 1,
+                        'horacita'                   => $data['horacita'] ?? '16:00',
+                        'viajecodigo'                => $data['viajecodigo'] ?? 1,
+                        'numerobooking'              => $data['numerobooking'] ?? 1,
+                        'modalidadInternacional'     => $data['modalidadInternacional'] ?? 'TERRESTRE',
+                        'cut_off'                    => $data['cut_off'] ?? date('Y-m-d', strtotime('+1 day')),
+                        'eta'                        => $data['eta'] ?? date('Y-m-d', strtotime('+3 days')),
+                    ];
+                    
+                    // Completar solo campos que no están ya definidos
+                    foreach ($defaults as $key => $defaultValue) {
+                        if (!array_key_exists($key, $step5Data) || empty($step5Data[$key])) {
+                            $step5Data[$key] = $defaultValue;
+                        }
+                    }
+                }
+                
                 SolicitudTransporteInternacional::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    $data
+                    $step5Data
                 );
                 break;
 
-            /* ------------   STEP 6  (Acompañamiento) --------- */
+            /* ------------   STEP 6 (Acompañamiento) ------------- */
             case 'step_6':
+                $step6Data = $data;
+                
+                // Solo usar campos básicos que probablemente existen (marcados como legacy en migración)
+                $allowedFields = [
+                    'vehiculo_acom',
+                    'tipo_vehiculo_acom', 
+                    'acompanamiento_cuenta_acom',
+                    'valor_acompanante_acom'
+                ];
+                
+                $filteredData = [];
+                
+                foreach ($allowedFields as $field) {
+                    if (isset($step6Data[$field])) {
+                        $filteredData[$field] = $step6Data[$field];
+                    }
+                }
+                
+                // Agregar campos por defecto para import/export
+                if ($isImportExport) {
+                    $defaults = [
+                        'vehiculo_acom' => $filteredData['vehiculo_acom'] ?? 'SI',
+                        'tipo_vehiculo_acom' => $filteredData['tipo_vehiculo_acom'] ?? 'MOTORIZADO',
+                        'acompanamiento_cuenta_acom' => $filteredData['acompanamiento_cuenta_acom'] ?? 'CLIENTE',
+                        'valor_acompanante_acom' => $filteredData['valor_acompanante_acom'] ?? '1'
+                    ];
+                    
+                    // Completar solo campos que no están ya definidos
+                    foreach ($defaults as $key => $defaultValue) {
+                        if (!array_key_exists($key, $filteredData) || empty($filteredData[$key])) {
+                            $filteredData[$key] = $defaultValue;
+                        }
+                    }
+                }
+                
+                // Si no hay datos válidos, crear al menos el registro mínimo
+                if (empty($filteredData)) {
+                    $filteredData = [
+                        'vehiculo_acom' => 'SI',
+                        'tipo_vehiculo_acom' => 'MOTORIZADO',
+                        'acompanamiento_cuenta_acom' => 'CLIENTE',
+                        'valor_acompanante_acom' => '1'
+                    ];
+                }
+                
                 SolicitudTransporteAcompanamiento::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    $data
+                    $filteredData
                 );
                 break;
 
@@ -169,6 +380,10 @@ class SolicitudTransporteController extends Controller
 
             try {
                 Log::info('[ST] 6 pasos completos. Enviando a Silogtran …');
+                
+                // COMPLETAR DATOS OBLIGATORIOS ANTES DEL ENVÍO
+                $this->completarDatosObligatorios($solicitud, $isImportExport);
+                
                 $payload   = $this->armarPayloadSilog($solicitud);
                 Log::info('[ST] Payload a Silogtran', ['payload' => $payload]);
 
@@ -268,11 +483,12 @@ class SolicitudTransporteController extends Controller
     private function armarPayloadSilog(SolicitudTransporte $solicitud): array
     {
         /* ------------ Alias cortos de las relaciones ------------ */
-        $d  = $solicitud->detalle;          // Paso 2
-        $c  = $solicitud->cargue;           // Paso 3
-        $co = $solicitud->contenedor;       // Paso 4
-        $i  = $solicitud->internacional;    // Paso 5
-        $ac = $solicitud->acompanamiento;   // Paso 6
+        $d  = $solicitud->detalle;              // Paso 2
+        $c  = $solicitud->cargue;               // Paso 3
+        $co = $solicitud->contenedor;           // Paso 4
+        $i  = $solicitud->internacional;        // Paso 5
+        $ac = $solicitud->acompanamiento;       // Paso 6
+        $cf = $solicitud->condiciones_factura;  // Condiciones factura y cumplido
 
         /* ----------- DETALLE  (toma lo que haya y normaliza los valores) ----------- */
         $detalle = [[
@@ -320,14 +536,14 @@ class SolicitudTransporteController extends Controller
             'itesoltra_planillatransporte'    => SH::normalizeNumeric($d->planilla_entrega ?? 1),
             'itesoltra_facturamercancia'      => SH::normalizeNumeric($d->factura_mercancia ?? 1),
 
-            'tipo_remesa_rndc'                => $d->tipo_remesa_rndc ?? 3,
+            'tipo_remesa_rndc'                => 3, // Siempre 3 para import/export
 
             /* ----------  sub-bloques ---------- */
             'detalle_cargue'                  => ST::cargue      ($c?->toArray()  ?? []),
             'detalle_contenedor'              => ST::contenedor  ($co?->toArray() ?? []),
             'detalle_internacional'           => ST::internacional($i?->toArray() ?? []),
-            'detalle_condicion_factura'       => ST::condicionFactura([]),
-            'detalle_condicion_cumplido'      => ST::cumplido([]),
+            'detalle_condicion_factura'       => ST::condicionFactura($cf?->toArray() ?? []),
+            'detalle_condicion_cumplido'      => ST::cumplido($cf?->toArray() ?? []),
             'detalle_acompanamiento'          => ST::acompanamiento($ac?->toArray() ?? []),
         ]];
 
@@ -335,7 +551,7 @@ class SolicitudTransporteController extends Controller
         $encabezado = [
             'empresa_codigo'                     => 11,
             'tipvia_codigo'                      => SH::normalizeTripType($solicitud->tipo_viaje ?? 'NACIONAL'),
-            'cencos_codigo_despacho'             => SH::normalizeCostCenter($solicitud->centro_costo_despacho ?? 'CONALCA BOGOTA'),
+            'cencos_codigo_despacho'             => SH::normalizeCostCenter($solicitud->centro_costo_despacho ?? 'TRANSLIDHER BOGOTA'),
             'cliente_codigo'                     => SH::normalizeClientCode($solicitud->cliente_codigo ?? 1846),
             'moneda_codigo'                      => SH::normalizeCurrency($solicitud->moneda ?? 'PESOS'),
             'soltra_medio'                       => SH::normalizeRequestSource($solicitud->fuente_solicitud ?? 'PAGINA WEB'),
@@ -500,5 +716,183 @@ class SolicitudTransporteController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Completa todos los datos obligatorios para el API Silogtran
+     * Agrega valores por defecto cuando no están presentes
+     */
+    private function completarDatosObligatorios($solicitud, $isImportExport = false)
+    {
+        $currentDate = now()->format('Y-m-d');
+
+        // PASO 1 - Encabezado: Campos adicionales obligatorios
+        // NOTA: Estos campos NO se guardan en BD (no existen las columnas)
+        // Solo se usarán en el payload para Silogtran API
+        // Los campos empresa_codigo, soltra_* no existen en solicitud_transportes
+
+        // PASO 2 - Detalle: Completar campos faltantes
+        $detalle = $solicitud->detalle ?: new \App\Models\SolicitudTransporteDetalle();
+        $detalle->solicitud_transporte_id = $solicitud->id;
+
+        $detalleDefaults = [
+            'ciudad_intermedia' => null,
+            'cantidad_mercancia' => 1,
+            'peso' => 2000,
+            'producto' => 1,
+            'empaque' => 1,
+            'cantidad_vehiculos' => 1,
+            'clase_vehiculo' => 1,
+            'carroceria' => 1,
+            'minimo_modelo' => 1,
+            'tipo_flete' => 'CARGA SUELTA',
+            'flete_conductor' => 1,
+            'flete_ministerio' => 1,
+            'tipo_tarifa' => 'GENERAL',
+            'tarifa_cliente' => 1,
+            'valor_mercancia' => 1,
+            'cargue_cuenta_de' => 'EMPRESA',
+            'descargue_cuenta_de' => 'DESTINATARIO',
+            'seguro_cuenta_de' => 'CLIENTE',
+            'descripcion_mercancia' => '',
+            'kit_seguridad' => 'NO',
+            'sub_cliente' => 1,
+            'tipo_remesa_rndc' => 3
+        ];
+
+        foreach ($detalleDefaults as $field => $default) {
+            if (!$detalle->$field) {
+                $detalle->$field = $default;
+            }
+        }
+        $detalle->save();
+
+        // PASO 3 - Cargue: Completar campos faltantes
+        $cargue = $solicitud->cargue ?: new \App\Models\SolicitudTransporteCargue();
+        $cargue->solicitud_transporte_id = $solicitud->id;
+
+        $cargueDefaults = [
+            'fecha_cargue' => $cargue->fecha_cargue ?: $currentDate,
+            'hora_cargue' => '16:00',
+            'remitente_codigo' => 1,
+            'destinatario_codigo' => 1,
+            'observacion_cargue' => 1,
+            'promesa_servicio' => $cargue->promesa_servicio ?: $currentDate,
+            'promesaservicio_hora' => '16:00',
+            'documento_transporte' => 1,
+            'manifiesto_cliente' => 1,
+            'remesa_cliente' => 1,
+            'remesion_cliente' => 1,
+            'codigo_entrega' => 1,
+            'email' => 1,
+            'contacto' => 2345678
+        ];
+
+        foreach ($cargueDefaults as $field => $default) {
+            if (!$cargue->$field) {
+                $cargue->$field = $default;
+            }
+        }
+        $cargue->save();
+
+        // PASO 4 - Contenedor: Solo para import/export o si ya existe
+        if ($isImportExport || $solicitud->contenedor) {
+            $contenedor = $solicitud->contenedor ?: new \App\Models\SolicitudTransporteContenedor();
+            $contenedor->solicitud_transporte_id = $solicitud->id;
+
+            $contenedorDefaults = [
+                'contenedor' => 10,
+                'lugar_codigo' => 1,
+                'cantidad_cont' => 1,
+                'fecha_entrega_cont' => $currentDate,
+                'numero_cont' => 1,
+                'devolucioncontenedor' => 'NO'
+            ];
+
+            foreach ($contenedorDefaults as $field => $default) {
+                if (!$contenedor->$field) {
+                    $contenedor->$field = $default;
+                }
+            }
+            $contenedor->save();
+        }
+
+        // PASO 5 - Internacional: Completar campos con nombres correctos de BD
+        if ($isImportExport || $solicitud->internacional) {
+            $internacional = $solicitud->internacional ?: new \App\Models\SolicitudTransporteInternacional();
+            $internacional->solicitud_transporte_id = $solicitud->id;
+            
+            // Usar los nombres REALES de las columnas de la migración
+            $internacionalDefaults = [
+                'nombre_cliente' => 1,
+                'nombre_exportador' => 1,
+                'datos_agente_aduana' => 1,
+                'datos_bodega_ingresa' => 1,
+                'ciudad_int' => '11001000',
+                'tipo_operacion_int' => 'IMPORTACION',
+                'quien_paga_almacenamiento' => 1,
+                'ciudad_otra' => '11001000',
+                'tipo_otro' => 'IMPORTACION',
+                'nombre_importador' => 1,
+                'descripcion_mercancia' => 1,
+                'cantidad_peso_mercancia' => 1,
+                'fecha_vencimiento_modalidad' => $currentDate,
+                'paso_frontera' => 'NO'
+            ];
+
+            foreach ($internacionalDefaults as $field => $default) {
+                if (!$internacional->$field) {
+                    $internacional->$field = $default;
+                }
+            }
+            $internacional->save();
+        }
+
+        // PASO 6 - Acompañamiento: Asegurar que existe
+        $acompanamiento = $solicitud->acompanamiento ?: new \App\Models\SolicitudTransporteAcompanamiento();
+        $acompanamiento->solicitud_transporte_id = $solicitud->id;
+
+        $acompanamientoDefaults = [
+            'vehiculo_acom' => 1,
+            'tipo_vehiculo_acom' => 'MOTORIZADO',
+            'acompanamiento_cuenta_acom' => 'CLIENTE',
+            'valor_acompanante_acom' => 1
+        ];
+
+        foreach ($acompanamientoDefaults as $field => $default) {
+            if (!$acompanamiento->$field) {
+                $acompanamiento->$field = $default;
+            }
+        }
+        $acompanamiento->save();
+
+        // Bloques adicionales obligatorios
+        
+        // Condición de Factura - usando nombres correctos de columnas de la BD
+        if (class_exists('\App\Models\SolicitudTransporteCondicionesFactura')) {
+            $condicionFactura = $solicitud->condiciones_factura ?: new \App\Models\SolicitudTransporteCondicionesFactura();
+            $condicionFactura->solicitud_transporte_id = $solicitud->id;
+            
+            // Campos según migración: condicion_factura, factura_remesa_hija, opcion_factura_remesa, opcion_condicion_cumplida
+            if (!$condicionFactura->condicion_factura) {
+                $condicionFactura->condicion_factura = 'CON EMISION DE DESPACHO';
+            }
+            if (!$condicionFactura->factura_remesa_hija) {
+                $condicionFactura->factura_remesa_hija = 'NO';
+            }
+            if (!$condicionFactura->opcion_factura_remesa) {
+                $condicionFactura->opcion_factura_remesa = 'NO';
+            }
+            // Cumplido ahora está en la misma tabla
+            if (!$condicionFactura->opcion_condicion_cumplida) {
+                $condicionFactura->opcion_condicion_cumplida = 'COMODATO, REMESA';
+            }
+            $condicionFactura->save();
+        }
+
+        Log::info('[ST] Datos obligatorios completados para Silogtran', [
+            'solicitud_id' => $solicitud->id,
+            'is_import_export' => $isImportExport
+        ]);
     }
 }

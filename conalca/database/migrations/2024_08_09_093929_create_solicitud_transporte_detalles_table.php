@@ -66,6 +66,7 @@ return new class extends Migration
             $table->date('appoint_date')->nullable();
             $table->string('tipo_vehiculo')->nullable();
             $table->string('item')->nullable();
+            $table->string('tipo_remesa_rndc')->nullable();
             $table->string('load')->nullable();
             $table->foreignId('cotizacion_model_id')->nullable()->constrained('cotizacion_models')->nullOnDelete();
             $table->timestamps();

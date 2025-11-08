@@ -412,3 +412,24 @@ Route::prefix('arcangel')->group(function () {
 Route::delete('/cotizacion/grupos/{id}', [App\Http\Controllers\Api\GroupQuotationController::class, 'destroy'])
     ->middleware('auth:sanctum')
     ->name('api.cotizacion.grupos.destroy');
+
+// ═══════════════════════════════════════════════════════════════
+// Solicitud Transporte Routes - Sistema de solicitudes de transporte paso a paso
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('solicitud-transporte')->group(function () {
+    // Guardar parcialmente (step by step)
+    Route::post('/guardar-parcial', [App\Http\Controllers\SolicitudTransporteController::class, 'guardarParcial'])
+        ->name('api.solicitud-transporte.guardar-parcial');
+    
+    // Obtener datos para prefill desde grupo de cotización
+    Route::get('/prefill-from-group/{grupoId}', [App\Http\Controllers\SolicitudTransporteController::class, 'prefillFromGroup'])
+        ->name('api.solicitud-transporte.prefill-from-group');
+    
+    // Obtener solicitud completa
+    Route::get('/{id}', [App\Http\Controllers\SolicitudTransporteController::class, 'obtenerSolicitud'])
+        ->name('api.solicitud-transporte.obtener');
+    
+    // Enviar a Silogtran
+    Route::post('/{id}/enviar-silogtran', [App\Http\Controllers\SolicitudTransporteController::class, 'enviarASilogtran'])
+        ->name('api.solicitud-transporte.enviar-silogtran');
+});

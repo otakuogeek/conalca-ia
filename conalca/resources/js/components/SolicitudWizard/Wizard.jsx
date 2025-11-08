@@ -38,11 +38,10 @@ const STEP3 = ['fecha_cargue','hora_cargue','remitente','destinatario','contacto
 const STEP4 = ['contenedor'];
 const STEP5 = ['modalidad_internacional'];
 const STEP6 = [
-  'vehiculo_acom',                         // ← antiguo (por si existe)
-  'itesoltra_vehiculoacompanamiento',
-  'tipaco_codigo',
-  'itesoltra_acompanamientocuentade',
-  'itesoltra_acompanamientovalor'
+  'vehiculo_acom',
+  'tipo_vehiculo_acom', 
+  'acompanamiento_cuenta_acom',
+  'valor_acompanante_acom'
 ];
 
 /* Convierte el objeto plano devuelto por /prefill
