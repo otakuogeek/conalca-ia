@@ -5,8 +5,9 @@ from dotenv import load_dotenv
 from typing import Optional, Dict, Any
 import logging
 
-# Cargar variables de entorno
-load_dotenv(dotenv_path="../.env")
+# Cargar variables de entorno desde el directorio del proyecto
+project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(dotenv_path=os.path.join(project_dir, ".env"))
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)

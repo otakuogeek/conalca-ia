@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './utils/errorHandler.js'; // Sistema global de manejo de errores
+import './utils/cspDetector.js'; // Detector de problemas CSP
 import UserPanel from './components/UserControlPanel/UserPanel';
 import ChannelColumnContent from './components/Quotes/ChannelColumnContent';
 import ChannelsWithCustomColumns from './components/Quotes/ChannelsWithCustomColumns';

@@ -136,35 +136,35 @@
                                     <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #666; font-size: 13px;">
                                         {{ $route['vehiculo_requerido'] ?? '-' }}
                                     </td>
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #d85e13; font-size: 15px;">
-                                        ${{ number_format($route['valor_final'] ?? 0, 0, ',', '.') }}
-
+                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #333;">
                                         @php
-                                            /* datos acompañante de ESTA ruta */
+                                            // Calcular valor base y acompañamiento
+                                            $valorBase = floatval($route['valor'] ?? 0);
                                             $tipo   = $route['tipaco_codigo'] ?? '';
                                             $cant   = (int)($route['itesoltra_vehiculoacompanamiento'] ?? 0);
                                             $valorU = (float)($route['itesoltra_acompanamientovalor']  ?? 0);
-                                            $totalA = $cant > 0 ? $cant * $valorU : 0;
+                                            $totalAcomp = $cant > 0 ? $cant * $valorU : 0;
+                                            
+                                            // Total de esta ruta (valor_final debe incluir acompañamiento)
+                                            $valorFinal = isset($route['valor_final']) 
+                                                ? floatval($route['valor_final']) 
+                                                : ($valorBase + $totalAcomp);
                                         @endphp
+                                        
+                                        <div style="font-weight: 600; color: #333; font-size: 14px; margin-bottom: 4px;">
+                                            Transporte: <span style="color: #d85e13;">${{ number_format($valorBase, 0, ',', '.') }}</span>
+                                        </div>
 
-                                        @if($tipo && $totalA > 0)
-                                            <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:4px;font-size:10px;border-collapse:collapse;">
-                                                <tr style="background:#fff7ed;">
-                                                    <th style="border:1px solid #e5e7eb;text-align:center;">N°</th>
-                                                    <th style="border:1px solid #e5e7eb;text-align:center;">Acompañamiento</th>
-                                                    <th style="border:1px solid #e5e7eb;text-align:center;">Valor</th>
-                                                </tr>
-                                                <tr>
-                                                    <td style="border:1px solid #e5e7eb;text-align:center;">1</td>
-                                                    <td style="border:1px solid #e5e7eb;text-align:center;">
-                                                        {{ ucfirst(strtolower($tipo)) }}
-                                                    </td>
-                                                    <td style="border:1px solid #e5e7eb;text-align:center;">
-                                                        ${{ number_format($totalA,0,',','.') }}
-                                                    </td>
-                                                </tr>
-                                            </table>
+                                        @if($tipo && $totalAcomp > 0)
+                                            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                                                + Acompañamiento {{ ucfirst(strtolower($tipo)) }}: 
+                                                <span style="color: #ff8c42;">${{ number_format($totalAcomp, 0, ',', '.') }}</span>
+                                            </div>
                                         @endif
+                                        
+                                        <div style="font-weight: 700; color: #d85e13; font-size: 16px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e9ecef;">
+                                            Total: ${{ number_format($valorFinal, 0, ',', '.') }}
+                                        </div>
                                     </td>
                                 </tr>
                             @endforeach

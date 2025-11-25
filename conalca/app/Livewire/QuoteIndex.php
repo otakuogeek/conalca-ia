@@ -479,52 +479,90 @@ class QuoteIndex extends Component
     {
         $this->hydrateClientData();
         $this->active_button = true;
-        // SETEAR DATA OF CLIENTS
+        
+        // Intentar obtener group_id de sesión (creado por React/API)
+        if (!$this->group_cotization_id && session()->has('current_group_id')) {
+            $this->group_cotization_id = session('current_group_id');
+            \Log::info('✅ Group ID recuperado de sesión', ['group_id' => $this->group_cotization_id]);
+        }
+        
+        // Si no hay en sesión, buscar el último grupo borrador RECIENTE de este cliente
+        if (!$this->group_cotization_id && $this->client_id) {
+            $lastDraft = GroupCotization::where('client_id', $this->client_id)
+                ->where('user_id', auth()->id())
+                ->where('status', 'borrador')
+                ->where('created_at', '>=', now()->subDay()) // Solo últimas 24 horas
+                ->orderBy('created_at', 'desc')
+                ->first();
+            
+            if ($lastDraft) {
+                $this->group_cotization_id = $lastDraft->id;
+                \Log::info('✅ Grupo borrador encontrado en DB', [
+                    'group_id' => $lastDraft->id,
+                    'client_id' => $this->client_id,
+                    'created_at' => $lastDraft->created_at,
+                    'age_hours' => now()->diffInHours($lastDraft->created_at)
+                ]);
+            } else {
+                \Log::warning('⚠️ No se encontró grupo borrador reciente', [
+                    'client_id' => $this->client_id,
+                    'user_id' => auth()->id()
+                ]);
+            }
+        }
+        
+        \Log::info('🔄 Iniciando storeST', [
+            'group_cotization_id_actual' => $this->group_cotization_id,
+            'client_id' => $this->client_id,
+            'type_business' => $this->type_business
+        ]);
 
-        // INTELIGENCIA: Si tengo group_cotization_id, intento usarlo. Sino, lo creo.
+        // PUNTO ÚNICO DE CREACIÓN/ACTUALIZACIÓN DEL GRUPO
         if ($this->group_cotization_id) {
-            // Busco el grupo existente por ID:
+            // Caso 1: Ya existe un ID (grupo borrador creado por API)
             $group = GroupCotization::find($this->group_cotization_id);
             if ($group) {
-                // Actualiza estado (por ejemplo, "pendiente" o "enviado")
-                $group->status = 'pendiente'; // o el estado que corresponda
-                // Si quieres actualizar otros datos del grupo, hazlo aquí...
-                $group->save();
-            } else {
-                // El id no existe realmente, así que creamos el grupo y guardamos su ID
-                $group = GroupCotization::create([
-                    'user_id' => auth()->id(),
-                    'client_id' => $this->client_id,
-                    'type' => $this->type_business,
-                    'operation_type' => $this->operation_type,
-                    'status' => 'pendiente', // o lo que corresponda
-                    'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
-                    'cargo_type' => $this->cargo_type ?? null,
-                    'jen_set' => ($this->cargo_type === 'refrigerado'),
-                    'combustible' => ($this->cargo_type === 'refrigerado'),
-                    'kit_derrames' => ($this->cargo_type === 'dangerous'),
-                    'pictogramas' => ($this->cargo_type === 'dangerous'),
-                    // 'reference' => ..., // Si se usa
+                // Actualizar status y campos adicionales
+                $group->update([
+                    'status' => 'pendiente',
+                    'openai_thread_id' => $this->openai_thread ?? null,
+                    'created_from_chat' => 1,
                 ]);
-                $this->group_cotization_id = $group->id;
+                \Log::info('✅ Grupo ACTUALIZADO de borrador a pendiente', [
+                    'group_id' => $group->id,
+                    'thread_id' => $this->openai_thread,
+                    'from_chat' => true
+                ]);
+                
+                // Limpiar sesión
+                session()->forget('current_group_id');
+            } else {
+                // ID inválido, limpiar y no crear nada aún
+                \Log::warning('⚠️ Group ID inválido, limpiando', ['invalid_id' => $this->group_cotization_id]);
+                $this->group_cotization_id = null;
+                $group = null;
             }
-        } else {
-            // No hay id, siempre crear uno nuevo
+        }
+        
+        // Caso 2: Si no hay grupo válido, crear uno nuevo (flujo legacy)
+        if (!isset($group) || !$group) {
+            \Log::warning('⚠️ Creando grupo sin borrador previo (flujo legacy)');
+            
             $group = GroupCotization::create([
                 'user_id' => auth()->id(),
                 'client_id' => $this->client_id,
+                'status' => 'pendiente',
                 'type' => $this->type_business,
                 'operation_type' => $this->operation_type,
-                'status' => 'pendiente',
                 'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
                 'cargo_type' => $this->cargo_type ?? null,
                 'jen_set' => ($this->cargo_type === 'refrigerado'),
                 'combustible' => ($this->cargo_type === 'refrigerado'),
                 'kit_derrames' => ($this->cargo_type === 'dangerous'),
                 'pictogramas' => ($this->cargo_type === 'dangerous'),
-                // 'reference' => ...,
             ]);
             $this->group_cotization_id = $group->id;
+            \Log::info('✅ Grupo CREADO (legacy)', ['group_id' => $group->id]);
         }
 
         // Ahora recorres las rutas:
@@ -1043,21 +1081,20 @@ class QuoteIndex extends Component
                 'title'                 => $this->title_email,
                 'text'                  => $this->prompt_response,
                 'greeting'              => $this->greeting,
-                // Rutas y totales
-                'routes'                => $this->quote_data,
-                'total_price'           => collect($this->quote_data)->sum('valor_final'),
+                // Rutas y totales (calcular incluyendo acompañamiento)
+                'routes'                => $this->prepareQuoteDataForEmail(),
+                'total_price'           => $this->calculateTotalWithAccompaniment(),
                 // Asesor
                 'asesor_name'           => $this->asesor_name_email,
                 'asesor_phone'          => $this->asesor_phone_email,
                 'asesor_email'          => $this->asesor_email_email,
                 'asesor_pbx'            => $this->asesor_pbx_email,
                 'asesor_ubicacion'      => $this->asesor_ubicacion_email,
-                'advisor_signature'     => $this->advisor_signature ?? null, // si lo usas
+                'advisor_signature'     => $this->advisor_signature ?? null,
                 // Otros
                 'id_last_created'       => $this->id_last_created,
                 'created_at'            => now(),
                 'acceptOfferDecision'   => $this->acceptOfferDecision ?? '',
-                // Si quieres más, los agregas aquí
             ]));
 
             $this->getAllQuotes();
@@ -2129,15 +2166,55 @@ class QuoteIndex extends Component
     {
         $this->hydrateClientData();
 
-        // 1. Busca el grupo de cotización por ID si está asignado
+        \Log::info('💾 Iniciando saveDraft', [
+            'group_cotization_id_actual' => $this->group_cotization_id,
+            'client_id' => $this->client_id
+        ]);
+
+        // Intentar obtener group_id de sesión primero
+        if (!$this->group_cotization_id && session()->has('current_group_id')) {
+            $this->group_cotization_id = session('current_group_id');
+            \Log::info('✅ Group ID recuperado de sesión en saveDraft', ['group_id' => $this->group_cotization_id]);
+        }
+        
+        // Si no hay en sesión, buscar borrador existente RECIENTE de este cliente
+        if (!$this->group_cotization_id && $this->client_id) {
+            $lastDraft = GroupCotization::where('client_id', $this->client_id)
+                ->where('user_id', auth()->id())
+                ->where('status', 'borrador')
+                ->where('created_at', '>=', now()->subDay())
+                ->orderBy('created_at', 'desc')
+                ->first();
+            
+            if ($lastDraft) {
+                $this->group_cotization_id = $lastDraft->id;
+                \Log::info('✅ Borrador existente encontrado en DB', [
+                    'group_id' => $lastDraft->id,
+                    'created_at' => $lastDraft->created_at
+                ]);
+            }
+        }
+
+        // PUNTO ÚNICO DE CREACIÓN/ACTUALIZACIÓN DEL BORRADOR
         if ($this->group_cotization_id) {
+            // Caso 1: Ya existe un ID (edición de borrador existente)
             $group = GroupCotization::find($this->group_cotization_id);
             if ($group) {
-                $group->status = 'borrador';
-                // Puedes actualizar otros campos si quieres aquí...
-                $group->save();
+                $group->update([
+                    'status' => 'borrador',
+                    'type' => $this->type_business,
+                    'operation_type' => $this->operation_type,
+                    'candado_satelital' => in_array($this->type_business, ['dta', 'otm']),
+                    'cargo_type' => $this->cargo_type ?? null,
+                    'jen_set' => ($this->cargo_type === 'refrigerado'),
+                    'combustible' => ($this->cargo_type === 'refrigerado'),
+                    'kit_derrames' => ($this->cargo_type === 'dangerous'),
+                    'pictogramas' => ($this->cargo_type === 'dangerous'),
+                ]);
+                \Log::info('✅ Borrador ACTUALIZADO', ['group_id' => $group->id]);
             } else {
-                // Si el id es inválido, lo recrea
+                // ID inválido, crear nuevo borrador
+                \Log::warning('⚠️ Group ID inválido en saveDraft, creando nuevo', ['invalid_id' => $this->group_cotization_id]);
                 $group = GroupCotization::create([
                     'user_id'   => auth()->id(),
                     'client_id' => $this->client_id,
@@ -2150,12 +2227,13 @@ class QuoteIndex extends Component
                     'combustible' => ($this->cargo_type === 'refrigerado'),
                     'kit_derrames' => ($this->cargo_type === 'dangerous'),
                     'pictogramas' => ($this->cargo_type === 'dangerous'),
-                    // 'reference' => ..., // Si lo usas
                 ]);
                 $this->group_cotization_id = $group->id;
+                \Log::info('✅ Borrador CREADO (ID inválido)', ['new_group_id' => $group->id]);
             }
         } else {
-            // Si no hay ID, crea el grupo por primera vez
+            // Caso 2: No hay ID (creación de borrador desde cero)
+            \Log::info('📝 No hay group_id, creando nuevo borrador');
             $group = GroupCotization::create([
                 'user_id'   => auth()->id(),
                 'client_id' => $this->client_id,
@@ -2168,9 +2246,9 @@ class QuoteIndex extends Component
                 'combustible' => ($this->cargo_type === 'refrigerado'),
                 'kit_derrames' => ($this->cargo_type === 'dangerous'),
                 'pictogramas' => ($this->cargo_type === 'dangerous'),
-                // 'reference' => ..., // Si lo usas
             ]);
             $this->group_cotization_id = $group->id;
+            \Log::info('✅ Borrador CREADO desde cero', ['new_group_id' => $group->id]);
         }
 
         // 2. Guarda o actualiza cada cotización como "draft" asociada al grupo
@@ -2431,5 +2509,51 @@ class QuoteIndex extends Component
 
         // Validar formato RFC 2822
         return filter_var(trim($email), FILTER_VALIDATE_EMAIL) !== false;
+    }
+
+    /**
+     * Preparar datos de cotización para el email, asegurando que valor_final incluya acompañamiento
+     * 
+     * @return array
+     */
+    private function prepareQuoteDataForEmail()
+    {
+        return collect($this->quote_data)->map(function($route) {
+            $valorBase = floatval($route['valor'] ?? 0);
+            
+            // Calcular acompañamiento si existe
+            $cant = (int)($route['itesoltra_vehiculoacompanamiento'] ?? 0);
+            $valorUnitario = (float)($route['itesoltra_acompanamientovalor'] ?? 0);
+            $totalAcompanamiento = $cant > 0 ? $cant * $valorUnitario : 0;
+            
+            // Asegurar que valor_final incluya el acompañamiento
+            if (!isset($route['valor_final']) || empty($route['valor_final'])) {
+                $route['valor_final'] = $valorBase + $totalAcompanamiento;
+            }
+            
+            return $route;
+        })->toArray();
+    }
+
+    /**
+     * Calcular el total incluyendo acompañamiento
+     * 
+     * @return float
+     */
+    private function calculateTotalWithAccompaniment()
+    {
+        return collect($this->quote_data)->sum(function($route) {
+            $valorBase = floatval($route['valor'] ?? 0);
+            
+            // Calcular acompañamiento si existe
+            $cant = (int)($route['itesoltra_vehiculoacompanamiento'] ?? 0);
+            $valorUnitario = (float)($route['itesoltra_acompanamientovalor'] ?? 0);
+            $totalAcompanamiento = $cant > 0 ? $cant * $valorUnitario : 0;
+            
+            // Usar valor_final si existe, o calcular la suma
+            return isset($route['valor_final']) && !empty($route['valor_final']) 
+                ? floatval($route['valor_final'])
+                : $valorBase + $totalAcompanamiento;
+        });
     }
 }

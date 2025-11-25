@@ -128,7 +128,17 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                       
                       <div className="flex items-center gap-3">
                         <span className="text-sm text-gray-500 font-medium">
-                          {group.cotizaciones.length} {group.cotizaciones.length === 1 ? 'ruta' : 'rutas'}
+                          {(() => {
+                            // Calcular cantidad de rutas con monto > 0
+                            const rutasConMonto = group.cotizaciones.filter((quote) => {
+                              const valorGuardado = parseFloat(quote.valor ?? 0);
+                              const precioBase = parseFloat(quote.pricing?.price ?? 0);
+                              const porcentaje = parseFloat(quote.porcentaje ?? 0);
+                              const total = valorGuardado > 0 ? valorGuardado : (precioBase + (precioBase * porcentaje) / 100);
+                              return total > 0;
+                            }).length;
+                            return `${rutasConMonto} ${rutasConMonto === 1 ? 'ruta' : 'rutas'}`;
+                          })()}
                         </span>
                         <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
                         <span className="text-sm font-bold text-emerald-600">
@@ -206,7 +216,16 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
 
               {/* LISTA DE COTIZACIONES */}
               <div className="flex flex-col px-6 py-4 gap-3">
-                {group.cotizaciones.map((quote, i) => {
+                {group.cotizaciones
+                  .filter((quote) => {
+                    // Filtrar rutas con monto $0
+                    const valorGuardado = parseFloat(quote.valor ?? 0);
+                    const precioBase = parseFloat(quote.pricing?.price ?? 0);
+                    const porcentaje = parseFloat(quote.porcentaje ?? 0);
+                    const total = valorGuardado > 0 ? valorGuardado : (precioBase + (precioBase * porcentaje) / 100);
+                    return total > 0; // Solo mostrar rutas con monto mayor a 0
+                  })
+                  .map((quote, i) => {
                   // Usar el precio guardado directamente o calcular si no existe
                   const valorGuardado = parseFloat(quote.valor ?? 0);
                   const precioBase = parseFloat(quote.pricing?.price ?? 0);

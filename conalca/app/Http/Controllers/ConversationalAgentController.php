@@ -9,12 +9,14 @@ use Illuminate\Support\Facades\Http;
 use App\Services\ConversationalAgentService;
 use App\Services\ElevenLabsService;
 use App\Services\CallQueueService;
+use App\Services\ArcangelService;
 use App\Models\DriverCallResponse;
 use App\Models\CotizacionModel;
 use App\Models\ConversationSession;
 use App\Models\ConversationMessage;
 use App\Models\VehicleClass;
 use App\Models\Llamada;
+use App\Models\LlamadaConductor;
 use App\Jobs\ProcessElevenLabsCall;
 use App\Jobs\ProcessBatchElevenLabsCalls;
 
@@ -22,11 +24,17 @@ class ConversationalAgentController extends Controller
 {
     protected $agentService;
     protected $elevenLabsService;
+    protected $arcangelService;
 
-    public function __construct(ConversationalAgentService $agentService, ElevenLabsService $elevenLabsService)
+    public function __construct(
+        ConversationalAgentService $agentService, 
+        ElevenLabsService $elevenLabsService,
+        ArcangelService $arcangelService
+    )
     {
         $this->agentService = $agentService;
         $this->elevenLabsService = $elevenLabsService;
+        $this->arcangelService = $arcangelService;
     }
 
     /**
@@ -227,7 +235,7 @@ class ConversationalAgentController extends Controller
 
             // Obtener información del conductor
             $driver = \App\Models\VehicleOwnerHolderDriver::find($driverId);
-            $driverName = $driver ? $driver->Conductor : 'conductor';
+            $driverName = $driver ? $vehiculo['conductor'] ?? 'N/A' : 'conductor';
             
             // Generar mensaje inicial conversacional
             $conversationalMessage = $this->agentService->generateInitialMessage(
@@ -886,119 +894,187 @@ class ConversationalAgentController extends Controller
     public function initiateConversationalCall(Request $request)
     {
         try {
+            Log::info('========================================');
+            Log::info('INICIO DE LLAMADA CONVERSACIONAL DESDE FRONTEND');
+            Log::info('========================================');
+            
             $cotizacionId = $request->input('cotizacion_model_id');
 
+            Log::info('Request recibido', [
+                'cotizacion_id' => $cotizacionId,
+                'all_request_data' => $request->all(),
+                'method' => $request->method(),
+                'url' => $request->fullUrl(),
+                'ip' => $request->ip()
+            ]);
+
             if (!$cotizacionId) {
+                Log::error('ERROR: ID de cotización no proporcionado');
                 return response()->json(['error' => 'ID de cotización requerido'], 400);
             }
 
-            Log::info('Iniciando llamada conversacional', [
-                'cotizacion_id' => $cotizacionId,
-                'request_data' => $request->all()
-            ]);
+            Log::info('Validando cotización ID: ' . $cotizacionId);
 
             // Obtener la cotización completa
+            Log::info('Buscando cotización en BD...');
             $cotizacion = CotizacionModel::find($cotizacionId);
             
             if (!$cotizacion) {
+                Log::error('ERROR: Cotización no encontrada', ['cotizacion_id' => $cotizacionId]);
                 return response()->json(['error' => 'Cotización no encontrada'], 404);
             }
+            
+            Log::info('Cotización encontrada', [
+                'id' => $cotizacion->id,
+                'origen' => $cotizacion->ciudad_origen,
+                'destino' => $cotizacion->ciudad_destino,
+                'vehiculo' => $cotizacion->vehiculo_requerido
+            ]);
 
-            // Implementar nuevo flujo de búsqueda usando vehicle_class como intermediaria
-            Log::info('Iniciando nuevo flujo de búsqueda de conductores', [
+            if (!$cotizacion->ciudad_origen) {
+                Log::error('ERROR: Cotización sin ciudad de origen', ['cotizacion_id' => $cotizacionId]);
+                return response()->json([
+                    'error' => 'La cotización no tiene ciudad de origen definida',
+                    'cotizacion_id' => $cotizacionId
+                ], 400);
+            }
+
+            // Usar ArcangelService para buscar conductores (igual que ArcangelDriversController)
+            Log::info('Buscando conductores con ArcangelService', [
                 'cotizacion_id' => $cotizacionId,
+                'ciudad_origen' => $cotizacion->ciudad_origen,
                 'vehiculo_requerido' => $cotizacion->vehiculo_requerido
             ]);
 
-            // Paso 1: Buscar en vehicle_class por nomcoti
-            $vehicleClass = \App\Models\VehicleClass::where('nomcoti', $cotizacion->vehiculo_requerido)->first();
+            $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+            $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
             
-            if (!$vehicleClass) {
-                Log::warning('No se encontró vehicle_class para vehiculo_requerido', [
-                    'vehiculo_requerido' => $cotizacion->vehiculo_requerido
+            Log::info('Parámetros de búsqueda preparados', [
+                'ciudad_normalizada' => $ciudadOrigen,
+                'variantes_vehiculo' => $variantesVehiculo
+            ]);
+            
+            // Buscar en Arcángel API con todas las variantes del vehículo
+            Log::info('Consultando API de Arcángel...');
+            $resultado = $this->arcangelService->getVehiculosFiltrados(
+                ciudad: $ciudadOrigen,
+                clases: $variantesVehiculo,
+                minScore: 0, // Sin filtro de score para llamadas
+                limit: 5, // Máximo 5 conductores
+                useCache: true,
+                cacheTTL: 15
+            );
+            
+            $vehiculos = $resultado['vehiculos'] ?? [];
+
+            if (empty($vehiculos)) {
+                Log::warning('No se encontraron conductores en Arcángel', [
+                    'cotizacion_id' => $cotizacionId,
+                    'ciudad' => $ciudadOrigen,
+                    'variantes' => $variantesVehiculo
                 ]);
                 
                 return response()->json([
-                    'error' => 'No se encontró clase de vehículo para: ' . $cotizacion->vehiculo_requerido,
+                    'error' => 'No se encontraron conductores disponibles para esta cotización',
                     'cotizacion_id' => $cotizacionId,
+                    'ciudad' => $ciudadOrigen,
                     'vehiculo_requerido' => $cotizacion->vehiculo_requerido
                 ], 404);
             }
 
-            Log::info('Clase de vehículo encontrada', [
-                'vehicle_class_codigo' => $vehicleClass->Codigo,
-                'vehicle_class_nombre' => $vehicleClass->Nombre,
-                'nomcoti' => $vehicleClass->nomcoti
+            Log::info('Conductores encontrados en Arcángel', [
+                'total' => count($vehiculos),
+                'ciudad' => $ciudadOrigen
             ]);
-
-            // Paso 2: Usar el campo Nombre de vehicle_class para buscar en vehicle_owner_holder_driver
-            // Sin filtrar por estado, solo por tipo de vehículo y teléfono válido
-            $drivers = \App\Models\VehicleOwnerHolderDriver::where('Clasevehiculo', $vehicleClass->Nombre)
-                ->whereNotNull('Telefonoconductor')
-                ->where('Telefonoconductor', '!=', '')
-                ->limit(5)
-                ->get();
-
-            Log::info('Conductores encontrados con nuevo flujo', [
-                'clase_vehiculo_buscada' => $vehicleClass->Nombre,
-                'conductores_encontrados' => $drivers->count()
-            ]);
-
-            if ($drivers->isEmpty()) {
-                return response()->json([
-                    'error' => 'No se encontraron conductores disponibles para esta cotización',
-                    'cotizacion_id' => $cotizacionId
-                ], 404);
-            }
 
             $callResults = [];
             
-            // Realizar llamadas a conductores usando el sistema conversacional
-            foreach ($drivers as $driver) {
+            // Realizar llamadas a conductores
+            foreach ($vehiculos as $vehiculo) {
                 try {
-                    // Obtener y formatear el teléfono usando la nueva función
-                    $phoneNumber = $driver->Telefonoconductor ?? $driver->Telefonopropietario ?? $driver->Telefonoposeedor ?? 'N/A';
+                    // Obtener teléfono del vehiculo de Arcángel
+                    $phoneNumber = $vehiculo['telefono'] ?? 'N/A';
                     $formattedPhone = $this->formatPhoneNumber($phoneNumber);
 
                     if (!$formattedPhone) {
                         Log::warning('Número de teléfono inválido para conductor', [
-                            'driver_id' => $driver->id,
-                            'driver_name' => $driver->Conductor,
+                            'conductor' => $vehiculo['conductor'] ?? 'N/A',
+                            'placa' => $vehiculo['placa'] ?? 'N/A',
                             'original_phone' => $phoneNumber
                         ]);
-                        continue; // Saltar a siguiente conductor
+                        continue;
                     }
 
-                    Log::info('Llamando a conductor', [
-                        'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                    // Crear o actualizar registro del conductor
+                    Log::info('Creando/actualizando conductor en BD...');
+                    $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
+                    
+                    Log::info('Conductor registrado', [
+                        'conductor_id' => $conductor->id,
+                        'nombre' => $conductor->nombre_conductor,
+                        'telefono' => $conductor->telefono,
+                        'placa' => $conductor->placa
+                    ]);
+
+                    Log::info('Preparando llamada a conductor', [
+                        'conductor_id' => $conductor->id,
+                        'conductor' => $conductor->nombre_conductor,
+                        'placa' => $conductor->placa,
                         'phone' => $formattedPhone,
-                        'original_phone' => $phoneNumber,
+                        'clase' => $conductor->clase_vehiculo,
                         'cotizacion_id' => $cotizacionId
                     ]);
 
                     // Crear registro de llamada en tabla llamadas
+                    Log::info('Creando registro de llamada en BD...');
                     $llamada = Llamada::create([
                         'id_cotizacion' => $cotizacionId,
-                        'chofer_id' => $driver->id,
+                        'conductor_id' => $conductor->id,
                         'numero_destino' => $formattedPhone,
                         'status' => Llamada::STATUS_PENDIENTE,
                         'call_started_at' => now()
                     ]);
+                    
+                    Log::info('Llamada registrada', [
+                        'llamada_id' => $llamada->id_llamada,
+                        'numero_destino' => $llamada->numero_destino,
+                        'status' => $llamada->status
+                    ]);
+
+                    // Crear objeto driver simulado con datos de Arcángel para makeConversationalCall
+                    $driverData = (object)[
+                        'id' => $conductor->id,
+                        'Conductor' => $conductor->nombre_conductor,
+                        'Placa' => $conductor->placa,
+                        'Telefonoconductor' => $formattedPhone,
+                        'Clasevehiculo' => $conductor->clase_vehiculo
+                    ];
 
                     // Realizar llamada usando ElevenLabs
-                    $callResult = $this->makeConversationalCall($driver, $cotizacion, $llamada);
+                    Log::info('>>> Iniciando llamada con ElevenLabs', [
+                        'llamada_id' => $llamada->id_llamada,
+                        'conductor' => $driverData->Conductor,
+                        'telefono' => $driverData->Telefonoconductor
+                    ]);
+                    
+                    $callResult = $this->makeConversationalCall($driverData, $cotizacion, $llamada);
+                    
+                    Log::info('<<< Resultado de ElevenLabs', [
+                        'llamada_id' => $llamada->id_llamada,
+                        'success' => $callResult['success'] ?? false,
+                        'conversation_id' => $callResult['conversation_id'] ?? null,
+                        'sip_call_id' => $callResult['sip_call_id'] ?? null,
+                        'error' => $callResult['error'] ?? null
+                    ]);
                     
                     $callResults[] = [
-                        'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'conductor_id' => $conductor->id,
+                        'conductor' => $conductor->nombre_conductor,
+                        'placa' => $conductor->placa,
                         'phone' => $formattedPhone,
                         'call_result' => $callResult,
                         'status' => $callResult['status'] ?? 'unknown'
                     ];
-
-                    // Esperar un poco entre llamadas para no saturar
-                    // sleep(2);
                     
                 } catch (\Exception $e) {
                     Log::error("Error llamando a conductor {$driver->id}: " . $e->getMessage());
@@ -1007,7 +1083,7 @@ class ConversationalAgentController extends Controller
                     
                     $callResults[] = [
                         'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'driver_name' => $vehiculo['conductor'] ?? 'N/A',
                         'phone' => $errorPhone,
                         'error' => $e->getMessage(),
                         'status' => 'error'
@@ -1053,117 +1129,107 @@ class ConversationalAgentController extends Controller
     private function makeConversationalCall($driver, $cotizacion, $llamada)
     {
         try {
+            Log::info('==================================================');
+            Log::info('ENTRANDO A makeConversationalCall()');
+            Log::info('==================================================');
+            Log::info('Parámetros recibidos', [
+                'driver_id' => $driver->id,
+                'driver_name' => $driver->Conductor,
+                'driver_phone' => $driver->Telefonoconductor,
+                'cotizacion_id' => $cotizacion->id,
+                'llamada_id' => $llamada->id_llamada,
+                'numero_destino' => $llamada->numero_destino
+            ]);
+            
             // Ejecutar backfill automático de llamadas pendientes
+            Log::info('Ejecutando backfill automático...');
             $this->runAutomaticBackfill();
-
-            // Configuración de ElevenLabs
-            $elevenLabsApiKey = config('services.elevenlabs.api_key');
-            $agentId = config('services.elevenlabs.agent_id');
-            $agentPhoneNumberId = config('services.elevenlabs.agent_phone_number_id');
-
-            if (!$elevenLabsApiKey || !$agentId || !$agentPhoneNumberId) {
-                throw new \Exception('Configuración de ElevenLabs incompleta');
-            }
 
             // Obtener el teléfono del conductor desde la llamada ya formateado
             $phoneNumber = $llamada->numero_destino;
             
+            Log::info('Teléfono extraído de llamada', ['phone' => $phoneNumber]);
+            
             if (!$phoneNumber) {
+                Log::error('ERROR: Teléfono vacío o null');
                 throw new \Exception('El conductor no tiene un número de teléfono válido');
             }
 
-            Log::info('Iniciando llamada conversacional con ElevenLabs', [
-                'to' => $phoneNumber,
-                'agent_id' => $agentId,
-                'agent_phone_number_id' => $agentPhoneNumberId,
-                'driver_id' => $driver->id,
-                'cotizacion_id' => $cotizacion->id
-            ]);
+            Log::info('Preparando datos para ElevenLabs');
 
             // Preparar datos de contexto para el agente
-            $conversationData = [
+            $clientData = [
                 'cotizacion_id' => $cotizacion->id,
-                'driver_id' => $driver->id,
-                'driver_name' => $driver->Conductor,
+                'llamada_id' => $llamada->id_llamada,
+                'conductor_id' => $driver->id,
+                'conductor_nombre' => $driver->Conductor ?? 'conductor',
+                'placa' => $driver->Placa ?? 'N/A',
                 'origen' => $cotizacion->ciudad_origen ?? 'No especificado',
                 'destino' => $cotizacion->ciudad_destino ?? 'No especificado',
-                'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
-                'valor_flete' => $cotizacion->valor_flete ?? 'Por negociar',
-                'empresa' => 'Conalca'
+                'vehiculo' => $cotizacion->vehiculo_requerido ?? 'N/A',
+                'valor_flete' => $cotizacion->valor_flete ?? 'Por negociar'
             ];
+            
+            Log::info('Client data preparado', $clientData);
 
-            // Payload para ElevenLabs SIP Trunk
-            $payload = [
-                'agent_id' => $agentId,
-                'agent_phone_number_id' => $agentPhoneNumberId,
-                'to_number' => $phoneNumber,
-                'conversation_initiation_client_data' => $conversationData
-            ];
-
-            // Agregar configuración de webhook si está habilitado
-            $webhookConfig = config('elevenlabs.webhook');
-            if ($webhookConfig['enabled'] ?? false) {
-                $payload['webhook_url'] = $webhookConfig['url'];
-                if (!empty($webhookConfig['secret'])) {
-                    $payload['webhook_secret'] = $webhookConfig['secret'];
-                }
-                if (!empty($webhookConfig['events'])) {
-                    $payload['webhook_events'] = $webhookConfig['events'];
-                }
-            }
-
-            // Realizar llamada a ElevenLabs API
-            $response = Http::withHeaders([
-                'xi-api-key' => $elevenLabsApiKey,
-                'Content-Type' => 'application/json'
-            ])->post('https://api.elevenlabs.io/v1/convai/sip-trunk/outbound-call', $payload);
-
-            if (!$response->successful()) {
-                throw new \Exception('Error en ElevenLabs API: ' . $response->body());
-            }
-
-            $responseData = $response->json();
-
-            // Actualizar registro con la información de ElevenLabs
-            $updateData = [
-                'elevenlabs_conversation_id' => $responseData['conversation_id'] ?? null,
-                'elevenlabs_sip_call_id' => $responseData['sip_call_id'] ?? null,
-                'status' => Llamada::STATUS_EN_CURSO,
-                'call_status' => Llamada::CALL_STATUS_INITIATED,
-                'call_initiated_at' => now(),
-                'call_direction' => Llamada::DIRECTION_OUTBOUND,
-                'call_type' => Llamada::TYPE_AGENT,
-                'elevenlabs_response' => $responseData,
-                'call_notes' => 'Llamada conversacional iniciada con ElevenLabs - ' . ($responseData['message'] ?? 'Sin mensaje'),
-                'internal_notes' => 'API call successful, waiting for SIP connection',
-                'call_metadata' => [
-                    'api_call_time' => now()->toISOString(),
-                    'agent_id' => $agentId,
-                    'agent_phone_number_id' => $agentPhoneNumberId,
-                    'payload_sent' => $payload
-                ]
-            ];
-
-            $llamada->update($updateData);
-
-            Log::info('Llamada conversacional creada exitosamente con ElevenLabs', [
-                'conversation_id' => $responseData['conversation_id'] ?? null,
-                'sip_call_id' => $responseData['sip_call_id'] ?? null,
-                'driver_id' => $driver->id,
-                'success' => $responseData['success'] ?? false
+            // Usar el servicio de ElevenLabs para hacer la llamada
+            Log::info('Obteniendo instancia de ElevenLabsCallService...');
+            $elevenLabsService = app(\App\Services\ElevenLabsCallService::class);
+            
+            Log::info('Llamando a elevenLabsService->makeDirectSipCall()...', [
+                'phone' => $phoneNumber,
+                'client_data' => $clientData
+            ]);
+            
+            $callResult = $elevenLabsService->makeDirectSipCall(
+                $phoneNumber,
+                $clientData
+            );
+            
+            Log::info('Respuesta de makeDirectSipCall', [
+                'success' => $callResult['success'] ?? false,
+                'conversation_id' => $callResult['conversation_id'] ?? null,
+                'sip_call_id' => $callResult['sip_call_id'] ?? null,
+                'error' => $callResult['error'] ?? null
             ]);
 
-            return [
-                'success' => $responseData['success'] ?? false,
-                'conversation_id' => $responseData['conversation_id'] ?? null,
-                'sip_call_id' => $responseData['sip_call_id'] ?? null,
-                'message' => $responseData['message'] ?? 'Llamada iniciada',
-                'to' => $phoneNumber,
-                'agent_id' => $agentId
-            ];
+            if ($callResult['success']) {
+                Log::info('Llamada exitosa, actualizando registro en BD...');
+                
+                // Actualizar registro con la información de ElevenLabs
+                $llamada->update([
+                    'status' => Llamada::STATUS_EN_CURSO,
+                    'call_status' => Llamada::CALL_STATUS_INITIATED,
+                    'elevenlabs_conversation_id' => $callResult['conversation_id'] ?? null,
+                    'elevenlabs_sip_call_id' => $callResult['sip_call_id'] ?? null,
+                    'call_initiated_at' => now(),
+                    'elevenlabs_response' => $callResult
+                ]);
+
+                Log::info('Registro actualizado correctamente', [
+                    'llamada_id' => $llamada->id_llamada,
+                    'status' => $llamada->status,
+                    'conversation_id' => $llamada->elevenlabs_conversation_id
+                ]);
+
+                return [
+                    'success' => true,
+                    'conversation_id' => $callResult['conversation_id'] ?? null,
+                    'sip_call_id' => $callResult['sip_call_id'] ?? null,
+                    'message' => 'Llamada iniciada exitosamente',
+                    'to' => $phoneNumber,
+                    'status' => 'initiated'
+                ];
+            } else {
+                Log::error('Llamada falló', ['error' => $callResult['error'] ?? 'Unknown error']);
+                throw new \Exception($callResult['error'] ?? 'Error desconocido al iniciar llamada');
+            }
 
         } catch (\Exception $e) {
-            Log::error("Error creando llamada conversacional con ElevenLabs: " . $e->getMessage());
+            Log::error("EXCEPCIÓN en makeConversationalCall: " . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             
             // Determinar el tipo de error y código SIP si es aplicable
             $errorMessage = $e->getMessage();
@@ -1389,8 +1455,10 @@ class ConversationalAgentController extends Controller
                     'request_data' => $request->all()
                 ]);
 
-                // Buscar todas las cotizaciones del grupo
-                $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)->get();
+                // Buscar todas las cotizaciones ACEPTADAS del grupo
+                $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)
+                    ->where('decision_cliente', 'aceptada')
+                    ->get();
                 
                 if ($cotizaciones->isEmpty()) {
                     return response()->json([
@@ -1429,54 +1497,73 @@ class ConversationalAgentController extends Controller
                         continue;
                     }
 
-                    // Encontrar conductores para esta cotización
-                    $vehicleClass = \App\Models\VehicleClass::where('nomcoti', $cotizacion->vehiculo_requerido)->first();
+                    // Validar ciudad de origen
+                    if (!$cotizacion->ciudad_origen) {
+                        Log::warning('Cotización sin ciudad de origen - saltando', [
+                            'cotizacion_id' => $cotizacion->id
+                        ]);
+                        continue;
+                    }
+
+                    // Buscar conductores usando ArcangelService (igual que en registerCallsForCotization)
+                    $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+                    $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
                     
-                    if (!$vehicleClass) {
-                        Log::warning('No se encontró vehicle_class para cotización', [
+                    Log::info('Buscando conductores en Arcángel para grupo', [
+                        'cotizacion_id' => $cotizacion->id,
+                        'ciudad' => $ciudadOrigen,
+                        'variantes' => $variantesVehiculo
+                    ]);
+                    
+                    // Buscar en Arcángel API
+                    $resultado = $this->arcangelService->getVehiculosFiltrados(
+                        ciudad: $ciudadOrigen,
+                        clases: $variantesVehiculo,
+                        minScore: 0,
+                        limit: 10, // Máximo 10 conductores por cotización
+                        useCache: true,
+                        cacheTTL: 15
+                    );
+                    
+                    $vehiculos = $resultado['vehiculos'] ?? [];
+
+                    if (empty($vehiculos)) {
+                        Log::warning('No se encontraron conductores en Arcángel para cotización', [
                             'cotizacion_id' => $cotizacion->id,
-                            'vehiculo_requerido' => $cotizacion->vehiculo_requerido
+                            'ciudad' => $ciudadOrigen,
+                            'variantes' => $variantesVehiculo
                         ]);
                         continue;
                     }
 
-                    $drivers = \App\Models\VehicleOwnerHolderDriver::where('Clasevehiculo', $vehicleClass->Nombre)
-                        ->whereNotNull('Telefonoconductor')
-                        ->where('Telefonoconductor', '!=', '')
-                        ->get(); // Sin límite - el sistema de lotes manejará la concurrencia
-
-                    if ($drivers->isEmpty()) {
-                        Log::warning('No se encontraron conductores para cotización', [
-                            'cotizacion_id' => $cotizacion->id,
-                            'clase_vehiculo' => $vehicleClass->Nombre
-                        ]);
-                        continue;
-                    }
-
-                    // Sistema de lotes: máximo 3 llamadas concurrentes con delay de 150 segundos entre lotes
+                    // Sistema de lotes: máximo 3 llamadas concurrentes
                     $maxConcurrentCalls = 3;
-                    $totalDrivers = $drivers->count();
-                    $batchCount = ceil($totalDrivers / $maxConcurrentCalls);
+                    $totalVehiculos = count($vehiculos);
+                    $batchCount = ceil($totalVehiculos / $maxConcurrentCalls);
                     
                     Log::info('Configurando sistema de lotes para cotización', [
                         'cotizacion_id' => $cotizacion->id,
-                        'total_drivers' => $totalDrivers,
+                        'total_vehiculos' => $totalVehiculos,
                         'max_concurrent' => $maxConcurrentCalls,
                         'total_batches' => $batchCount
                     ]);
 
                     // Crear registros de llamadas organizadas por lotes
-                    foreach ($drivers as $index => $driver) {
-                        $phoneNumber = $driver->Telefonoconductor ?? $driver->Telefonopropietario ?? $driver->Telefonoposeedor ?? 'N/A';
+                    foreach ($vehiculos as $index => $vehiculo) {
+                        $phoneNumber = $vehiculo['telefono'] ?? 'N/A';
                         $formattedPhone = $this->formatPhoneNumber($phoneNumber);
 
                         if (!$formattedPhone) {
-                            Log::warning('Número de teléfono inválido', [
-                                'driver_id' => $driver->id,
+                            Log::warning('Número de teléfono inválido para Arcángel', [
+                                'conductor' => $vehiculo['conductor'] ?? 'N/A',
+                                'placa' => $vehiculo['placa'] ?? 'N/A',
                                 'original_phone' => $phoneNumber
                             ]);
                             continue;
                         }
+
+                        // Crear o actualizar registro del conductor
+                        $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
 
                         // Calcular número de lote (1, 2, 3, etc.)
                         $batchNumber = floor($index / $maxConcurrentCalls) + 1;
@@ -1485,21 +1572,23 @@ class ConversationalAgentController extends Controller
                         // Crear registro de llamada con información de lote
                         $llamada = \App\Models\Llamada::create([
                             'id_cotizacion' => $cotizacion->id,
-                            'chofer_id' => $driver->id,
+                            'conductor_id' => $conductor->id,
                             'numero_destino' => $formattedPhone,
                             'status' => \App\Models\Llamada::STATUS_PENDIENTE,
                             'queue_status' => 'pending',
                             'batch_number' => $batchNumber,
                             'batch_position' => $batchPosition,
                             'call_started_at' => now(),
-                            'call_notes' => "Llamada programada en lote {$batchNumber}, posición {$batchPosition}"
+                            'call_notes' => "Llamada programada en lote {$batchNumber}, posición {$batchPosition} - Conductor Arcángel"
                         ]);
 
                         $callsScheduled++;
                         
-                        Log::info('Llamada registrada en sistema de lotes', [
+                        Log::info('Llamada registrada en sistema de lotes desde Arcángel', [
                             'llamada_id' => $llamada->id_llamada,
-                            'driver_id' => $driver->id,
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'placa' => $conductor->placa,
                             'phone' => $formattedPhone,
                             'batch_number' => $batchNumber,
                             'batch_position' => $batchPosition
@@ -1511,7 +1600,7 @@ class ConversationalAgentController extends Controller
                         ProcessBatchElevenLabsCalls::dispatch($cotizacion->id, 1, $maxConcurrentCalls, 150)
                             ->delay(now()->addSeconds(5)); // Pequeño delay inicial
                         
-                        Log::info('Sistema de lotes iniciado para cotización', [
+                        Log::info('Sistema de lotes iniciado para cotización desde Arcángel', [
                             'cotizacion_id' => $cotizacion->id,
                             'total_batches' => $batchCount,
                             'calls_per_batch' => $maxConcurrentCalls,
@@ -1581,108 +1670,109 @@ class ConversationalAgentController extends Controller
                 ];
             }
 
-            // Implementar búsqueda de conductores usando vehicle_class como intermediaria
-            Log::info('Buscando conductores para registrar llamadas', [
+            // Implementar búsqueda de conductores usando ArcangelService
+            Log::info('Buscando conductores para registrar llamadas con ArcangelService', [
                 'cotizacion_id' => $cotizacion->id,
+                'ciudad_origen' => $cotizacion->ciudad_origen,
                 'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
                 'decision_cliente' => $cotizacion->decision_cliente
             ]);
 
-            // Paso 1: Buscar en vehicle_class por nomcoti
-            $vehicleClass = \App\Models\VehicleClass::where('nomcoti', $cotizacion->vehiculo_requerido)->first();
-            
-            if (!$vehicleClass) {
-                Log::warning('No se encontró vehicle_class para vehiculo_requerido', [
-                    'vehiculo_requerido' => $cotizacion->vehiculo_requerido
-                ]);
-                
+            if (!$cotizacion->ciudad_origen) {
                 return [
                     'success' => false,
                     'cotizacion_id' => $cotizacion->id,
-                    'error' => 'No se encontró clase de vehículo para: ' . $cotizacion->vehiculo_requerido,
+                    'error' => 'La cotización no tiene ciudad de origen definida',
                     'total_calls' => 0
                 ];
             }
 
-            Log::info('Clase de vehículo encontrada', [
-                'vehicle_class_codigo' => $vehicleClass->Codigo,
-                'vehicle_class_nombre' => $vehicleClass->Nombre,
-                'nomcoti' => $vehicleClass->nomcoti
+            $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+            $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
+            
+            // Buscar en Arcángel API
+            $resultado = $this->arcangelService->getVehiculosFiltrados(
+                ciudad: $ciudadOrigen,
+                clases: $variantesVehiculo,
+                minScore: 0,
+                limit: 5,
+                useCache: true,
+                cacheTTL: 15
+            );
+            
+            $vehiculos = $resultado['vehiculos'] ?? [];
+
+            Log::info('Conductores encontrados en Arcángel para registro', [
+                'total' => count($vehiculos),
+                'ciudad' => $ciudadOrigen,
+                'variantes' => $variantesVehiculo
             ]);
 
-            // Paso 2: Buscar conductores por clase de vehículo
-            $drivers = \App\Models\VehicleOwnerHolderDriver::where('Clasevehiculo', $vehicleClass->Nombre)
-                ->whereNotNull('Telefonoconductor')
-                ->where('Telefonoconductor', '!=', '')
-                ->limit(5)
-                ->get();
-
-            Log::info('Conductores encontrados para registro', [
-                'clase_vehiculo_buscada' => $vehicleClass->Nombre,
-                'conductores_encontrados' => $drivers->count()
-            ]);
-
-            if ($drivers->isEmpty()) {
+            if (empty($vehiculos)) {
                 return [
                     'success' => false,
                     'cotizacion_id' => $cotizacion->id,
-                    'error' => 'No se encontraron conductores disponibles para esta cotización',
+                    'error' => 'No se encontraron conductores disponibles en Arcángel',
                     'total_calls' => 0
                 ];
             }
 
             $registeredCalls = [];
             
-            // Registrar llamadas para cada conductor en la tabla llamadas
-            foreach ($drivers as $driver) {
+            // Registrar llamadas para cada conductor de Arcángel
+            foreach ($vehiculos as $vehiculo) {
                 try {
-                    // Obtener y formatear el teléfono usando la nueva función
-                    $phoneNumber = $driver->Telefonoconductor ?? $driver->Telefonopropietario ?? $driver->Telefonoposeedor ?? 'N/A';
+                    // Obtener y formatear el teléfono
+                    $phoneNumber = $vehiculo['telefono'] ?? 'N/A';
                     $formattedPhone = $this->formatPhoneNumber($phoneNumber);
 
                     if (!$formattedPhone) {
-                        Log::warning('Número de teléfono inválido para conductor en llamada grupal', [
-                            'driver_id' => $driver->id,
-                            'driver_name' => $driver->Conductor,
+                        Log::warning('Número de teléfono inválido para conductor de Arcángel', [
+                            'conductor' => $vehiculo['conductor'] ?? 'N/A',
+                            'placa' => $vehiculo['placa'] ?? 'N/A',
                             'original_phone' => $phoneNumber
                         ]);
                         continue; // Saltar a siguiente conductor
                     }
 
+                    // Crear o actualizar registro del conductor
+                    $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
+
                     Log::info('Registrando llamada para conductor', [
-                        'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'conductor_id' => $conductor->id,
+                        'driver_name' => $conductor->nombre_conductor,
                         'phone' => $formattedPhone,
-                        'original_phone' => $phoneNumber,
+                        'placa' => $conductor->placa,
                         'cotizacion_id' => $cotizacion->id
                     ]);
 
                     // Crear registro en la tabla llamadas
                     $llamada = \App\Models\Llamada::create([
                         'id_cotizacion' => $cotizacion->id,
-                        'chofer_id' => $driver->id,
+                        'conductor_id' => $conductor->id,
                         'numero_destino' => $formattedPhone,
                         'status' => \App\Models\Llamada::STATUS_PENDIENTE
                     ]);
 
                     $registeredCalls[] = [
                         'llamada_id' => $llamada->id_llamada,
-                        'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'conductor_id' => $conductor->id,
+                        'driver_name' => $conductor->nombre_conductor,
                         'phone' => $formattedPhone,
                         'status' => 'registrado',
-                        'vehicle_type' => $driver->Clasevehiculo ?? 'N/A',
-                        'vehicle_plate' => $driver->Placa ?? 'N/A'
+                        'vehicle_type' => $conductor->clase_vehiculo,
+                        'vehicle_plate' => $conductor->placa
                     ];
                     
                 } catch (\Exception $e) {
-                    Log::error("Error registrando llamada para conductor {$driver->id}: " . $e->getMessage());
-                    
-                    $errorPhone = $this->formatPhoneNumber($driver->Telefonoconductor ?? $driver->Telefonopropietario ?? $driver->Telefonoposeedor ?? 'N/A') ?? 'INVALID';
+                    Log::error("Error registrando llamada para conductor: " . $e->getMessage(), [
+                        'vehiculo' => $vehiculo,
+                        'trace' => $e->getTraceAsString()
+                    ]);
                     
                     $registeredCalls[] = [
-                        'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'conductor_id' => null,
+                        'driver_name' => $vehiculo['conductor'] ?? 'N/A',
                         'phone' => $errorPhone,
                         'error' => $e->getMessage(),
                         'status' => 'error'
@@ -1735,12 +1825,14 @@ class ConversationalAgentController extends Controller
                 'vehiculo_requerido' => $cotizacion->vehiculo_requerido
             ]);
 
-            // Paso 1: Buscar en vehicle_class por nomcoti
-            $vehicleClass = \App\Models\VehicleClass::where('nomcoti', $cotizacion->vehiculo_requerido)->first();
+            // Paso 1: Buscar en vehicle_class por Nombre usando variantes
+            $variantes = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
+            $vehicleClass = \App\Models\VehicleClass::whereIn('Nombre', $variantes)->first();
             
             if (!$vehicleClass) {
                 Log::warning('No se encontró vehicle_class para vehiculo_requerido', [
-                    'vehiculo_requerido' => $cotizacion->vehiculo_requerido
+                    'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
+                    'variantes_probadas' => $variantes
                 ]);
                 
                 return [
@@ -1754,7 +1846,7 @@ class ConversationalAgentController extends Controller
             Log::info('Clase de vehículo encontrada', [
                 'vehicle_class_codigo' => $vehicleClass->Codigo,
                 'vehicle_class_nombre' => $vehicleClass->Nombre,
-                'nomcoti' => $vehicleClass->nomcoti
+                'variantes_usadas' => $variantes
             ]);
 
             // Paso 2: Usar el campo Nombre de vehicle_class para buscar en vehicle_owner_holder_driver
@@ -1793,7 +1885,7 @@ class ConversationalAgentController extends Controller
 
                     Log::info('Llamando a conductor', [
                         'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'driver_name' => $vehiculo['conductor'] ?? 'N/A',
                         'phone' => $firstPhone,
                         'cotizacion_id' => $cotizacion->id
                     ]);
@@ -1812,7 +1904,7 @@ class ConversationalAgentController extends Controller
                     
                     $callResults[] = [
                         'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'driver_name' => $vehiculo['conductor'] ?? 'N/A',
                         'phone' => $firstPhone,
                         'call_result' => $callResult,
                         'status' => $callResult['status'] ?? 'unknown'
@@ -1831,7 +1923,7 @@ class ConversationalAgentController extends Controller
                     
                     $callResults[] = [
                         'driver_id' => $driver->id,
-                        'driver_name' => $driver->Conductor,
+                        'driver_name' => $vehiculo['conductor'] ?? 'N/A',
                         'phone' => $errorFirstPhone,
                         'error' => $e->getMessage(),
                         'status' => 'error'
@@ -2054,12 +2146,30 @@ class ConversationalAgentController extends Controller
 
             // Organizar llamadas en lotes y actualizar sus registros
             foreach ($llamadas as $index => $llamada) {
-                // Buscar información del conductor
-                $driver = \App\Models\VehicleOwnerHolderDriver::find($llamada->chofer_id);
+                // Buscar información del conductor (priorizar nueva tabla)
+                $conductor = null;
+                $driverName = 'N/A';
                 
-                if (!$driver) {
+                if ($llamada->conductor_id) {
+                    $conductor = \App\Models\LlamadaConductor::find($llamada->conductor_id);
+                    if ($conductor) {
+                        $driverName = $conductor->nombre_conductor;
+                    }
+                }
+                
+                // Fallback a tabla vieja si no hay conductor_id
+                if (!$conductor && $llamada->chofer_id) {
+                    $driver = \App\Models\VehicleOwnerHolderDriver::find($llamada->chofer_id);
+                    if ($driver) {
+                        $driverName = $driver->Conductor ?? 'N/A';
+                    }
+                }
+                
+                // Si no se encuentra conductor en ninguna tabla, saltar
+                if (!$conductor && !isset($driver)) {
                     Log::warning('Conductor no encontrado para llamada', [
                         'llamada_id' => $llamada->id_llamada,
+                        'conductor_id' => $llamada->conductor_id,
                         'chofer_id' => $llamada->chofer_id
                     ]);
                     continue;
@@ -2080,8 +2190,8 @@ class ConversationalAgentController extends Controller
 
                 $callsScheduled++;
                 $drivers[] = [
-                    'driver_id' => $driver->id,
-                    'nombre' => $driver->Nombresmplementos ?? 'N/A',
+                    'driver_id' => $conductor ? $conductor->id : ($driver->id ?? null),
+                    'nombre' => $driverName,
                     'telefono' => $llamada->numero_destino,
                     'batch_number' => $batchNumber,
                     'batch_position' => $batchPosition
@@ -2089,7 +2199,9 @@ class ConversationalAgentController extends Controller
                 
                 Log::info('Llamada organizada en lote', [
                     'llamada_id' => $llamada->id_llamada,
-                    'driver_id' => $driver->id,
+                    'conductor_id' => $llamada->conductor_id,
+                    'driver_id' => $conductor ? $conductor->id : ($driver->id ?? null),
+                    'driver_name' => $driverName,
                     'batch_number' => $batchNumber,
                     'batch_position' => $batchPosition
                 ]);
@@ -2574,5 +2686,64 @@ class ConversationalAgentController extends Controller
         } catch (\Exception $e) {
             Log::error("Error en backfill automático: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Convertir tipos de vehículos de nuestra nomenclatura a variantes de búsqueda
+     * Retorna array de posibles variantes para buscar en vehicle_class
+     */
+    private function convertirTipoVehiculo(string $tipoLocal): array
+    {
+        $tipoNormalizado = strtoupper(trim($tipoLocal));
+        
+        // Mapeo de nuestros tipos a variantes de vehicle_class
+        $mapeo = [
+            // Tractomulas
+            'TRACTO MULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3', 'TRACTOMULA 4'],
+            'TRACTO MULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
+            'TRACTOMULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
+            'TRACTOMULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
+            
+            // Sencillos
+            'SENCILLO' => ['SENCILLO'],
+            'CAMION SENCILLO' => ['SENCILLO'],
+            
+            // Doble troque
+            'DOBLE TROQUE' => ['DOBLE TROQUE', 'DOBLETROQUE'],
+            
+            // Camionetas
+            'CAMIONETA' => ['CAMIONETA', 'TURBO'],
+            'TURBO' => ['TURBO', 'CAMIONETA'],
+            
+            // Patinetas
+            'PATINETA' => ['PATINETA', 'PATINETA2', 'PATINETA3'],
+            'PATINETA 2' => ['PATINETA2', 'PATINETA 2'],
+            'PATINETA 3' => ['PATINETA3', 'PATINETA 3'],
+        ];
+        
+        // Buscar coincidencia en el mapeo
+        foreach ($mapeo as $clave => $variantes) {
+            if (str_contains($tipoNormalizado, $clave) || $tipoNormalizado === $clave) {
+                return $variantes;
+            }
+        }
+        
+        // Si no hay mapeo, intentar normalización simple y devolverlo
+        $tipoSimple = str_replace([' ', '-'], '', $tipoNormalizado);
+        return [$tipoNormalizado, $tipoSimple];
+    }
+
+    /**
+     * Normalizar texto eliminando acentos y caracteres especiales
+     */
+    private function normalizarTexto(string $texto): string
+    {
+        $texto = trim(strtoupper($texto));
+        $acentos = [
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'Ñ' => 'N', 'ñ' => 'n'
+        ];
+        return strtr($texto, $acentos);
     }
 }

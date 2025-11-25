@@ -15,6 +15,7 @@ class Llamada extends Model
     protected $fillable = [
         'id_cotizacion',
         'chofer_id',
+        'conductor_id', // Nueva relación con tabla conductores
         'numero_destino',
         'status',
         'call_status',
@@ -154,11 +155,19 @@ class Llamada extends Model
     }
 
     /**
-     * Relación con el conductor/chofer
+     * Relación con el conductor/chofer (legacy)
      */
     public function chofer()
     {
         return $this->belongsTo(VehicleOwnerHolderDriver::class, 'chofer_id');
+    }
+
+    /**
+     * Relación con el conductor (nueva tabla normalizada)
+     */
+    public function conductor()
+    {
+        return $this->belongsTo(LlamadaConductor::class, 'conductor_id');
     }
 
     /**

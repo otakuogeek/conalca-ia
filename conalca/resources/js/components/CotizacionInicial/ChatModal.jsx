@@ -25,6 +25,8 @@ const ChatModal = ({
   const [currentRunId, setCurrentRunId] = useState(null);
   const [pollingInterval, setPollingInterval] = useState(null);
   const [processingMessage, setProcessingMessage] = useState(null); // Mensaje de "Pensando..."
+  const [processingProgress, setProcessingProgress] = useState(0); // Progreso 0-100
+  const sendingRef = useRef(false); // Ref adicional para bloqueo
 
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
@@ -36,6 +38,66 @@ const ChatModal = ({
     console.log('📧 clientData.clientEmail:', clientData.clientEmail);
     console.log('👤 clientData.clientContact:', clientData.clientContact);
   }, [clientData]);
+
+  // Auto-enviar mensaje inicial con datos del formulario si existen
+  useEffect(() => {
+    // Solo ejecutar una vez cuando el modal se abre
+    if (!quoteData || messages.length > 0) return;
+
+    const hasData = quoteData.ciudadOrigen || quoteData.ciudadDestino || 
+                    quoteData.pesoMercancia || quoteData.valorMercancia;
+    
+    if (hasData) {
+      console.log('📝 Detectados datos en formulario, construyendo mensaje automático...');
+      
+      // Construir mensaje con los datos disponibles
+      let mensaje = "He completado los siguientes datos del formulario:\n\n";
+      
+      if (quoteData.ciudadOrigen) {
+        mensaje += `- Ciudad de origen: ${quoteData.ciudadOrigen}\n`;
+      }
+      if (quoteData.ciudadDestino) {
+        mensaje += `- Ciudad de destino: ${quoteData.ciudadDestino}\n`;
+      }
+      if (quoteData.cantidadMercancia) {
+        mensaje += `- Cantidad de mercancía: ${quoteData.cantidadMercancia}\n`;
+      }
+      if (quoteData.pesoMercancia) {
+        mensaje += `- Peso: ${quoteData.pesoMercancia} kg\n`;
+      }
+      if (quoteData.valorMercancia) {
+        mensaje += `- Valor declarado: $${quoteData.valorMercancia}\n`;
+      }
+      if (quoteData.producto) {
+        mensaje += `- Producto: ${quoteData.producto}\n`;
+      }
+      if (quoteData.empaque) {
+        mensaje += `- Empaque: ${quoteData.empaque}\n`;
+      }
+      if (quoteData.claseVehiculo) {
+        mensaje += `- Clase de vehículo: ${quoteData.claseVehiculo}\n`;
+      }
+      if (quoteData.carroceria) {
+        mensaje += `- Carrocería: ${quoteData.carroceria}\n`;
+      }
+      if (quoteData.tipoFlete) {
+        mensaje += `- Tipo de flete: ${quoteData.tipoFlete}\n`;
+      }
+      
+      mensaje += "\n¿Hay algo más que deba completar o modificar?";
+      
+      console.log('✅ Mensaje construido:', mensaje);
+      
+      // Establecer el mensaje en el input y simular envío
+      setInputMessage(mensaje);
+      
+      // Enviar después de un breve delay para que el componente se monte completamente
+      setTimeout(() => {
+        console.log('🚀 Enviando mensaje automático...');
+        onSendMessage(mensaje);
+      }, 500);
+    }
+  }, []); // Solo ejecutar al montar
 
   useEffect(() => {
     // Auto-scroll al final de la conversación
@@ -52,6 +114,16 @@ const ChatModal = ({
       }
     };
   }, [pollingInterval]);
+
+  // Helper para limpiar estado de procesamiento
+  const clearProcessingState = () => {
+    setProcessingMessage(null);
+    setProcessingProgress(100); // Completar barra
+    setTimeout(() => setProcessingProgress(0), 500); // Reset después de animación
+    setIsSending(false);
+    sendingRef.current = false;
+    setCurrentRunId(null);
+  };
 
   // Detectar mensajes huérfanos y crear run si es necesario
   const checkForOrphanMessages = async (threadId) => {
@@ -71,6 +143,19 @@ const ChatModal = ({
           client_id: clientData.clientId
         })
       });
+      
+      // Manejar error 503 (servicio no disponible)
+      if (response.status === 503) {
+        const data = await response.json();
+        console.log('⚠️ Servicio temporalmente no disponible:', data.message);
+        return false; // No reintentar, el mensaje se procesará automáticamente cuando el servicio esté disponible
+      }
+      
+      // Manejar error 500 (error interno)
+      if (response.status === 500) {
+        console.error('❌ Error interno procesando huérfanos');
+        return false;
+      }
       
       const data = await response.json();
       if (data.success) {
@@ -108,17 +193,22 @@ const ChatModal = ({
 
   // Verificar mensajes huérfanos al cargar el componente
   useEffect(() => {
+    // DESHABILITADO: Esta verificación automática causa conflictos 409
+    // Solo se debe verificar manualmente si el usuario reporta problemas
+    /*
     if (clientData.threadId && clientData.clientId && !currentRunId) {
       // Esperar un momento antes de verificar para permitir que el componente se inicialice
       setTimeout(() => {
         checkForOrphanMessages(clientData.threadId);
       }, 2000);
     }
+    */
   }, [clientData.threadId, clientData.clientId]);
 
   const startPollingRun = (threadId, runId) => {
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
+    setProcessingProgress(50); // Progreso al iniciar polling
     
     let pollAttempts = 0;
     const maxPollAttempts = 30; // Máximo 60 segundos de polling (30 * 2 segundos)
@@ -127,15 +217,24 @@ const ChatModal = ({
       try {
         pollAttempts++;
         
-        // Si superamos el máximo de intentos, detener polling
+        // Si superamos el máximo de intentos, detener polling y mostrar opción de cancelar
         if (pollAttempts > maxPollAttempts) {
           console.warn('⏰ Timeout de polling alcanzado, deteniendo...');
           if (pollingInterval) {
             clearInterval(pollingInterval);
             setPollingInterval(null);
           }
-          setCurrentRunId(null);
-          setProcessingMessage(null);
+          
+          // Mostrar mensaje de timeout con opción de reiniciar
+          setProcessingMessage({
+            role: 'system',
+            text: '⏰ El procesamiento está tardando más de lo esperado. Puedes cancelar y reintentar.',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'timeout',
+            isTemporary: true
+          });
+          
+          // NO limpiar currentRunId para mantener el botón de cancelar visible
           
           // Intentar obtener mensajes finales
           try {
@@ -162,6 +261,10 @@ const ChatModal = ({
         });
         
         const data = await response.json();
+        
+        // Actualizar progreso basado en intentos
+        const progress = Math.min(50 + (pollAttempts / maxPollAttempts) * 40, 90);
+        setProcessingProgress(progress);
         
         console.log(`🔍 Polling intento ${pollAttempts}/${maxPollAttempts}, status:`, data.data?.status);
         
@@ -369,11 +472,45 @@ const ChatModal = ({
     pollRun();
   };
 
-  const handleSendMessage = async () => {
-    if (inputMessage.trim() && !isSending && clientData.clientId && !currentRunId) {
-      const messageText = inputMessage.trim();
-      setIsSending(true);
-      
+  const handleSendMessage = async (retryAttempt = false) => {
+    // Validación más estricta - evitar envíos múltiples
+    if (!inputMessage.trim()) {
+      console.log('⚠️ Mensaje vacío, no enviando');
+      return;
+    }
+    
+    if (!clientData.clientId) {
+      console.log('⚠️ No hay cliente seleccionado');
+      return;
+    }
+    
+    // BLOQUEO DOBLE: State + Ref para evitar race conditions
+    if (isSending || sendingRef.current) {
+      console.log('⚠️ Ya hay un envío en proceso, ignorando');
+      return;
+    }
+    
+    if (currentRunId) {
+      console.log('⚠️ Hay un run activo, bloqueando envío');
+      // NO mostrar mensaje adicional, solo bloquear silenciosamente
+      // El usuario ya ve el indicador de procesamiento
+      return;
+    }
+    
+    if (processingMessage) {
+      console.log('⚠️ Hay un mensaje en procesamiento, bloqueando envío');
+      // NO mostrar mensaje adicional, solo bloquear silenciosamente
+      return;
+    }
+    
+    const messageText = inputMessage.trim();
+    
+    // Marcar como enviando INMEDIATAMENTE para bloquear nuevos envíos
+    setIsSending(true);
+    sendingRef.current = true;
+    setProcessingProgress(10); // Iniciar progreso
+    
+    try {
       // Verificar si este mensaje ya existe en el thread para evitar duplicados
       if (clientData.threadId) {
         try {
@@ -407,45 +544,44 @@ const ChatModal = ({
         role: 'user',
         text: messageText,
         created_at: new Date().toLocaleTimeString(),
-        status: 'sent' // Estado enviado
+        status: 'sent'
       };
       
       // Actualizar mensajes inmediatamente para mostrar el mensaje del usuario
       onSendMessage(messageText);
       
-      // Limpiar el input inmediatamente
-      setInputMessage('');
+      // NO limpiar el input todavía - solo después de envío exitoso
       
       // Agregar mensaje de "Pensando..." del asistente
       const thinkingMessage = {
         role: 'assistant',
-        text: 'Pensando...',
+        text: 'Procesando tu solicitud...',
         created_at: new Date().toLocaleTimeString(),
         status: 'thinking',
         isTemporary: true
       };
       setProcessingMessage(thinkingMessage);
+      setProcessingProgress(30); // Progreso al enviar
       
-      try {
-        const response = await fetch('/api/chat/quote', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            message: messageText,
-            thread_id: clientData.threadId || threadId,
-            client_id: clientData.clientId,
-            type_business: clientData.typeBusiness || typeBusiness
-          })
-        });
+      const response = await fetch('/api/chat/quote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          message: messageText,
+          thread_id: clientData.threadId || threadId,
+          client_id: clientData.clientId,
+          type_business: clientData.typeBusiness || typeBusiness
+        })
+      });
 
-        // Manejar respuestas exitosas, conflictos (409) y timeouts (503/500)
-        let data;
-        if (response.ok || response.status === 409 || response.status === 503) {
-          data = await response.json();
+      // Manejar respuestas exitosas, conflictos (409) y timeouts (503/500)
+      let data;
+      if (response.ok || response.status === 409 || response.status === 503) {
+        data = await response.json();
         } else if (response.status === 500) {
           // Error interno del servidor (probablemente timeout)
           console.error('❌ Error 500 - Timeout del servidor');
@@ -470,6 +606,9 @@ const ChatModal = ({
         }
         
         if (data.success) {
+          // ✅ ENVÍO EXITOSO - Limpiar input ahora
+          setInputMessage('');
+          
           // Actualizar thread_id si es nuevo y no tenemos uno del clientData
           const currentThreadId = clientData.threadId || threadId;
           if (data.data.thread_id && !currentThreadId) {
@@ -486,11 +625,97 @@ const ChatModal = ({
           }
           
         } else if (data.error === 'processing_active' || response.status === 409) {
-          // Hay un procesamiento activo, mostrar mensaje y continuar polling del run activo
-          console.log('⏳ Procesamiento activo detectado, continuando polling...');
+          // Hay un procesamiento activo
+          console.log('⏳ Procesamiento activo detectado (409).');
           
-          // Restaurar el mensaje para que el usuario pueda reintentarlo después
-          setInputMessage(messageText);
+          // Si es el primer intento (no hay retryAttempt), intentar limpiar y reintentar automáticamente
+          if (!retryAttempt) {
+            console.log('🔄 Primer intento de 409 - Intentando limpiar y reintentar automáticamente...');
+            
+            try {
+              // Llamar a clear-thread para limpiar el estado
+              const clearResponse = await fetch('/api/chat/clear-thread', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+                },
+                body: JSON.stringify({
+                  thread_id: clientData.threadId || threadId,
+                  client_id: clientData.clientId
+                })
+              });
+              
+              const clearData = await clearResponse.json();
+              
+              // Limpiar thread_id local para forzar creación de uno nuevo
+              if (clearData.success) {
+                console.log('✅ Thread limpiado exitosamente, limpiando estado local');
+                setThreadId(null);
+              }
+              
+              console.log('⏳ Esperando 2 segundos antes de reintentar...');
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              // Reintentar el envío marcando como segundo intento
+              console.log('🔄 Reintentando envío de mensaje (sin thread_id para forzar nuevo)...');
+              return handleSendMessage(true); // true = retryAttempt
+              
+            } catch (clearError) {
+              console.error('❌ Error al limpiar thread:', clearError);
+              // Continuar con el manejo normal del error
+            }
+          }
+          
+          // Si es el segundo intento o el clear falló, mostrar mensaje al usuario
+          console.log('⚠️ Segundo intento de 409 - Mostrando opción de cancelar...');
+          
+          // Mostrar mensaje temporal al usuario
+          const waitingMessage = {
+            role: 'system',
+            text: '⏳ Hay un mensaje en proceso. Si esto persiste, usa el botón "Cancelar" para reiniciar.',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'waiting',
+            isTemporary: false
+          };
+          
+          if (onUpdateMessages) {
+            onUpdateMessages(prev => [...prev, waitingMessage]);
+          }
+          
+          // Mantener processingMessage para mostrar botón de cancelar
+          setProcessingMessage({
+            role: 'system',
+            text: '⚠️ Hay un procesamiento pendiente. Si tardó más de 30 segundos, cancela y reinicia.',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'conflict',
+            isTemporary: true
+          });
+          
+          // Si hay un active_run_id, intentar hacer polling
+          if (data.data && data.data.active_run_id && data.data.thread_id) {
+            console.log('🔄 Intentando recuperar run activo:', data.data.active_run_id);
+            startPollingRun(data.data.thread_id, data.data.active_run_id);
+          }
+          
+        } else if (data.error === 'openai_unavailable' || response.status === 503) {
+          // Servicio de IA temporalmente no disponible
+          console.log('⚠️ Servicio de IA no disponible (503)');
+          
+          setInputMessage(messageText); // Restaurar mensaje
+          setProcessingMessage(null);
+          
+          const errorMessage = {
+            role: 'system',
+            text: '⚠️ El servicio de IA está temporalmente no disponible. Tus mensajes se procesarán automáticamente cuando esté disponible.',
+            created_at: new Date().toLocaleTimeString(),
+            status: 'warning',
+            isTemporary: false
+          };
+          
+          if (onUpdateMessages) {
+            onUpdateMessages(prev => [...prev, errorMessage]);
+          }
           
           // Si hay un run activo, comenzar polling
           if (data.data && data.data.active_run_id) {
@@ -532,11 +757,12 @@ const ChatModal = ({
             onUpdateMessages(prev => [...prev, errorMessage]);
           }
         }
-      } catch (error) {
-        console.error('Error enviando mensaje:', error);
-        // Restaurar el mensaje en caso de error
-        setInputMessage(messageText);
-        // Quitar mensaje de "Pensando..."
+        
+    } catch (error) {
+      console.error('Error enviando mensaje:', error);
+      // Restaurar el mensaje en caso de error
+      setInputMessage(messageText);
+      // Quitar mensaje de "Pensando..."
         setProcessingMessage(null);
         
         // Mostrar mensaje de error amigable
@@ -560,17 +786,25 @@ const ChatModal = ({
         if (onUpdateMessages) {
           onUpdateMessages(prev => [...prev, errorMessage]);
         }
-      } finally {
-        setIsSending(false);
-      }
+    } finally {
+      setIsSending(false);
+      sendingRef.current = false;
+      setProcessingProgress(0);
     }
   };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      
+      // Validación estricta ANTES de intentar enviar
+      if (isSending || sendingRef.current || currentRunId || processingMessage) {
+        console.log('⚠️ Enter bloqueado: hay procesamiento activo');
+        return; // Bloquear completamente si hay procesamiento
+      }
+      
       // Solo permitir envío si no hay procesamiento activo
-      if (!isSending && !currentRunId && !processingMessage && clientData.clientId && inputMessage.trim()) {
+      if (clientData.clientId && inputMessage.trim()) {
         handleSendMessage();
       }
     }
@@ -932,25 +1166,188 @@ const ChatModal = ({
                         {processingMessage ? 'Generando respuesta...' : 'Procesando tu mensaje anterior...'}
                       </span>
                     </p>
+                    
+                    {/* Barra de progreso visual */}
+                    {processingProgress > 0 && (
+                      <div className="w-full bg-blue-200 rounded-full h-2 mb-3 overflow-hidden">
+                        <div 
+                          className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-out"
+                          style={{ width: `${processingProgress}%` }}
+                        >
+                          <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
+                        </div>
+                      </div>
+                    )}
+                    
                     <p className="text-blue-600 text-xs product-sans mb-3">
                       Espera un momento para enviar el siguiente mensaje.
                     </p>
                     
-                    {/* Botón para forzar limpieza del estado */}
+                    {/* Botón para cancelar y reiniciar */}
+                    <button
+                      onClick={async () => {
+                        console.log('🔄 Cancelando procesamiento y reiniciando chat...');
+                        
+                        // Detener polling si existe
+                        if (pollingInterval) {
+                          clearInterval(pollingInterval);
+                          setPollingInterval(null);
+                        }
+                        
+                        // Limpiar todos los estados
+                        clearProcessingState();
+                        setInputMessage('');
+                        
+                        // Limpiar thread en el backend
+                        if (clientData.threadId) {
+                          try {
+                            const response = await fetch('/api/chat/clear-thread', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                              },
+                              body: JSON.stringify({
+                                thread_id: clientData.threadId,
+                                client_id: clientData?.clientId || null
+                              })
+                            });
+                            
+                            const data = await response.json();
+                            if (data.success) {
+                              console.log('✅ Chat reiniciado desde cero');
+                              
+                              // Limpiar mensajes locales
+                              if (onUpdateMessages) {
+                                onUpdateMessages([]);
+                              }
+                              
+                              // Mostrar mensaje de confirmación
+                              const confirmMessage = {
+                                role: 'system',
+                                text: '✅ Chat reiniciado correctamente. Puedes comenzar una nueva conversación.',
+                                created_at: new Date().toLocaleTimeString(),
+                                status: 'success',
+                                isTemporary: false
+                              };
+                              
+                              if (onUpdateMessages) {
+                                onUpdateMessages([confirmMessage]);
+                              }
+                            }
+                          } catch (error) {
+                            console.error('Error limpiando thread:', error);
+                          }
+                        }
+                      }}
+                      className="w-full py-2 px-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-md hover:shadow-lg product-sans"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                      </svg>
+                      <span>Cancelar y Reiniciar Chat</span>
+                    </button>
                    
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
+                  {/* Indicador de procesamiento en el área de input */}
+                  {(isSending || currentRunId || processingMessage) && (
+                    <div className="bg-blue-50 border border-blue-300 rounded-lg p-3">
+                      <div className="flex items-center space-x-3 mb-3">
+                        <svg className="w-5 h-5 text-blue-500 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                        </svg>
+                        <div className="flex-1">
+                          <p className="text-blue-700 text-sm font-semibold product-sans">
+                            {processingMessage?.text || 'Procesando mensaje...'}
+                          </p>
+                          {inputMessage.trim() && (
+                            <p className="text-blue-800 text-xs product-sans mt-1 bg-white rounded px-2 py-1 border border-blue-200">
+                              📝 <span className="font-semibold">Esperando envío:</span> "{inputMessage.substring(0, 60)}{inputMessage.length > 60 ? '...' : ''}"
+                            </p>
+                          )}
+                          <p className="text-blue-600 text-xs product-sans mt-1">
+                            No puedes enviar mensajes mientras se procesa el anterior
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {/* Botón cancelar en el indicador */}
+                      <button
+                        onClick={async () => {
+                          console.log('🔄 Cancelando procesamiento...');
+                          
+                          if (pollingInterval) {
+                            clearInterval(pollingInterval);
+                            setPollingInterval(null);
+                          }
+                          
+                          clearProcessingState();
+                          setInputMessage('');
+                          
+                          if (clientData.threadId) {
+                            try {
+                              await fetch('/api/chat/clear-thread', {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                                },
+                                body: JSON.stringify({
+                                  thread_id: clientData.threadId,
+                                  client_id: clientData?.clientId || null
+                                })
+                              });
+                              
+                              if (onUpdateMessages) {
+                                onUpdateMessages([{
+                                  role: 'system',
+                                  text: '✅ Chat reiniciado. Puedes comenzar de nuevo.',
+                                  created_at: new Date().toLocaleTimeString(),
+                                  status: 'success'
+                                }]);
+                              }
+                            } catch (error) {
+                              console.error('Error:', error);
+                            }
+                          }
+                        }}
+                        className="w-full py-2 px-3 bg-red-500 hover:bg-red-600 text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 product-sans"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                        <span>Cancelar y Empezar de Nuevo</span>
+                      </button>
+                    </div>
+                  )}
+                  
                   <div className="relative">
                     <textarea 
                       value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
+                      onChange={(e) => {
+                        // No permitir cambios mientras está procesando
+                        if (!isSending && !currentRunId && !processingMessage) {
+                          setInputMessage(e.target.value);
+                        }
+                      }}
                       onKeyDown={handleKeyPress}
-                      placeholder="Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
-                      className="w-full px-4 py-3 pr-20 text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition-all duration-200 product-sans"
+                      placeholder={
+                        isSending || currentRunId || processingMessage 
+                          ? "⏳ Mensaje en proceso de envío..." 
+                          : "Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
+                      }
+                      className={`w-full px-4 py-3 pr-20 border rounded-xl resize-none focus:outline-none transition-all duration-200 product-sans ${
+                        isSending || currentRunId || processingMessage 
+                          ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium' 
+                          : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
+                      }`}
                       rows="3"
                       disabled={isSending || currentRunId || processingMessage}
+                      readOnly={isSending || currentRunId || processingMessage}
                     />
                     
                     {/* Botones de Acción */}

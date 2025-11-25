@@ -41,25 +41,77 @@ class QuoteSaveController extends Controller
                 'thread_id' => $request->thread_id
             ]);
 
-            // Crear el grupo de cotización
-            $group = GroupCotization::create([
-                'user_id' => $userId,
-                'client_id' => $request->client_id,
-                'type' => $request->type_business,
-                'operation_type' => $request->operation_type,
-                'status' => 'Pre-Solicitud', // Estado inicial para la columna
-                'openai_thread_id' => $request->thread_id,
-                'created_from_chat' => true
-            ]);
+            // Buscar grupo borrador existente (creado por QuoteCreationController)
+            $group = GroupCotization::where('client_id', $request->client_id)
+                ->where('user_id', $userId)
+                ->where('status', 'borrador')
+                ->where('created_at', '>=', now()->subDay())
+                ->orderBy('created_at', 'desc')
+                ->first();
+
+            if ($group) {
+                // REUTILIZAR el grupo borrador existente, actualizando SOLO el estado y thread
+                // Mantener los datos importantes que ya tiene (candado_satelital, jen_set, etc.)
+                $updateData = [
+                    'status' => 'Pre-Solicitud',
+                    'openai_thread_id' => $request->thread_id,
+                    'created_from_chat' => true
+                ];
+                
+                // Solo actualizar type y operation_type si no los tiene
+                if (!$group->type) {
+                    $updateData['type'] = $request->type_business;
+                }
+                if (!$group->operation_type) {
+                    $updateData['operation_type'] = $request->operation_type;
+                }
+                
+                $group->update($updateData);
+                
+                Log::info('✅ Grupo borrador REUTILIZADO y actualizado a Pre-Solicitud', [
+                    'group_id' => $group->id,
+                    'created_at' => $group->created_at,
+                    'mantiene_datos' => [
+                        'operation_type' => $group->operation_type,
+                        'candado_satelital' => $group->candado_satelital,
+                        'jen_set' => $group->jen_set,
+                        'cargo_type' => $group->cargo_type
+                    ]
+                ]);
+            } else {
+                // Solo si NO existe borrador reciente, crear uno nuevo
+                $group = GroupCotization::create([
+                    'user_id' => $userId,
+                    'client_id' => $request->client_id,
+                    'type' => $request->type_business,
+                    'operation_type' => $request->operation_type,
+                    'status' => 'Pre-Solicitud',
+                    'openai_thread_id' => $request->thread_id,
+                    'created_from_chat' => true
+                ]);
+                
+                Log::info('✅ Grupo NUEVO creado (no había borrador previo)', [
+                    'group_id' => $group->id
+                ]);
+            }
 
             // Crear las cotizaciones individuales para cada ruta
             foreach ($request->quote_data as $index => $routeData) {
-                // Obtener un pricing por defecto para las cotizaciones del chat
-                $defaultPricing = \App\Models\Pricing::first();
-                
                 // Calcular precio final si se envió desde el frontend
                 $finalValue = $routeData['finalValue'] ?? 0;
                 $porcentaje = $routeData['porcentaje'] ?? 0;
+                
+                // NO guardar cotizaciones con valor 0 o NULL
+                if ($finalValue <= 0) {
+                    Log::info('⏭️ Omitiendo ruta con valor 0', [
+                        'ruta' => $routeData['ciudad_origen'] . ' → ' . $routeData['ciudad_destino'],
+                        'valor' => $finalValue
+                    ]);
+                    continue; // Saltar esta ruta
+                }
+                
+                // Obtener un pricing por defecto para las cotizaciones del chat
+                $defaultPricing = \App\Models\Pricing::first();
                 
                 $cotizacion = CotizacionModel::create([
                     'pricing_id' => $defaultPricing ? $defaultPricing->id : 61,

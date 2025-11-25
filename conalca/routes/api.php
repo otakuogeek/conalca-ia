@@ -19,6 +19,39 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\PricingApiController;
 use App\Http\Controllers\Api\ArcangelController;
 
+// ═══════════════════════════════════════════════════════════════
+// TEST ENDPOINT - Arcangel sin autenticación (temporal)
+// ═══════════════════════════════════════════════════════════════
+Route::post('/test-arcangel-buscar', function(\Illuminate\Http\Request $request) {
+    try {
+        $arcangelService = app(\App\Services\ArcangelService::class);
+        $controller = app(\App\Http\Controllers\Api\ArcangelDriversController::class);
+        
+        // Probar servicio directamente
+        $vehiculos = $arcangelService->getVehiculosCercanos('FUNZA');
+        
+        return response()->json([
+            'success' => true,
+            'test' => 'Endpoint de prueba funcionando',
+            'ciudad' => 'FUNZA',
+            'total_vehiculos' => count($vehiculos['vehiculos'] ?? []),
+            'primeros_3' => array_slice($vehiculos['vehiculos'] ?? [], 0, 3),
+            'user_authenticated' => auth()->check(),
+            'user_id' => auth()->id(),
+            'guards' => array_keys(config('auth.guards')),
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'error' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ], 500);
+    }
+});
+
+use App\Http\Controllers\Api\ArcangelDriversController;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -48,6 +81,9 @@ Route::middleware(['auth:sanctum'])
             /* ----------  BULK  ---------- */
             Route::post ('bulk', [PricingApiController::class, 'bulkStore'])
                     ->name('pricings.bulk.store');
+
+            Route::put  ('bulk', [PricingApiController::class, 'bulkUpdate'])
+                    ->name('pricings.bulk.update');
 
             Route::delete('bulk', [PricingApiController::class, 'bulkDestroy'])
                     ->name('pricings.bulk.delete');
@@ -135,27 +171,30 @@ Route::prefix('agent')->group(function () {
         ->name('agent.second-chance');
 });
 
-// Endpoint principal para iniciar llamadas conversacionales (compatible con curl del usuario)
-Route::post('/call-drivers', [App\Http\Controllers\ConversationalAgentController::class, 'initiateConversationalCall'])
-    ->name('call-drivers.conversational');
+// Rutas protegidas para llamadas conversacionales
+Route::middleware(['auth:sanctum,web'])->group(function () {
+    // Endpoint principal para iniciar llamadas conversacionales (compatible con curl del usuario)
+    Route::post('/call-drivers', [App\Http\Controllers\ConversationalAgentController::class, 'initiateConversationalCall'])
+        ->name('call-drivers.conversational');
 
-// Endpoint para iniciar llamadas conversacionales por grupo de cotización
-Route::post('/call-drivers-group', [App\Http\Controllers\ConversationalAgentController::class, 'initiateGroupConversationalCall'])
-    ->name('call-drivers.group');
+    // Endpoint para iniciar llamadas conversacionales por grupo de cotización
+    Route::post('/call-drivers-group', [App\Http\Controllers\ConversationalAgentController::class, 'initiateGroupConversationalCall'])
+        ->name('call-drivers.group');
 
-// Async call routes para evitar timeouts
-Route::post('/call-drivers-group-async', [App\Http\Controllers\Api\AsyncCallController::class, 'initiateAsyncGroupCalls'])
-    ->name('call-drivers.group-async');
-Route::get('/call-drivers-group-status', [App\Http\Controllers\Api\AsyncCallController::class, 'getGroupCallStatus'])
-    ->name('call-drivers.group-status');
+    // Async call routes para evitar timeouts
+    Route::post('/call-drivers-group-async', [App\Http\Controllers\Api\AsyncCallController::class, 'initiateAsyncGroupCalls'])
+        ->name('call-drivers.group-async');
+    Route::get('/call-drivers-group-status', [App\Http\Controllers\Api\AsyncCallController::class, 'getGroupCallStatus'])
+        ->name('call-drivers.group-status');
 
-// Endpoints para gestión de llamadas registradas
-Route::get('/llamadas', [App\Http\Controllers\ConversationalAgentController::class, 'getLlamadasPorCotizacion'])
-    ->name('api.llamadas.get');
-Route::post('/llamadas/update-status', [App\Http\Controllers\ConversationalAgentController::class, 'updateLlamadaStatus'])
-    ->name('api.llamadas.update-status');
+    // Endpoints para gestión de llamadas registradas
+    Route::get('/llamadas', [App\Http\Controllers\ConversationalAgentController::class, 'getLlamadasPorCotizacion'])
+        ->name('api.llamadas.get');
+    Route::post('/llamadas/update-status', [App\Http\Controllers\ConversationalAgentController::class, 'updateLlamadaStatus'])
+        ->name('api.llamadas.update-status');
+});
 
-// Endpoint para iniciar llamadas reales con ElevenLabs
+// Endpoint para iniciar llamadas reales con ElevenLabs (fuera de middleware auth para compatibilidad con frontend)
 Route::post('/start-elevenlabs-calls/{cotizacionId}', [App\Http\Controllers\ConversationalAgentController::class, 'startElevenLabsCalls'])
     ->name('api.start-elevenlabs-calls');
 
@@ -321,6 +360,16 @@ Route::prefix('chat')->group(function () {
     Route::post('/quote/create-group', [App\Http\Controllers\Api\QuoteCreationController::class, 'createQuoteGroup'])
         ->middleware('auth')
         ->name('api.quote.create.group');
+    
+    // Ruta para limpiar thread de OpenAI (nueva cotización)
+    Route::post('/clear-thread', [App\Http\Controllers\Api\QuoteCreationController::class, 'clearThread'])
+        ->middleware('auth')
+        ->name('api.chat.clear.thread');
+    
+    // Ruta para guardar group_id en sesión (puente React → Livewire)
+    Route::post('/quote/set-session-group', [App\Http\Controllers\Api\QuoteSessionController::class, 'setGroupInSession'])
+        ->middleware('auth')
+        ->name('api.quote.set.session.group');
         
     // Rutas para manejo de rutas individuales de cotización
     Route::post('/quote/save-routes', [App\Http\Controllers\Api\QuoteRoutesController::class, 'saveQuoteRoutes'])
@@ -374,8 +423,8 @@ Route::prefix('arcangel')->group(function () {
     Route::get('/health', [App\Http\Controllers\Api\ArcangelController::class, 'healthCheck'])
         ->name('api.arcangel.health');
     
-    // Rutas protegidas con autenticación
-    Route::middleware(['auth:sanctum'])->group(function () {
+    // Rutas protegidas con autenticación web o sanctum
+    Route::middleware(['auth:sanctum,web'])->group(function () {
         // Endpoints específicos de Arcangel
         
         // Ciudades
@@ -391,6 +440,17 @@ Route::prefix('arcangel')->group(function () {
         
         Route::get('/vehiculos/clases', [App\Http\Controllers\Api\ArcangelController::class, 'obtenerClasesDisponibles'])
             ->name('api.arcangel.vehiculos.clases');
+        
+        // Conductores disponibles
+        Route::post('/buscar-conductores', [App\Http\Controllers\Api\ArcangelDriversController::class, 'buscarConductores'])
+            ->name('api.arcangel.buscar.conductores');
+        
+        Route::post('/buscar-conductores-filtros', [App\Http\Controllers\Api\ArcangelDriversController::class, 'buscarPorFiltros'])
+            ->name('api.arcangel.buscar.filtros');
+        
+        // Llamar a conductor específico
+        Route::post('/llamar-conductor', [App\Http\Controllers\Api\ArcangelDriversController::class, 'llamarConductor'])
+            ->name('api.arcangel.llamar.conductor');
         
         // Métodos genéricos para cualquier endpoint
         Route::get('/consultar', [App\Http\Controllers\Api\ArcangelController::class, 'consultar'])
@@ -432,4 +492,36 @@ Route::prefix('solicitud-transporte')->group(function () {
     // Enviar a Silogtran
     Route::post('/{id}/enviar-silogtran', [App\Http\Controllers\SolicitudTransporteController::class, 'enviarASilogtran'])
         ->name('api.solicitud-transporte.enviar-silogtran');
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Catálogos para formulario de cotización
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('catalog')->group(function () {
+    // Empaques
+    Route::get('/packing', function() {
+        $packings = \DB::table('packing')
+            ->select('Codigo as id', 'Nombre as name')
+            ->orderBy('Nombre')
+            ->get();
+        return response()->json($packings);
+    });
+    
+    // Clases de vehículo
+    Route::get('/vehicle-class', function() {
+        $vehicleClasses = \DB::table('vehicle_class')
+            ->select('Codigo as id', 'Nombre as name', 'Configuracion as config')
+            ->orderBy('Nombre')
+            ->get();
+        return response()->json($vehicleClasses);
+    });
+    
+    // Carrocerías
+    Route::get('/bodywork', function() {
+        $bodyworks = \DB::table('bodywork')
+            ->select('Codigo as id', 'Nombre as name')
+            ->orderBy('Nombre')
+            ->get();
+        return response()->json($bodyworks);
+    });
 });

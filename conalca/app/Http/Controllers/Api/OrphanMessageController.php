@@ -123,13 +123,28 @@ class OrphanMessageController extends Controller
         } catch (\Exception $e) {
             Log::error('Error procesando mensajes huérfanos:', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'thread_id' => $request->thread_id ?? 'N/A',
                 'client_id' => $request->client_id ?? 'N/A'
             ]);
 
+            // Si es un error de OpenAI, devolver mensaje más amigable
+            if (str_contains($e->getMessage(), 'OpenAI') || str_contains($e->getMessage(), 'API')) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'openai_unavailable',
+                    'message' => 'El servicio de IA está temporalmente no disponible. Los mensajes se procesarán automáticamente cuando esté disponible.',
+                    'data' => [
+                        'thread_id' => $request->thread_id ?? null,
+                        'should_retry' => false
+                    ]
+                ], 503);
+            }
+
             return response()->json([
                 'success' => false,
-                'error' => 'Error interno del servidor: ' . $e->getMessage()
+                'error' => 'Error interno del servidor',
+                'message' => 'No se pudieron procesar los mensajes huérfanos'
             ], 500);
         }
     }

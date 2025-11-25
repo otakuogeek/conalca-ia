@@ -1674,6 +1674,9 @@
     <!-- Script para llamadas por grupo de cotización -->
     <script src="{{ asset('js/group-calls.js') }}"></script>
     
+    <!-- Sistema de Debug de Errores -->
+    @include('components.error-debug-button')
+    
     <div id="modal-root"></div>
 </body>
 

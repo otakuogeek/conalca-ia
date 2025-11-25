@@ -11,49 +11,59 @@ class GroupQuotationController extends Controller
 {
     public function groupsQuotes()
     {
-        $user = auth()->user();
+        try {
+            $user = auth()->user();
 
-        // Si es super admin, no filtramos
-        $query = GroupCotization::with([
-            'client',
-            'cotizaciones.client',
-            'cotizaciones.pricing',
-            'cotizaciones.solicitud',
-            'cotizaciones.notes.author'
-        ])
-        ->orderBy('created_at', 'desc');
-        
-        // Si NO es super admin, solo le mostramos sus grupos
-        if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA') {
-            $query->where('user_id', $user->id);
-        }
+            // Si es super admin, no filtramos
+            $query = GroupCotization::with([
+                'client',
+                'cotizaciones.client',
+                'cotizaciones.pricing',
+                'cotizaciones.solicitud',
+                'cotizaciones.notes.author'
+            ])
+            ->orderBy('created_at', 'desc');
+            
+            // Si NO es super admin, solo le mostramos sus grupos
+            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA') {
+                $query->where('user_id', $user->id);
+            }
 
-        $groups_quotes = $query->get()
-            ->map(function ($group) {
-                   foreach ($group->cotizaciones as $cotizacion) {
-                        Log::info('Solicitud asociada a cotización:', [
-                            'cotizacion_id' => $cotizacion->id,
-                            'solicitud' => $cotizacion->solicitud // Esto mostrará null o el objeto cargado
-                        ]);
-                    }
-                $group->valor_total = $group->cotizaciones->sum(function ($quote) {
-                    // Usar el valor guardado directamente o calcular si no existe
-                    $valorGuardado = floatval($quote->valor ?? 0);
-                    if ($valorGuardado > 0) {
-                        return $valorGuardado;
-                    }
-                    
-                    // Fallback al cálculo manual si no hay valor guardado
-                    $precioBase = floatval($quote->pricing->price ?? 0);
-                    $porcentaje = floatval($quote->porcentaje ?? 0);
-                    return $precioBase + ($precioBase * $porcentaje / 100);
+            $groups_quotes = $query->get()
+                ->map(function ($group) {
+                    $group->valor_total = $group->cotizaciones->sum(function ($quote) {
+                        // Usar el valor guardado directamente o calcular si no existe
+                        $valorGuardado = floatval($quote->valor ?? 0);
+                        if ($valorGuardado > 0) {
+                            return $valorGuardado;
+                        }
+                        
+                        // Fallback al cálculo manual si no hay valor guardado
+                        if ($quote->pricing) {
+                            $precioBase = floatval($quote->pricing->price ?? 0);
+                            $porcentaje = floatval($quote->porcentaje ?? 0);
+                            return $precioBase + ($precioBase * $porcentaje / 100);
+                        }
+                        
+                        return 0;
+                    });
+                    return $group;
                 });
-                return $group;
-            });
 
-        return response()->json([
-            'data' => $groups_quotes
-        ]);
+            return response()->json([
+                'data' => $groups_quotes
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error en groupsQuotes:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Error al cargar grupos de cotizaciones',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function changeStatus(Request $request, $id)

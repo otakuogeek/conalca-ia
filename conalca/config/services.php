@@ -47,6 +47,7 @@ return [
         'output_format' => env('ELEVENLABS_OUTPUT_FORMAT', 'mp3_44100_128'),
         'agent_id' => env('ELEVENLABS_AGENT_ID'),
         'agent_phone_number_id' => env('ELEVENLABS_AGENT_PHONE_NUMBER_ID'),
+        'agent_phone_number' => env('ELEVENLABS_AGENT_PHONE_NUMBER', '+576017564145'),
         'agent_name' => env('ELEVENLABS_AGENT_NAME', 'Conalca'),
     ],
 

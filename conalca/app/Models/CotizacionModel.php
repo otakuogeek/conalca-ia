@@ -18,6 +18,7 @@ class CotizacionModel extends Model
 
     protected $fillable = [
         'client_id',
+        'user_id',
         'pricing_id',
         'porcentaje',
         'ciudad_origen',

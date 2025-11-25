@@ -71,8 +71,8 @@ class QuoteRoutesController extends Controller
                     'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                     'valor_declarado' => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                     'pricing_id' => null, // Agregar pricing_id como nulo inicialmente
-                    'estado' => 'creada',
                     'decision_cliente' => 'pendiente',
+                    'active' => 1,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -144,7 +144,7 @@ class QuoteRoutesController extends Controller
                     'tipo_producto' => $cotization->tipo_producto,
                     'vehiculo_requerido' => $cotization->vehiculo_requerido,
                     'valor_declarado' => $cotization->valor_declarado,
-                    'estado' => $cotization->estado,
+                    'active' => $cotization->active,
                     'decision_cliente' => $cotization->decision_cliente,
                 ];
             });

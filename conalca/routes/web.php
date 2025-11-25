@@ -814,3 +814,4 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
 Route::post('/chat/assistant', [App\Http\Controllers\Api\ChatController::class, 'chatWithFunctions'])
     ->withoutMiddleware([\App\Http\Middleware\VerifyCsrfToken::class])
     ->name('chat.assistant');
+Route::get('/test-drivers-modal', function () { return view('test-drivers-modal'); });

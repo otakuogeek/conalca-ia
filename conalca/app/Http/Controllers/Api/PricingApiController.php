@@ -51,13 +51,68 @@ class PricingApiController extends Controller
         });
 
         return response()->json([
-            'message'   => 'Registros creados correctamente',
-            'total'     => count($created),
-            'pricings'  => $created,
+            'message'  => 'Registros creados correctamente',
+            'total'    => count($created),
+            'pricings' => $created
         ], 201);
     }
 
-    /* ============ MOSTRAR ============ */
+    /* ============ ACTUALIZAR VARIOS ============ */
+    public function bulkUpdate(Request $request)
+    {
+        // 1. Validación general del payload
+        $request->validate([
+            'items'            => 'required|array|min:1',
+            'items.*.id'       => 'required|integer|distinct|exists:pricings,id',
+
+            // Campos que sí pueden venir (todos opcionales, "sometimes")
+            'items.*.origin'       => 'sometimes|string|max:255',
+            'items.*.destination'  => 'sometimes|string|max:255',
+            'items.*.vehicle_type' => 'sometimes|string|max:255',
+            'items.*.weight'       => 'sometimes|numeric',
+            'items.*.price'        => 'sometimes|numeric',
+        ]);
+
+        $updated = [];
+
+        DB::transaction(function () use ($request, &$updated) {
+            foreach ($request->input('items') as $index => $row) {
+
+                // 2. Validación extra por item (opcional, para mensajes más detallados)
+                $validator = validator(
+                    $row,
+                    array_merge(
+                        ['id' => 'required|integer|exists:pricings,id'],
+                        $this->rules(fn($f) => "sometimes|$f")   // mismas reglas pero opcionales
+                    )
+                );
+
+                if ($validator->fails()) {
+                    abort(response()->json([
+                        'message' => "Error en el item #{$index}",
+                        'errors'  => $validator->errors()
+                    ], 422));
+                }
+
+                // 3. Actualizamos el registro
+                $pricing = Pricing::find($row['id']);
+
+                // Quitamos el ID del array antes de hacer update
+                $data = collect($row)->except('id')->toArray();
+
+                $pricing->update($data);
+                $updated[] = $pricing->refresh();   // devolvemos el modelo actualizado
+            }
+        });
+
+        return response()->json([
+            'message'  => 'Registros actualizados correctamente',
+            'total'    => count($updated),
+            'pricings' => $updated,
+        ], 200);
+    }
+
+    /* ============ VER (uno) ============ */
     public function show(Pricing $pricing)
     {
         return $pricing;

@@ -29,8 +29,10 @@ class AsyncCallController extends Controller
                 'group_cotization_id' => $groupCotizationId
             ]);
 
-            // Buscar cotizaciones del grupo
-            $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)->get();
+            // Buscar cotizaciones del grupo que estén ACEPTADAS
+            $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)
+                ->where('decision_cliente', 'aceptada')
+                ->get();
             
             if ($cotizaciones->isEmpty()) {
                 return response()->json([
@@ -75,8 +77,10 @@ class AsyncCallController extends Controller
                 return response()->json(['error' => 'ID de grupo requerido'], 400);
             }
 
-            // Obtener todas las cotizaciones del grupo
-            $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)->get();
+            // Obtener todas las cotizaciones ACEPTADAS del grupo
+            $cotizaciones = CotizacionModel::where('group_cotization_id', $groupCotizationId)
+                ->where('decision_cliente', 'aceptada')
+                ->get();
             $cotizacionIds = $cotizaciones->pluck('id');
 
             // Obtener estado de las llamadas

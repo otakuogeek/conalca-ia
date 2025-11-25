@@ -78,6 +78,110 @@ class ConalcaMCPServer:
     def _register_mcp_endpoints(self):
         """Registra endpoints compatibles con protocolo MCP"""
         
+        @self.app.websocket("/ws")
+        async def websocket_mcp_endpoint(websocket: WebSocket):
+            """Endpoint WebSocket para protocolo MCP (requerido por ElevenLabs)"""
+            await websocket.accept()
+            self.streaming_clients.add(websocket)
+            logger.info("Cliente WebSocket conectado para MCP")
+            
+            try:
+                while True:
+                    # Recibir mensaje JSON-RPC
+                    data = await websocket.receive_json()
+                    method = data.get("method")
+                    params = data.get("params", {})
+                    request_id = data.get("id")
+                    
+                    logger.info(f"WebSocket recibió método: {method}")
+                    
+                    # Procesar según el método
+                    if method == "initialize":
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {
+                                    "tools": {
+                                        "listChanged": True
+                                    },
+                                    "resources": {
+                                        "subscribe": True,
+                                        "listChanged": True
+                                    }
+                                },
+                                "serverInfo": {
+                                    "name": "conalca-mcp-server",
+                                    "version": "2.1.0"
+                                }
+                            }
+                        }
+                        await websocket.send_json(response)
+                    
+                    elif method == "tools/list":
+                        # Obtener lista de herramientas (usando el endpoint POST existente)
+                        tools_response = await self._get_tools_list()
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "tools": tools_response
+                            }
+                        }
+                        await websocket.send_json(response)
+                    
+                    elif method == "tools/call":
+                        # Ejecutar herramienta
+                        tool_name = params.get("name")
+                        tool_args = params.get("arguments", {})
+                        
+                        try:
+                            result = await self._execute_tool(tool_name, tool_args)
+                            response = {
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(result, cls=DateTimeEncoder, ensure_ascii=False)
+                                        }
+                                    ]
+                                }
+                            }
+                        except Exception as e:
+                            logger.error(f"Error ejecutando herramienta {tool_name}: {e}")
+                            response = {
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "error": {
+                                    "code": -32603,
+                                    "message": f"Error ejecutando herramienta: {str(e)}"
+                                }
+                            }
+                        
+                        await websocket.send_json(response)
+                    
+                    else:
+                        # Método no soportado
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {
+                                "code": -32601,
+                                "message": f"Método no soportado: {method}"
+                            }
+                        }
+                        await websocket.send_json(response)
+                        
+            except WebSocketDisconnect:
+                logger.info("Cliente WebSocket desconectado")
+            except Exception as e:
+                logger.error(f"Error en WebSocket: {e}")
+            finally:
+                self.streaming_clients.discard(websocket)
+        
         @self.app.post("/")
         async def mcp_rpc_endpoint(request: Request):
             """Endpoint principal JSON-RPC 2.0 para protocolo MCP"""
@@ -1130,6 +1234,137 @@ class ConalcaMCPServer:
                 "tools_available": 8,
                 "capabilities": ["tools", "resources", "streaming"]
             }
+        
+        @self.app.get("/sse")
+        async def sse_endpoint(request: Request):
+            """Server-Sent Events endpoint para STREAMABLE_HTTP"""
+            async def event_generator():
+                try:
+                    # Enviar evento de conexión inicial
+                    yield {
+                        "event": "connected",
+                        "data": json.dumps({
+                            "type": "connection",
+                            "status": "connected",
+                            "server": "conalca-mcp-server",
+                            "version": "2.1.0"
+                        })
+                    }
+                    
+                    # Mantener la conexión abierta
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        
+                        # Enviar heartbeat cada 30 segundos
+                        yield {
+                            "event": "heartbeat",
+                            "data": json.dumps({
+                                "type": "heartbeat",
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        }
+                        
+                        await asyncio.sleep(30)
+                        
+                except asyncio.CancelledError:
+                    logger.info("SSE connection cancelled")
+                except Exception as e:
+                    logger.error(f"Error in SSE stream: {e}")
+            
+            return EventSourceResponse(event_generator())
+        
+        @self.app.post("/mcp/sse")
+        async def sse_post_endpoint(request: Request):
+            """Endpoint POST para mensajes MCP via SSE"""
+            try:
+                data = await request.json()
+                method = data.get("method")
+                params = data.get("params", {})
+                request_id = data.get("id")
+                
+                logger.info(f"SSE POST recibió método: {method}")
+                
+                if method == "initialize":
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "tools": {
+                                    "listChanged": True
+                                },
+                                "resources": {
+                                    "subscribe": True,
+                                    "listChanged": True
+                                }
+                            },
+                            "serverInfo": {
+                                "name": "conalca-mcp-server",
+                                "version": "2.1.0"
+                            }
+                        }
+                    }
+                
+                elif method == "tools/list":
+                    tools_list = await self._get_tools_list()
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "tools": tools_list
+                        }
+                    }
+                
+                elif method == "tools/call":
+                    tool_name = params.get("name")
+                    tool_args = params.get("arguments", {})
+                    
+                    try:
+                        result = await self._execute_tool(tool_name, tool_args)
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": json.dumps(result, cls=DateTimeEncoder, ensure_ascii=False)
+                                    }
+                                ]
+                            }
+                        }
+                    except Exception as e:
+                        logger.error(f"Error ejecutando herramienta {tool_name}: {e}")
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {
+                                "code": -32603,
+                                "message": f"Error ejecutando herramienta: {str(e)}"
+                            }
+                        }
+                
+                else:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32601,
+                            "message": f"Método no soportado: {method}"
+                        }
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Error en SSE POST: {e}")
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": f"Error interno: {str(e)}"
+                    }
+                }
         
         @self.app.get("/health")
         async def health_check():
@@ -2316,6 +2551,74 @@ Espero me pueda decir si le interesa realizar este transporte que se debe realiz
             return "CARTAGENA"
         else:
             return "OTROS"
+    
+    async def _get_tools_list(self):
+        """Retorna lista completa de herramientas disponibles"""
+        return [
+            {
+                "name": "get_llamadas",
+                "description": "Obtiene todas las llamadas telefónicas con paginación opcional. Permite filtrar por estado y obtener información detallada de cada llamada.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "integer",
+                            "description": "Número de página para paginación",
+                            "default": 1,
+                            "minimum": 1
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Cantidad máxima de resultados por página",
+                            "default": 20,
+                            "minimum": 1,
+                            "maximum": 100
+                        }
+                    }
+                }
+            },
+            # ... (puedes agregar todas las demás herramientas aquí, o mejor aún...)
+        ]
+    
+    async def _execute_tool(self, tool_name: str, arguments: dict):
+        """Ejecuta una herramienta específica con los argumentos dados"""
+        logger.info(f"Ejecutando herramienta: {tool_name} con args: {arguments}")
+        
+        # Mapeo de herramientas a métodos del repositorio
+        tool_methods = {
+            "get_llamadas": repository.get_llamadas,
+            "get_llamada_by_id": repository.get_llamada_by_id,
+            "create_llamada": repository.create_llamada,
+            "update_llamada_status": repository.update_llamada_status,
+            "get_cotizaciones": repository.get_cotizaciones,
+            "get_vehicle_by_telefono_conductor": repository.get_vehicle_by_telefono_conductor,
+            "process_elevenlabs_event": repository.process_elevenlabs_event,
+            "get_chofer_by_placa": repository.get_chofer_by_placa,
+            "get_llamadas_by_telefono": repository.get_llamadas_by_telefono,
+            "activate_conversation": repository.activate_conversation,
+            "generate_transport_offer": repository.generate_transport_offer,
+            "save_driver_decision": repository.save_driver_decision,
+            "get_group_cotizations": repository.get_group_cotizations,
+            "get_group_cotizations_by_user": repository.get_group_cotizations_by_user,
+            "get_cotizacion_with_group_info": repository.get_cotizacion_with_group_info,
+            "get_cotizations_by_group": repository.get_cotizations_by_group,
+            "get_pricings": repository.get_pricings,
+            "get_pricing_by_vehicle_type": repository.get_pricing_by_vehicle_type,
+            "search_pricings_by_route": repository.search_pricings_by_route,
+            "get_cotizacion_with_pricing_info": repository.get_cotizacion_with_pricing_info,
+            "precioviaje": repository.precioviaje,
+            "zinformacion": repository.zinformacion,
+            "llenar_formulario": repository.llenar_formulario,
+        }
+        
+        if tool_name not in tool_methods:
+            raise ValueError(f"Herramienta no encontrada: {tool_name}")
+        
+        # Ejecutar el método correspondiente
+        method = tool_methods[tool_name]
+        result = await method(**arguments)
+        
+        return result
     
     async def close(self):
         """Cierra las conexiones del servidor"""

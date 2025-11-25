@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { fetchCallStatus, startCallingDriversGroup, selectDriver, startElevenLabsCalls } from '../../services/callService';
+import { fetchCallStatus, startCallingDriversGroup, selectDriver, startElevenLabsCalls, buscarConductores } from '../../services/callService';
 import useInterval from '../../hooks/useInterval';
 import {
   FaPhoneAlt,
   FaTruckMoving,
   FaUserCheck,
   FaUserTimes,
+  FaList,
 } from 'react-icons/fa';
+import DriversModal from '../CotizacionInicial/DriversModal';
 
 const PanelSkeleton = () => (
   <div className="animate-pulse space-y-2">
@@ -20,6 +22,9 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   const [data, setData] = useState(null);
   const [loadingBtn, setLoadingBtn] = useState(false);
   const [selectingId, setSelectingId] = useState(null);
+  const [showDriversModal, setShowDriversModal] = useState(false);
+  const [driversSearchData, setDriversSearchData] = useState(null);
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
 console.log(data)
   const load = async () => {
     try {
@@ -32,6 +37,45 @@ console.log(data)
 
   useInterval(load, 5000);
   useEffect(() => { load(); }, []);
+
+  // Función para buscar conductores disponibles en Arcángel
+  const handleSearchDrivers = async () => {
+    if (!cotizacion.id) {
+      console.error('No se encontró ID de cotización');
+      return;
+    }
+    
+    setLoadingDrivers(true);
+    try {
+      const response = await buscarConductores(cotizacion.id, 7, 50);
+      
+      if (response.data && response.data.success) {
+        setDriversSearchData(response.data.data);
+        setShowDriversModal(true);
+      } else {
+        throw new Error(response.data?.message || 'Error al buscar conductores');
+      }
+    } catch (e) {
+      console.error('Error buscando conductores:', e);
+      
+      const errorMessage = e.response?.data?.message || e.message || 'No se pudieron buscar conductores. Intente de nuevo.';
+      
+      if (window.Swal) {
+        window.Swal.fire({
+          title: 'Error',
+          text: errorMessage,
+          icon: 'error',
+          confirmButtonText: 'Aceptar',
+          confirmButtonColor: '#f97316'
+        });
+      } else {
+        alert(errorMessage);
+      }
+    } finally {
+      setLoadingDrivers(false);
+    }
+  };
+
 
   const handleCall = async () => {
     if (!cotizacion.group_cotization_id) {
@@ -206,17 +250,33 @@ console.log(data)
         <strong>Tipo de vehículo:</strong> {data.vehicle_type}
       </p>
       <p className="text-sm">
-        <strong>Total conductores:</strong> {data.total_to_call}
+        <strong>Total conductores:</strong> {driversSearchData?.total || data.total_to_call}
+        {driversSearchData && (
+          <span className="ml-2 text-xs text-green-600">
+            (Actualizado desde Arcángel)
+          </span>
+        )}
       </p>
 
-      <button
-        onClick={handleCall}
-        disabled={loadingBtn}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
-      >
-        <FaPhoneAlt className={loadingBtn ? 'animate-ping' : ''}/>
-        {loadingBtn ? 'Registrando…' : 'Registrar Llamadas'}
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={handleCall}
+          disabled={loadingBtn}
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+        >
+          <FaPhoneAlt className={loadingBtn ? 'animate-ping' : ''}/>
+          {loadingBtn ? 'Registrando…' : 'Registrar Llamadas'}
+        </button>
+
+        <button
+          onClick={handleSearchDrivers}
+          disabled={loadingDrivers}
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+        >
+          <FaList className={loadingDrivers ? 'animate-spin' : ''}/>
+          {loadingDrivers ? 'Buscando…' : 'Ver Listado'}
+        </button>
+      </div>
 
       <div>
         <h4 className="font-medium mb-1 flex items-center gap-1">
@@ -250,6 +310,22 @@ console.log(data)
           </p>
         )}
       </div>
+
+      {/* Modal de búsqueda de conductores */}
+      {showDriversModal && driversSearchData && (
+        <DriversModal
+          isOpen={showDriversModal}
+          onClose={() => setShowDriversModal(false)}
+          cotizacionId={cotizacion.id}
+          cotizacionData={{
+            ciudad_origen: data.ciudad_origen || cotizacion.ciudad_origen,
+            ciudad_destino: data.ciudad_destino || cotizacion.ciudad_destino,
+            tipo_vehiculo: data.vehicle_type,
+            conductores: driversSearchData.conductores || [],
+            total: driversSearchData.total || 0,
+          }}
+        />
+      )}
     </div>
   );
 }

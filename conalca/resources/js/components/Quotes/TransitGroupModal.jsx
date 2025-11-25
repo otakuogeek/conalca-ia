@@ -96,7 +96,12 @@ export default function TransitGroupModal({ open, onClose, group }) {
 
                 {/* Cotizaciones del grupo (estado Silogtran) */}
                 <div className="space-y-3">
-                  {(group?.cotizaciones || []).map(cot => {
+                  {(group?.cotizaciones || [])
+                    .filter(cot => {
+                      const status = cot.solicitud?.silogtran_status || cot.silogtran_status || 'Sin estado';
+                      return status !== 'Sin estado';
+                    })
+                    .map(cot => {
                     const status =
                       cot.solicitud?.silogtran_status ||
                       cot.silogtran_status ||

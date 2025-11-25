@@ -161,6 +161,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           vehiculo_requerido: String(route.vehiculo_requerido || ''),
           valor_declarado: String(route.valor_declarado || ''),
           finalValue: finalValue,
+          valor: finalValue, // Para el email (backend espera 'valor')
+          valor_final: finalValue, // Para el template del email
           porcentaje: porcentaje,
           cantidad: String(route.cantidad || '1'),
           tipo_embajale: String(route.tipo_embajale || 'Bultos'),

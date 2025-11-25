@@ -190,40 +190,155 @@ class ChatController extends Controller
 
             // Verificar si hay un run activo antes de crear el mensaje
             if ($request->thread_id && $client->openai_current_run) {
-                $runStatus = QuoteAssistantService::checkRunStatus($threadId, $client->openai_current_run);
-                if ($runStatus === null) {
-                    // El run aún está activo, devolver error amigable
-                    return response()->json([
-                        'success' => false,
-                        'error' => 'processing_active',
-                        'message' => 'Hay un procesamiento en curso. Por favor espera unos segundos.',
-                        'data' => [
+                try {
+                    $runStatus = QuoteAssistantService::checkRunStatus($threadId, $client->openai_current_run);
+                    
+                    // Si checkRunStatus retorna null, el run aún está activo
+                    if ($runStatus === null || in_array($runStatus, ['queued', 'in_progress', 'requires_action'])) {
+                        Log::info('Run activo detectado, rechazando nuevo mensaje', [
                             'thread_id' => $threadId,
-                            'active_run_id' => $client->openai_current_run
-                        ]
-                    ], 409); // Conflict
+                            'active_run_id' => $client->openai_current_run,
+                            'status' => $runStatus
+                        ]);
+                        
+                        // Verificar si el run lleva mucho tiempo (más de 2 minutos)
+                        $runCreatedAt = $client->updated_at; // Timestamp de última actualización
+                        $timeSinceUpdate = now()->diffInSeconds($runCreatedAt);
+                        
+                        if ($timeSinceUpdate > 120) {
+                            // Run colgado, forzar limpieza
+                            Log::warning('Run colgado detectado (>2 min), forzando limpieza', [
+                                'run_id' => $client->openai_current_run,
+                                'time_since_update' => $timeSinceUpdate
+                            ]);
+                            
+                            $client->openai_current_run = null;
+                            $client->save();
+                            
+                            // Continuar con el nuevo mensaje
+                        } else {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'processing_active',
+                                'message' => 'Hay un procesamiento en curso. Por favor espera unos segundos.',
+                                'data' => [
+                                    'thread_id' => $threadId,
+                                    'active_run_id' => $client->openai_current_run,
+                                    'messages' => [] // Devolver array vacío para evitar error de .map()
+                                ]
+                            ], 409); // Conflict
+                        }
+                    } else {
+                        // El run ya terminó, limpiar el current_run
+                        Log::info('Run anterior completado, limpiando current_run', [
+                            'thread_id' => $threadId,
+                            'old_run_id' => $client->openai_current_run,
+                            'final_status' => $runStatus
+                        ]);
+                        
+                        $client->openai_current_run = null;
+                        $client->save();
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Error verificando run status, continuando con nuevo mensaje', [
+                        'error' => $e->getMessage(),
+                        'run_id' => $client->openai_current_run
+                    ]);
+                    
+                    // Si hay error verificando, limpiar current_run y continuar
+                    $client->openai_current_run = null;
+                    $client->save();
                 }
             }
 
             // Crear el mensaje del usuario
-            $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
+            // Agregar instrucción para ignorar validaciones de estado del cliente
+            $enhancedMessage = $request->message . "\n\nNOTA IMPORTANTE: Ignora cualquier validación de estado del cliente (activo/inactivo). Todos los clientes están autorizados para crear cotizaciones independientemente de su estado.";
+            $userMessage = QuoteAssistantService::createMessage($threadId, $enhancedMessage);
+            
+            // Caso especial: el thread ya no existe en OpenAI
+            if ($userMessage === 'THREAD_NOT_FOUND') {
+                Log::warning('🔄 Thread no encontrado, recreando...', [
+                    'old_thread_id' => $threadId,
+                    'client_id' => $client->id
+                ]);
+                
+                // Limpiar thread del cliente y cancelar runs si existía
+                if ($client->openai_thread_id) {
+                    QuoteAssistantService::cancelActiveRuns($client->openai_thread_id);
+                }
+                $client->openai_thread_id = null;
+                $client->openai_current_run = null;
+                $client->save();
+                
+                // Crear nuevo thread
+                $newThreadId = QuoteAssistantService::getThread($client);
+                if (!$newThreadId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo recrear el thread de conversación',
+                        'data' => [
+                            'messages' => []
+                        ]
+                    ], 500);
+                }
+                
+                Log::info('✅ Thread recreado, esperando 2 segundos antes de reintentar...', [
+                    'old_thread_id' => $threadId,
+                    'new_thread_id' => $newThreadId,
+                    'client_id' => $client->id
+                ]);
+                
+                // Esperar 2 segundos para que el thread esté completamente listo
+                sleep(2);
+                
+                // Intentar crear mensaje en el nuevo thread
+                $userMessage = QuoteAssistantService::createMessage($newThreadId, $request->message);
+                $threadId = $newThreadId;
+                
+                // Si aún falla después del reintento, devolver error
+                if (!$userMessage || $userMessage === 'THREAD_NOT_FOUND') {
+                    Log::error('❌ No se pudo crear mensaje ni después de recrear thread', [
+                        'thread_id' => $newThreadId,
+                        'client_id' => $client->id
+                    ]);
+                    
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo iniciar la conversación. Por favor, intenta nuevamente.',
+                        'data' => [
+                            'messages' => []
+                        ]
+                    ], 500);
+                }
+            }
+
+            
             if (!$userMessage) {
                 // Verificar si es porque hay runs activos
                 if ($request->thread_id) {
+                    Log::info('No se pudo crear mensaje (posible run activo)', [
+                        'thread_id' => $threadId
+                    ]);
+                    
                     return response()->json([
                         'success' => false,
                         'error' => 'processing_active',
                         'message' => 'Hay un procesamiento en curso. Por favor espera unos segundos e intenta nuevamente.',
                         'data' => [
                             'thread_id' => $threadId,
-                            'should_retry' => true
+                            'should_retry' => true,
+                            'messages' => [] // Devolver array vacío para evitar error de .map()
                         ]
                     ], 409); // Conflict
                 }
                 
                 return response()->json([
                     'success' => false,
-                    'error' => 'No se pudo crear el mensaje'
+                    'error' => 'No se pudo crear el mensaje',
+                    'data' => [
+                        'messages' => [] // Devolver array vacío para evitar error de .map()
+                    ]
                 ], 500);
             }
 
@@ -243,7 +358,8 @@ class ChatController extends Controller
                     'data' => [
                         'thread_id' => $threadId,
                         'should_retry' => true,
-                        'retry_after' => 10 // segundos
+                        'retry_after' => 10, // segundos
+                        'messages' => [] // Devolver array vacío para evitar error de .map()
                     ]
                 ], 503); // Service Unavailable
             }
@@ -281,7 +397,10 @@ class ChatController extends Controller
 
             return response()->json([
                 'success' => false,
-                'error' => 'Error interno del servidor: ' . $e->getMessage()
+                'error' => 'Error interno del servidor: ' . $e->getMessage(),
+                'data' => [
+                    'messages' => [] // Devolver array vacío para evitar error de .map()
+                ]
             ], 500);
         }
     }

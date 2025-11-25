@@ -31,8 +31,14 @@ class QuoteAssistantService
     private static function initToken()
     {
         if (!self::$private_token) {
-            self::$private_token = env('OPENAI_API_KEY');
+            self::$private_token = config('services.openai.api_key');
             self::$token = self::$private_token; // Asignar también a $token
+            
+            if (!self::$private_token) {
+                Log::error('OpenAI API key no configurado en services.openai.api_key');
+                throw new \Exception('OpenAI API key no disponible');
+            }
+            
             Log::info('Initializing OpenAI token', [
                 'token_length' => strlen(self::$private_token),
                 'token_prefix' => substr(self::$private_token, 0, 10)
@@ -82,6 +88,127 @@ class QuoteAssistantService
             $client->save();
             
             return $fallbackThreadId;
+        }
+    }
+
+    /**
+     * Eliminar un thread de OpenAI
+     * Se usa cuando se inicia una nueva cotización para limpiar el historial
+     */
+    /**
+     * Cancela todos los runs activos de un thread antes de eliminarlo
+     */
+    public static function cancelActiveRuns($thread_id)
+    {
+        self::initToken();
+        
+        if (str_starts_with($thread_id, 'local_thread_')) {
+            return true;
+        }
+        
+        try {
+            Log::info('🔍 Buscando runs activos para cancelar:', ['thread_id' => $thread_id]);
+            
+            $runsRequest = Http::timeout(10)
+                ->withHeaders(['OpenAI-Beta' => 'assistants=v2'])
+                ->withToken(self::$private_token)
+                ->get(self::$openai_uri . '/threads/' . $thread_id . '/runs');
+            
+            if ($runsRequest->status() == 404) {
+                Log::info('Thread no existe, no hay runs para cancelar');
+                return true;
+            }
+            
+            if ($runsRequest->status() == 200) {
+                $runs = $runsRequest->json();
+                $activeRuns = array_filter($runs['data'] ?? [], function($run) {
+                    return in_array($run['status'], ['queued', 'in_progress', 'requires_action']);
+                });
+                
+                if (empty($activeRuns)) {
+                    Log::info('✅ No hay runs activos para cancelar');
+                    return true;
+                }
+                
+                Log::info('⚠️ Se encontraron ' . count($activeRuns) . ' runs activos, cancelando...');
+                
+                foreach ($activeRuns as $run) {
+                    try {
+                        $cancelRequest = Http::timeout(10)
+                            ->withHeaders(['OpenAI-Beta' => 'assistants=v2'])
+                            ->withToken(self::$private_token)
+                            ->post(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run['id'] . '/cancel');
+                        
+                        if ($cancelRequest->status() == 200) {
+                            Log::info('✅ Run cancelado:', ['run_id' => $run['id']]);
+                        } else {
+                            Log::warning('⚠️ No se pudo cancelar run:', [
+                                'run_id' => $run['id'],
+                                'status' => $cancelRequest->status()
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Error cancelando run individual:', [
+                            'run_id' => $run['id'],
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+                
+                return true;
+            }
+            
+            return false;
+        } catch (\Exception $e) {
+            Log::error('Error listando runs para cancelar:', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id
+            ]);
+            return false;
+        }
+    }
+    
+    public static function deleteThread($thread_id)
+    {
+        self::initToken();
+        
+        // Si es un thread local temporal, no intentar eliminarlo de OpenAI
+        if (str_starts_with($thread_id, 'local_thread_')) {
+            Log::info('Thread local detectado, omitiendo eliminación en OpenAI');
+            return true;
+        }
+        
+        Log::info('Eliminando thread de OpenAI:', ['thread_id' => $thread_id]);
+        
+        // PRIMERO cancelar todos los runs activos
+        self::cancelActiveRuns($thread_id);
+        
+        try {
+            $request = Http::timeout(10)
+                ->withHeaders([
+                    'OpenAI-Beta' => 'assistants=v2'
+                ])
+                ->withToken(self::$private_token)
+                ->delete(self::$openai_uri . '/threads/' . $thread_id);
+
+            if ($request->status() == 200) {
+                Log::info('✅ Thread eliminado exitosamente', ['thread_id' => $thread_id]);
+                return true;
+            }
+            
+            Log::warning('No se pudo eliminar thread', [
+                'status' => $request->status(),
+                'response' => $request->json(),
+                'thread_id' => $thread_id
+            ]);
+            
+            return false;
+        } catch (\Exception $e) {
+            Log::error('Error eliminando thread de OpenAI', [
+                'error' => $e->getMessage(),
+                'thread_id' => $thread_id
+            ]);
+            throw $e;
         }
     }
 
@@ -151,14 +278,22 @@ class QuoteAssistantService
         ]);
         
         try {
-            // Verificar si hay runs activos antes de crear el mensaje
-            $runsRequest = Http::timeout(20)  // Aumentado de 10 a 20 segundos
-                ->retry(3, 1000)  // Retry 3 veces con 1 segundo de espera
+            // PRIMERO: Verificar si hay runs activos y cancelarlos automáticamente
+            $runsRequest = Http::timeout(20)
+                ->retry(3, 1000)
                 ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
                 ])
                 ->withToken(self::$private_token)
                 ->get(self::$openai_uri . '/threads/' . $thread_id . '/runs');
+            
+            if ($runsRequest->status() == 404) {
+                // El thread no existe, retornar null con código especial
+                Log::warning('Thread no encontrado en OpenAI (404):', [
+                    'thread_id' => $thread_id
+                ]);
+                return 'THREAD_NOT_FOUND';
+            }
             
             if ($runsRequest->status() == 200) {
                 $runs = $runsRequest->json();
@@ -167,17 +302,35 @@ class QuoteAssistantService
                 });
                 
                 if (!empty($activeRuns)) {
-                    Log::warning('Hay runs activos, esperando para crear mensaje:', [
+                    Log::warning('⚠️ Se encontraron runs activos, cancelándolos automáticamente...', [
                         'thread_id' => $thread_id,
                         'active_runs' => count($activeRuns)
                     ]);
-                    // No crear el mensaje si hay runs activos
-                    return null;
+                    
+                    // Cancelar cada run activo
+                    foreach ($activeRuns as $run) {
+                        try {
+                            $cancelRequest = Http::timeout(10)
+                                ->withHeaders(['OpenAI-Beta' => 'assistants=v2'])
+                                ->withToken(self::$private_token)
+                                ->post(self::$openai_uri . '/threads/' . $thread_id . '/runs/' . $run['id'] . '/cancel');
+                            
+                            if ($cancelRequest->status() == 200) {
+                                Log::info('✅ Run cancelado antes de crear mensaje:', ['run_id' => $run['id']]);
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning('Error cancelando run:', ['run_id' => $run['id'], 'error' => $e->getMessage()]);
+                        }
+                    }
+                    
+                    // Esperar 1 segundo para que las cancelaciones surtan efecto
+                    sleep(1);
                 }
             }
             
-            $request = Http::timeout(20)  // Aumentado de 10 a 20 segundos
-                ->retry(3, 1000)  // Retry 3 veces con 1 segundo de espera
+            // SEGUNDO: Ahora sí crear el mensaje
+            $request = Http::timeout(20)
+                ->retry(3, 1000)
                 ->withHeaders([
                     'OpenAI-Beta' => 'assistants=v2'
                 ])
@@ -612,6 +765,10 @@ class QuoteAssistantService
                     // Guardar estado finished en caché
                     Cache::put($cacheKey, ['status' => 'finished'], 3600);
                     return 'finished';
+                } else if (isset($message['status'])) {
+                    // Retornar el status actual para otros estados (queued, in_progress, failed, etc.)
+                    Log::info('Run en estado:', ['status' => $message['status']]);
+                    return $message['status'];
                 }
             }
 

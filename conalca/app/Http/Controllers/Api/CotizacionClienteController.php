@@ -14,6 +14,11 @@ class CotizacionClienteController extends Controller
     {
         $grupo = GroupCotization::with(['cotizaciones.pricing'])->findOrFail($id);
 
+        // Filtrar solo cotizaciones con valor > 0
+        $grupo->setRelation('cotizaciones', $grupo->cotizaciones->filter(function($cotizacion) {
+            return $cotizacion->valor > 0;
+        }));
+
         // Si ya fue respondida, puedes mostrar mensaje.
         if (
             $grupo->status === 'En facturación' || 
@@ -30,6 +35,11 @@ class CotizacionClienteController extends Controller
     public function guardarRespuestas(Request $request, $id)
     {
         $grupo = GroupCotization::with('cotizaciones')->findOrFail($id);
+
+        // Filtrar solo cotizaciones con valor > 0
+        $grupo->setRelation('cotizaciones', $grupo->cotizaciones->filter(function($cotizacion) {
+            return $cotizacion->valor > 0;
+        }));
 
         $data = $request->input('decisiones', []); // [cotizacion_id => 'aceptada'/'rechazada'/...]
 
@@ -58,6 +68,11 @@ class CotizacionClienteController extends Controller
     {
         try {
             $grupo = GroupCotization::with(['cotizaciones.pricing', 'client'])->findOrFail($id);
+            
+            // Filtrar solo cotizaciones con valor > 0
+            $grupo->setRelation('cotizaciones', $grupo->cotizaciones->filter(function($cotizacion) {
+                return $cotizacion->valor > 0;
+            }));
             
             return response()->json($grupo);
         } catch (\Exception $e) {

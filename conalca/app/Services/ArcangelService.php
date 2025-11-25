@@ -300,6 +300,7 @@ class ArcangelService
     {
         try {
             // Solo enviar X-API-KEY, sin token de autorización
+            // NOTA: El manual dice GET pero el API real usa POST
             $headers = [
                 'X-API-KEY' => $this->apiKey,
             ];
@@ -315,16 +316,18 @@ class ArcangelService
             if (isset($data['token'])) {
                 Cache::put('arcangel_auth_token', $data['token'], now()->addMinutes(55));
                 Cache::put('arcangel_token_expires_at', $data['expires_at'] ?? null, now()->addMinutes(55));
+                
+                Log::info('ArcangelService: Token generado y cacheado exitosamente', [
+                    'expires_at' => $data['expires_at'] ?? 'N/A',
+                    'token_preview' => substr($data['token'], 0, 10) . '...',
+                ]);
             }
-
-            Log::info('ArcangelService: Token generado exitosamente', [
-                'expires_at' => $data['expires_at'] ?? 'N/A',
-            ]);
 
             return $data;
         } catch (\Exception $e) {
             Log::error('ArcangelService: Error generando token', [
                 'error' => $e->getMessage(),
+                'base_url' => $this->baseUrl,
             ]);
 
             throw $e;
@@ -420,7 +423,7 @@ class ArcangelService
         try {
             $token = $this->getToken();
 
-            // Enviar data en el body según documentación
+            // Enviar data en el body según manual v1.0
             $body = [
                 'data' => [
                     'ciudad' => strtoupper($ciudad),
@@ -433,18 +436,26 @@ class ArcangelService
                 ->withBody(json_encode($body), 'application/json')
                 ->get($this->baseUrl . 'getVehiculosCercanos/');
 
-            $data = $this->handleResponse($response, 'getVehiculosCercanos');
+            $responseData = $this->handleResponse($response, 'getVehiculosCercanos');
 
-            // Extraer información de vehículos
-            $result = $data['data']['data'] ?? [];
+            // Según manual: data.data.vehiculos contiene el array de vehículos
+            $vehiculos = $responseData['data']['data']['vehiculos'] ?? [];
+            $totalVehiculos = $responseData['data']['data']['total_vehiculos'] ?? count($vehiculos);
 
-            if ($useCache && !empty($result)) {
+            // Retornar en formato consistente
+            $result = [
+                'vehiculos' => $vehiculos,
+                'total_vehiculos' => $totalVehiculos,
+                'ciudad' => strtoupper($ciudad),
+            ];
+
+            if ($useCache && !empty($vehiculos)) {
                 Cache::put($cacheKey, $result, now()->addMinutes($cacheTTL));
             }
 
             Log::info('ArcangelService: Vehículos cercanos obtenidos', [
                 'ciudad' => $ciudad,
-                'total' => $result['total_vehiculos'] ?? 0,
+                'total' => $totalVehiculos,
             ]);
 
             return $result;

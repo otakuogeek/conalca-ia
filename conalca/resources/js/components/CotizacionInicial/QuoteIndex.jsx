@@ -280,6 +280,19 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
   const updateMessagesFromAPI = (apiMessages) => {
     console.log('Actualizando mensajes desde API:', apiMessages);
+    
+    // Si es una función (callback con prev), llamarla con el estado actual
+    if (typeof apiMessages === 'function') {
+      setMessages(apiMessages);
+      return;
+    }
+    
+    // Si no es un array, no hacer nada
+    if (!Array.isArray(apiMessages)) {
+      console.warn('⚠️ updateMessagesFromAPI recibió datos no válidos:', typeof apiMessages);
+      return;
+    }
+    
     // Convertir formato de API a formato del componente
     const formattedMessages = apiMessages.map(msg => ({
       role: msg.role,
@@ -296,7 +309,31 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     }));
   };
 
-  const resetCreateFlow = () => {
+  const resetCreateFlow = async () => {
+    console.log('🧹 Limpiando completamente el formulario de cotización');
+    
+    // Si hay un threadId activo, limpiarlo en el backend
+    if (clientData.threadId) {
+      try {
+        console.log('🗑️ Limpiando thread en backend:', clientData.threadId);
+        await fetch('/api/chat/clear-thread', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            thread_id: clientData.threadId,
+            client_id: clientData?.clientId || null
+          })
+        });
+        console.log('✅ Thread limpiado en backend');
+      } catch (error) {
+        console.warn('⚠️ Error limpiando thread:', error);
+      }
+    }
+    
     setStep(0);
     setQuoteData([]);
     setMessages([]);
@@ -319,19 +356,37 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       clientSalesRepresentative: '',
       clientContact: '',
       clientCargo: '',
-      clientType: '',
+      clientType: 'cash', // Siempre contado por defecto
       operationType: '',
-      typeBusiness: ''
+      typeBusiness: '',
+      groupId: null,
+      threadId: null,
+      cargoType: '',
+      candadoSatelital: false,
+      jenSet: false,
+      combustible: false,
+      kitDerrames: false,
+      pictogramas: false
     });
+    
+    // Limpiar cualquier parámetro de URL
+    if (window.location.search) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+    
+    console.log('✅ Formulario y chat limpiados completamente');
   };
 
-  const handleCreateQuote = () => {
+  const handleCreateQuote = async () => {
+    // Resetear todo antes de abrir el modal (incluyendo limpieza de thread)
+    await resetCreateFlow();
     handleOpenModal('create');
   };
 
-  const handleCancelCreate = () => {
+  const handleCancelCreate = async () => {
     handleCloseModal('create');
-    resetCreateFlow();
+    await resetCreateFlow();
   };
 
   const handleSubmitClient = async (data) => {
@@ -353,13 +408,13 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         body: JSON.stringify({
           client_id: data.clientId,
           client_type: data.clientType,
-          operation_type: data.operationType,
-          type_business: data.typeBusiness,
-          cargo_type: data.cargoType,
-          candado_satelital: data.candadoSatelital,
-          jen_set: data.jenSet,
+          operation_type: data.operationType, // Convertir de camelCase a snake_case
+          type_business: data.typeBusiness,    // Convertir de camelCase a snake_case
+          cargo_type: data.cargoType,          // Convertir de camelCase a snake_case
+          candado_satelital: data.candadoSatelital, // Convertir de camelCase a snake_case
+          jen_set: data.jenSet,                     // Convertir de camelCase a snake_case
           combustible: data.combustible,
-          kit_derrames: data.kitDerrames,
+          kit_derrames: data.kitDerrames,           // Convertir de camelCase a snake_case
           pictogramas: data.pictogramas,
         })
       });
@@ -374,9 +429,9 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       const result = await response.json();
       
       if (result.success) {
-        console.log('QuoteIndex - Grupo creado exitosamente:', result.data);
+        console.log('QuoteIndex - Grupo borrador creado:', result.data);
         
-        // Actualizar clientData con los datos del grupo creado
+        // Actualizar clientData CON groupId
         const updatedClientData = {
           ...data,
           groupId: result.data.group_id,
@@ -385,6 +440,22 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         
         setClientData(updatedClientData);
         console.log('QuoteIndex - clientData actualizado:', updatedClientData);
+        
+        // Guardar group_id en sesión para Livewire
+        try {
+          await fetch('/api/chat/quote/set-session-group', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ group_id: result.data.group_id })
+          });
+          console.log('✅ Group ID guardado en sesión');
+        } catch (e) {
+          console.warn('⚠️ No se pudo guardar en sesión:', e);
+        }
         
         // Emitir evento para que ChannelsWithCustomColumns se refresque
         refreshQuotations();
