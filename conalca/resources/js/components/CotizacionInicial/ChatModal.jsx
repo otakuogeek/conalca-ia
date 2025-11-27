@@ -27,6 +27,7 @@ const ChatModal = ({
   const [processingMessage, setProcessingMessage] = useState(null); // Mensaje de "Pensando..."
   const [processingProgress, setProcessingProgress] = useState(0); // Progreso 0-100
   const sendingRef = useRef(false); // Ref adicional para bloqueo
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
@@ -38,6 +39,44 @@ const ChatModal = ({
     console.log('📧 clientData.clientEmail:', clientData.clientEmail);
     console.log('👤 clientData.clientContact:', clientData.clientContact);
   }, [clientData]);
+
+
+  useEffect(() => {
+    const resetConversation = async () => {
+      if (!clientData.clientId) return;
+
+      // Clear the stored messages in the parent/local state
+      if (onUpdateMessages) {
+        onUpdateMessages([]);
+      }
+      if (setQuoteData) {
+        setQuoteData([]);
+      }
+
+      // Tell the backend to discard the previous thread so a brand-new one is created
+      try {
+        if (clientData.threadId) {
+          await fetch('/api/chat/clear-thread', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            },
+            body: JSON.stringify({
+              thread_id: clientData.threadId,
+              client_id: clientData.clientId
+            })
+          });
+        }
+      } catch (error) {
+        console.error('Error clearing previous thread:', error);
+      } finally {
+        setThreadId(null); // force ChatModal to request a new thread
+      }
+    };
+
+    resetConversation();
+  }, [clientData.clientId]);
 
   // Auto-enviar mensaje inicial con datos del formulario si existen
   useEffect(() => {
@@ -100,11 +139,10 @@ const ChatModal = ({
   }, []); // Solo ejecutar al montar
 
   useEffect(() => {
-    // Auto-scroll al final de la conversación
-    if (conversationRef.current) {
+    if (shouldAutoScroll && conversationRef.current) {
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, processingMessage, shouldAutoScroll]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -123,6 +161,16 @@ const ChatModal = ({
     setIsSending(false);
     sendingRef.current = false;
     setCurrentRunId(null);
+  };
+
+  const handleConversationScroll = () => {
+    if (!conversationRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = conversationRef.current;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+
+    // If user is near bottom (< 60px), keep auto-scroll enabled; otherwise disable
+    setShouldAutoScroll(distanceFromBottom < 60);
   };
 
   // Detectar mensajes huérfanos y crear run si es necesario
@@ -211,7 +259,7 @@ const ChatModal = ({
     setProcessingProgress(50); // Progreso al iniciar polling
     
     let pollAttempts = 0;
-    const maxPollAttempts = 30; // Máximo 60 segundos de polling (30 * 2 segundos)
+    const maxPollAttempts = 300; // Máximo 60 segundos de polling (30 * 2 segundos)
     
     const pollRun = async () => {
       try {
@@ -473,86 +521,42 @@ const ChatModal = ({
   };
 
   const handleSendMessage = async (retryAttempt = false) => {
-    // Validación más estricta - evitar envíos múltiples
-    if (!inputMessage.trim()) {
-      console.log('⚠️ Mensaje vacío, no enviando');
-      return;
-    }
-    
-    if (!clientData.clientId) {
-      console.log('⚠️ No hay cliente seleccionado');
-      return;
-    }
-    
-    // BLOQUEO DOBLE: State + Ref para evitar race conditions
-    if (isSending || sendingRef.current) {
-      console.log('⚠️ Ya hay un envío en proceso, ignorando');
-      return;
-    }
-    
-    if (currentRunId) {
-      console.log('⚠️ Hay un run activo, bloqueando envío');
-      // NO mostrar mensaje adicional, solo bloquear silenciosamente
-      // El usuario ya ve el indicador de procesamiento
-      return;
-    }
-    
-    if (processingMessage) {
-      console.log('⚠️ Hay un mensaje en procesamiento, bloqueando envío');
-      // NO mostrar mensaje adicional, solo bloquear silenciosamente
-      return;
-    }
-    
+    if (!inputMessage.trim()) return;
+    if (!clientData.clientId) return;
+    if (isSending || sendingRef.current) return;
+    if (currentRunId || processingMessage) return;
+
     const messageText = inputMessage.trim();
-    
-    // Marcar como enviando INMEDIATAMENTE para bloquear nuevos envíos
     setIsSending(true);
     sendingRef.current = true;
-    setProcessingProgress(10); // Iniciar progreso
-    
+    setProcessingProgress(10);
+
+    const activeThreadId = threadId; // <-- only use local thread id
+
     try {
-      // Verificar si este mensaje ya existe en el thread para evitar duplicados
-      if (clientData.threadId) {
+      if (activeThreadId) {
         try {
-          const existingMessagesResponse = await fetch(`/api/chat/messages/${clientData.threadId}`, {
-            headers: { 'Accept': 'application/json' }
+          const existingMessagesResponse = await fetch(`/api/chat/messages/${activeThreadId}`, {
+            headers: { Accept: 'application/json' }
           });
-          
           const existingData = await existingMessagesResponse.json();
           if (existingData.success && existingData.data.messages) {
             const lastUserMessage = existingData.data.messages
               .filter(msg => msg.role === 'user')
               .pop();
-            
             if (lastUserMessage && lastUserMessage.text === messageText) {
-              console.log('🔄 Mensaje duplicado detectado, verificando si necesita procesamiento...');
-              
-              // Verificar si hay mensajes huérfanos
-              await checkForOrphanMessages(clientData.threadId);
+              await checkForOrphanMessages(activeThreadId);
               setIsSending(false);
               return;
             }
           }
         } catch (error) {
-          console.warn('Error verificando mensajes existentes:', error);
-          // Continuar con el envío normal
+          console.warn('Error checking existing messages:', error);
         }
       }
-      
-      // Mostrar mensaje del usuario inmediatamente con estado "Enviado"
-      const userMessage = {
-        role: 'user',
-        text: messageText,
-        created_at: new Date().toLocaleTimeString(),
-        status: 'sent'
-      };
-      
-      // Actualizar mensajes inmediatamente para mostrar el mensaje del usuario
+
       onSendMessage(messageText);
-      
-      // NO limpiar el input todavía - solo después de envío exitoso
-      
-      // Agregar mensaje de "Pensando..." del asistente
+
       const thinkingMessage = {
         role: 'assistant',
         text: 'Procesando tu solicitud...',
@@ -561,231 +565,162 @@ const ChatModal = ({
         isTemporary: true
       };
       setProcessingMessage(thinkingMessage);
-      setProcessingProgress(30); // Progreso al enviar
-      
+      setProcessingProgress(30);
+
       const response = await fetch('/api/chat/quote', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-          'Accept': 'application/json'
+          Accept: 'application/json'
         },
         body: JSON.stringify({
           message: messageText,
-          thread_id: clientData.threadId || threadId,
+          thread_id: activeThreadId || null, // <-- never send clientData.threadId
           client_id: clientData.clientId,
           type_business: clientData.typeBusiness || typeBusiness
         })
       });
 
-      // Manejar respuestas exitosas, conflictos (409) y timeouts (503/500)
       let data;
       if (response.ok || response.status === 409 || response.status === 503) {
         data = await response.json();
-        } else if (response.status === 500) {
-          // Error interno del servidor (probablemente timeout)
-          console.error('❌ Error 500 - Timeout del servidor');
-          setInputMessage(messageText); // Restaurar mensaje
-          setProcessingMessage(null);
-          
-          // Mostrar mensaje de error más amigable
-          const errorMessage = {
-            role: 'system',
-            text: '⚠️ El servidor está experimentando demoras. Por favor, intenta nuevamente en unos momentos.',
-            created_at: new Date().toLocaleTimeString(),
-            status: 'error',
-            isTemporary: false
-          };
-          
-          if (onUpdateMessages) {
-            onUpdateMessages(prev => [...prev, errorMessage]);
-          }
-          return;
-        } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        if (data.success) {
-          // ✅ ENVÍO EXITOSO - Limpiar input ahora
-          setInputMessage('');
-          
-          // Actualizar thread_id si es nuevo y no tenemos uno del clientData
-          const currentThreadId = clientData.threadId || threadId;
-          if (data.data.thread_id && !currentThreadId) {
-            setThreadId(data.data.thread_id);
-          }
-          
-          // Iniciar polling para verificar el estado del run y extraer datos
-          if (data.data.run_id) {
-            console.log('🚀 Run creado exitosamente:', data.data.run_id);
-            startPollingRun(data.data.thread_id, data.data.run_id);
-          } else {
-            console.warn('⚠️ No se recibió run_id en la respuesta');
-            setProcessingMessage(null);
-          }
-          
-        } else if (data.error === 'processing_active' || response.status === 409) {
-          // Hay un procesamiento activo
-          console.log('⏳ Procesamiento activo detectado (409).');
-          
-          // Si es el primer intento (no hay retryAttempt), intentar limpiar y reintentar automáticamente
-          if (!retryAttempt) {
-            console.log('🔄 Primer intento de 409 - Intentando limpiar y reintentar automáticamente...');
-            
-            try {
-              // Llamar a clear-thread para limpiar el estado
-              const clearResponse = await fetch('/api/chat/clear-thread', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
-                },
-                body: JSON.stringify({
-                  thread_id: clientData.threadId || threadId,
-                  client_id: clientData.clientId
-                })
-              });
-              
-              const clearData = await clearResponse.json();
-              
-              // Limpiar thread_id local para forzar creación de uno nuevo
-              if (clearData.success) {
-                console.log('✅ Thread limpiado exitosamente, limpiando estado local');
-                setThreadId(null);
-              }
-              
-              console.log('⏳ Esperando 2 segundos antes de reintentar...');
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              
-              // Reintentar el envío marcando como segundo intento
-              console.log('🔄 Reintentando envío de mensaje (sin thread_id para forzar nuevo)...');
-              return handleSendMessage(true); // true = retryAttempt
-              
-            } catch (clearError) {
-              console.error('❌ Error al limpiar thread:', clearError);
-              // Continuar con el manejo normal del error
+      } else if (response.status === 500) {
+        setInputMessage(messageText);
+        setProcessingMessage(null);
+        if (onUpdateMessages) {
+          onUpdateMessages(prev => [
+            ...prev,
+            {
+              role: 'system',
+              text: '⚠️ El servidor está experimentando demoras. Intenta nuevamente en unos momentos.',
+              created_at: new Date().toLocaleTimeString(),
+              status: 'error'
             }
-          }
-          
-          // Si es el segundo intento o el clear falló, mostrar mensaje al usuario
-          console.log('⚠️ Segundo intento de 409 - Mostrando opción de cancelar...');
-          
-          // Mostrar mensaje temporal al usuario
-          const waitingMessage = {
-            role: 'system',
-            text: '⏳ Hay un mensaje en proceso. Si esto persiste, usa el botón "Cancelar" para reiniciar.',
-            created_at: new Date().toLocaleTimeString(),
-            status: 'waiting',
-            isTemporary: false
-          };
-          
-          if (onUpdateMessages) {
-            onUpdateMessages(prev => [...prev, waitingMessage]);
-          }
-          
-          // Mantener processingMessage para mostrar botón de cancelar
-          setProcessingMessage({
-            role: 'system',
-            text: '⚠️ Hay un procesamiento pendiente. Si tardó más de 30 segundos, cancela y reinicia.',
-            created_at: new Date().toLocaleTimeString(),
-            status: 'conflict',
-            isTemporary: true
-          });
-          
-          // Si hay un active_run_id, intentar hacer polling
-          if (data.data && data.data.active_run_id && data.data.thread_id) {
-            console.log('🔄 Intentando recuperar run activo:', data.data.active_run_id);
-            startPollingRun(data.data.thread_id, data.data.active_run_id);
-          }
-          
-        } else if (data.error === 'openai_unavailable' || response.status === 503) {
-          // Servicio de IA temporalmente no disponible
-          console.log('⚠️ Servicio de IA no disponible (503)');
-          
-          setInputMessage(messageText); // Restaurar mensaje
-          setProcessingMessage(null);
-          
-          const errorMessage = {
-            role: 'system',
-            text: '⚠️ El servicio de IA está temporalmente no disponible. Tus mensajes se procesarán automáticamente cuando esté disponible.',
-            created_at: new Date().toLocaleTimeString(),
-            status: 'warning',
-            isTemporary: false
-          };
-          
-          if (onUpdateMessages) {
-            onUpdateMessages(prev => [...prev, errorMessage]);
-          }
-          
-          // Si hay un run activo, comenzar polling
-          if (data.data && data.data.active_run_id) {
-            startPollingRun(data.data.thread_id, data.data.active_run_id);
-          } else if (data.data && data.data.thread_id) {
-            // Verificar si hay mensajes huérfanos
-            await checkForOrphanMessages(data.data.thread_id);
-          }
-          
-          // Quitar mensaje de "Pensando..."
-          setProcessingMessage(null);
-          
+          ]);
+        }
+        return;
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      if (data.success) {
+        setInputMessage('');
+
+        if (data.data.thread_id && !activeThreadId) {
+          setThreadId(data.data.thread_id); // <-- store new thread locally
+        }
+
+        if (data.data.run_id) {
+          startPollingRun(data.data.thread_id || activeThreadId, data.data.run_id);
         } else {
-          console.error('Error en chat:', data.error);
-          // Restaurar el mensaje en caso de error
-          setInputMessage(messageText);
-          // Quitar mensaje de "Pensando..."
           setProcessingMessage(null);
-          
-          // Manejo específico para diferentes tipos de errores
-          let errorText = '⚠️ ';
-          if (data.error && (data.error.includes('timeout') || data.error.includes('cURL') || data.error.includes('Connection timed out'))) {
-            errorText += 'El servicio está experimentando demoras. Por favor, intenta nuevamente en unos momentos.';
-          } else if (data.error && data.error.includes('maximum execution time')) {
-            errorText += 'La consulta está tomando más tiempo del esperado. Por favor, intenta con una pregunta más específica.';
-          } else {
-            errorText += 'Ha ocurrido un error temporal. Por favor, intenta nuevamente.';
+        }
+      } else if (data.error === 'processing_active' || response.status === 409) {
+        if (!retryAttempt) {
+          try {
+            await fetch('/api/chat/clear-thread', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+              },
+              body: JSON.stringify({
+                thread_id: activeThreadId || null,
+                client_id: clientData.clientId
+              })
+            });
+            setThreadId(null);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return handleSendMessage(true);
+          } catch (clearError) {
+            console.error('Error clearing thread:', clearError);
           }
-          
-          const errorMessage = {
+        }
+
+        if (onUpdateMessages) {
+          onUpdateMessages(prev => [
+            ...prev,
+            {
+              role: 'system',
+              text: '⏳ Hay un mensaje en proceso. Si persiste, usa “Cancelar” para reiniciar.',
+              created_at: new Date().toLocaleTimeString(),
+              status: 'waiting'
+            }
+          ]);
+        }
+
+        setProcessingMessage({
+          role: 'system',
+          text: '⚠️ Hay un procesamiento pendiente. Si tardó más de 30 segundos, cancela y reinicia.',
+          created_at: new Date().toLocaleTimeString(),
+          status: 'conflict',
+          isTemporary: true
+        });
+
+        if (data.data?.active_run_id && data.data.thread_id) {
+          startPollingRun(data.data.thread_id, data.data.active_run_id);
+        }
+      } else if (data.error === 'openai_unavailable' || response.status === 503) {
+        setInputMessage(messageText);
+        setProcessingMessage(null);
+        if (onUpdateMessages) {
+          onUpdateMessages(prev => [
+            ...prev,
+            {
+              role: 'system',
+              text: '⚠️ El servicio de IA no está disponible. Se procesará cuando vuelva a estar en línea.',
+              created_at: new Date().toLocaleTimeString(),
+              status: 'warning'
+            }
+          ]);
+        }
+        if (data.data?.active_run_id) {
+          startPollingRun(data.data.thread_id, data.data.active_run_id);
+        } else if (data.data?.thread_id) {
+          await checkForOrphanMessages(data.data.thread_id);
+        }
+      } else {
+        setInputMessage(messageText);
+        setProcessingMessage(null);
+        const errorText = data.error?.includes('timeout') || data.error?.includes('cURL')
+          ? '⚠️ El servicio está con demoras. Intenta nuevamente en unos momentos.'
+          : '⚠️ Ha ocurrido un error temporal. Por favor, intenta nuevamente.';
+        if (onUpdateMessages) {
+          onUpdateMessages(prev => [
+            ...prev,
+            {
+              role: 'system',
+              text: errorText,
+              created_at: new Date().toLocaleTimeString(),
+              status: 'error'
+            }
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setInputMessage(messageText);
+      setProcessingMessage(null);
+      let errorText = '⚠️ ';
+      if (error.message?.includes('NetworkError')) {
+        errorText += 'Error de conexión. Verifica tu internet e intenta de nuevo.';
+      } else if (error.message?.includes('timeout')) {
+        errorText += 'La conexión está tardando demasiado. Intenta nuevamente.';
+      } else {
+        errorText += 'Ha ocurrido un error de conexión. Intenta nuevamente.';
+      }
+      if (onUpdateMessages) {
+        onUpdateMessages(prev => [
+          ...prev,
+          {
             role: 'system',
             text: errorText,
             created_at: new Date().toLocaleTimeString(),
-            status: 'error',
-            isTemporary: true
-          };
-          
-          if (onUpdateMessages) {
-            onUpdateMessages(prev => [...prev, errorMessage]);
+            status: 'error'
           }
-        }
-        
-    } catch (error) {
-      console.error('Error enviando mensaje:', error);
-      // Restaurar el mensaje en caso de error
-      setInputMessage(messageText);
-      // Quitar mensaje de "Pensando..."
-        setProcessingMessage(null);
-        
-        // Mostrar mensaje de error amigable
-        let errorText = '⚠️ ';
-        if (error.message && error.message.includes('NetworkError')) {
-          errorText += 'Error de conexión. Verifica tu conexión a internet y intenta nuevamente.';
-        } else if (error.message && error.message.includes('timeout')) {
-          errorText += 'La conexión está tardando demasiado. Por favor, intenta nuevamente.';
-        } else {
-          errorText += 'Ha ocurrido un error de conexión. Por favor, intenta nuevamente.';
-        }
-        
-        const errorMessage = {
-          role: 'system',
-          text: errorText,
-          created_at: new Date().toLocaleTimeString(),
-          status: 'error',
-          isTemporary: true
-        };
-        
-        if (onUpdateMessages) {
-          onUpdateMessages(prev => [...prev, errorMessage]);
-        }
+        ]);
+      }
     } finally {
       setIsSending(false);
       sendingRef.current = false;
@@ -1048,6 +983,7 @@ const ChatModal = ({
           {/* Área de Conversación */}
           <div 
             ref={conversationRef}
+            onScroll={handleConversationScroll}
             className="flex-1 p-6 overflow-y-auto scrollbar-thin bg-gray-50" 
             style={{ maxHeight: '500px' }}
           >
@@ -1080,7 +1016,7 @@ const ChatModal = ({
                           )}
                         </div>
                       </div>
-                      <p className="text-sm product-sans leading-relaxed">
+                      <p className="text-sm product-sans leading-relaxed whitespace-pre-wrap">
                         {message.text}
                       </p>
                     </div>

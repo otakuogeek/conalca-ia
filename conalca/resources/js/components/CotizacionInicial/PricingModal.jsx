@@ -1,7 +1,9 @@
 // resources/js/components/CotizacionInicial/PricingModal.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
+import { fetchLatestPricingsByRoute, fetchVehicleSuggestions } from '../../services/pricingService';
+import { FaSpinner } from 'react-icons/fa';
 
 const PricingModal = ({ 
   onClose, 
@@ -16,88 +18,136 @@ const PricingModal = ({
   setPorcentajeGlobal,
   clientData 
 }) => {
-  const [loading, setLoading] = useState(false);
+  // const [loading, setLoading] = useState(false);
+  const [loadingPricings, setLoadingPricings] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [suggestionsKey, setSuggestionsKey] = useState(null);
   const [errors, setErrors] = useState({});
   const [vehicleSuggestions, setVehicleSuggestions] = useState({});
+  const showBlockingSpinner = loadingPricings || loadingSuggestions;
+
+  const routesSignature = useMemo(() => (
+    JSON.stringify(
+      quoteData.map(route => ({
+        ciudad_origen: route.ciudad_origen || '',
+        ciudad_destino: route.ciudad_destino || '',
+        peso_mercancia: route.peso_mercancia || 0,
+      }))
+    )
+  ), [quoteData]);
 
   useEffect(() => {
-    // Cargar pricings para cada ruta
+    if (!routesSignature) return;
     loadPricingsForRoutes();
-    generateVehicleSuggestions();
-  }, [quoteData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routesSignature]);
 
-  // Actualizar valores finales cuando se selecciona un pricing
-  useEffect(() => {
-    // No actualizar automáticamente para evitar loops
-  }, []);
+  
 
-  const loadPricingsForRoutes = async () => {
-    setLoading(true);
-    try {
-      // Simular carga de pricings - aquí iría la llamada real a la API
-      const mockPricings = quoteData.map((route, index) => [
-        {
-          id: `${index}-1`,
-          vehicle_type: 'Sencillo',
-          price: 350000 + (index * 50000)
-        },
-        {
-          id: `${index}-2`, 
-          vehicle_type: 'Turbo',
-          price: 450000 + (index * 60000)
-        },
-        {
-          id: `${index}-3`,
-          vehicle_type: 'Dobletroque',
-          price: 650000 + (index * 80000)
-        }
-      ]);
-      
-      setPricings(mockPricings);
-    } catch (error) {
-      console.error('Error loading pricings:', error);
-    } finally {
-      setLoading(false);
+const loadPricingsForRoutes = async () => {
+  setLoadingPricings(true);
+  try {
+    const responses = await Promise.all(
+      quoteData.map(route => {
+        if (!route.ciudad_origen || !route.ciudad_destino) return Promise.resolve([]);
+        return fetchLatestPricingsByRoute({
+          origin: route.ciudad_origen,
+          destination: route.ciudad_destino,
+        })
+          .then(({ data }) => data)
+          .catch(error => {
+            console.error('[PricingModal] Error loading pricing for route', route, error);
+            return [];
+          });
+      })
+    );
+    setPricings(responses);
+  } catch (error) {
+    console.error('[PricingModal] Error loading all pricings:', error);
+  } finally {
+    setLoadingPricings(false);
+  }
+};
+
+useEffect(() => {
+  if (loadingPricings) return;
+  if (!pricings.length) return;
+
+  const currentKey = JSON.stringify(pricings);
+  if (currentKey === suggestionsKey) return;
+
+  requestAISuggestions(currentKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [loadingPricings, pricings]);
+
+const requestAISuggestions = async (currentKey) => {
+  setLoadingSuggestions(true);
+  try {
+    const payload = {
+      routes: quoteData.map((route, index) => ({
+        ciudad_origen: route.ciudad_origen,
+        ciudad_destino: route.ciudad_destino,
+        peso_mercancia: route.peso_mercancia,
+        pricings: pricings[index] || [],
+      })),
+    };
+
+    const { data } = await fetchVehicleSuggestions(payload);
+    setVehicleSuggestions(data.suggestions || {});
+    setSuggestionsKey(currentKey);
+
+    autoSelectFromSuggestions(data.suggestions || {});
+  } catch (error) {
+    console.error('[PricingModal] Error getting AI suggestions:', error);
+  } finally {
+    setLoadingSuggestions(false);
+  }
+};
+
+
+
+const autoSelectFromSuggestions = (suggestions) => {
+  console.log('[PricingModal] Auto-select suggestions:', suggestions);
+  Object.entries(suggestions).forEach(([routeIndex, suggestion]) => {
+    const pricingForRoute = (pricings[routeIndex] || []).find(
+      p => p.vehicle_type === suggestion.vehicle_type
+    );
+
+    if (!pricingForRoute) {
+      console.warn(`[PricingModal] No pricing option matches AI suggestion for route ${routeIndex}`, suggestion, pricings[routeIndex]);
+      return;
     }
-  };
 
-  const generateVehicleSuggestions = () => {
-    // Generar sugerencias de vehículos basadas en el tipo de carga y peso
-    const suggestions = {};
-    quoteData.forEach((route, index) => {
-      const peso = parseInt(route.peso_mercancia) || 0;
-      let vehicle = 'Sencillo';
-      let bodywork = 'Furgón';
-      
-      if (peso > 10000) {
-        vehicle = 'Dobletroque';
-        bodywork = 'Estacas';
-      } else if (peso > 5000) {
-        vehicle = 'Turbo';
-        bodywork = 'Carpa';
-      }
-      
-      suggestions[index] = { vehicle, bodywork };
-    });
-    
-    setVehicleSuggestions(suggestions);
-  };
+    console.log(`[PricingModal] Auto-selecting route ${routeIndex}`, pricingForRoute);
+    handleVehicleSelect(Number(routeIndex), pricingForRoute.id);
+  });
+};
 
   const handleVehicleSelect = (routeIndex, pricingId) => {
-    const selectedPricing = pricings[routeIndex]?.find(p => p.id === pricingId);
-    if (selectedPricing) {
-      setSelectedPricings(prev => ({
-        ...prev,
-        [routeIndex]: selectedPricing
-      }));
-      
-      // Actualizar datos de la ruta
-      setQuoteData(prev => prev.map((route, index) => 
-        index === routeIndex 
-          ? { ...route, select_value: pricingId, vehiculo_requerido: selectedPricing.vehicle_type }
-          : route
-      ));
+    console.log('[PricingModal] handleVehicleSelect called', { routeIndex, pricingId });
+
+    const targetId = String(pricingId);
+    const selectedPricing = (pricings[routeIndex] || []).find(
+      p => String(p.id) === targetId
+    );
+
+    if (!selectedPricing) {
+      console.warn('[PricingModal] Selected pricing not found', { routeIndex, pricingId, pricings: pricings[routeIndex] });
+      return;
     }
+
+    console.log('[PricingModal] Selected pricing object:', selectedPricing);
+
+    setSelectedPricings(prev => ({
+      ...prev,
+      [routeIndex]: selectedPricing
+    }));
+
+    setQuoteData(prev => prev.map((route, index) => 
+      index === routeIndex 
+        ? { ...route, select_value: targetId, vehiculo_requerido: selectedPricing.vehicle_type }
+        : route
+    ));
   };
 
   const handleParameterChange = (routeIndex, parameterName, value) => {
@@ -266,8 +316,16 @@ const PricingModal = ({
           </div>
         </div>
       </div>
-
-      <div className="p-8 bg-gray-50">
+     
+      <div className="relative p-8 bg-gray-50">
+        {showBlockingSpinner && (
+            <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-3 text-orange-500">
+              <FaSpinner className="animate-spin text-3xl" />
+              <p className="text-sm font-semibold">
+                {loadingPricings ? 'Cargando tarifas...' : 'Calculando sugerencias IA...'}
+              </p>
+            </div>
+          )}
         {/* Header de información */}
         <div className="mb-8">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -374,13 +432,13 @@ const PricingModal = ({
                           {/* Sugerencia de la IA */}
                           {vehicleSuggestions[index] && (
                             <div className="text-xs mb-2 rounded bg-blue-50 text-blue-600 px-2 py-1">
-                              IA sugiere: <strong>{vehicleSuggestions[index].vehicle}</strong>
-                              <span className="text-gray-500"> / {vehicleSuggestions[index].bodywork}</span>
+                              IA sugiere: <strong>{vehicleSuggestions[index].vehicle_type}</strong>
+                              <span className="text-gray-500"> — {vehicleSuggestions[index].reason}</span>
                             </div>
                           )}
                           
                           {/* Selector de vehículo */}
-                          <select 
+                          {/* <select 
                             value={route.select_value || ''}
                             onChange={(e) => handleVehicleSelect(index, e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
@@ -389,6 +447,18 @@ const PricingModal = ({
                             {(pricings[index] || []).map(pricing => (
                               <option key={pricing.id} value={pricing.id}>
                                 {pricing.vehicle_type}
+                              </option>
+                            ))}
+                          </select> */}
+                          <select
+                            value={route.select_value || ''}
+                            onChange={(e) => handleVehicleSelect(index, e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                          >
+                            <option value="">Selecciona vehículo</option>
+                            {(pricings[index] || []).map(pricing => (
+                              <option key={pricing.id} value={pricing.id}>
+                                {pricing.vehicle_type} - ${Number(pricing.price).toLocaleString()}
                               </option>
                             ))}
                           </select>

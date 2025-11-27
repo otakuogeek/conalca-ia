@@ -28,6 +28,20 @@ use Illuminate\Support\Facades\Mail;
 use Spatie\Permission\Models\Role;
 use App\Http\Controllers\Api\GroupQuotationController;
 use App\Http\Controllers\Api\UserColumnController;
+use App\Http\Controllers\Api\PendingController;
+use App\Http\Controllers\Api\SolicitationController;
+use App\Http\Controllers\Api\MessageController;
+use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\Api\GoalController;
+use App\Http\Controllers\Api\CotizationNoteController;
+use App\Http\Controllers\Api\SacCotizationController;
+use App\Http\Controllers\Api\CallStatusController;
+use App\Http\Controllers\Api\CotizacionClienteController;
+use App\Http\Controllers\Api\CatalogController;
+
+use App\Http\Controllers\Api\SilogController;
+
+use Illuminate\Support\Facades\Log;
 
 // Endpoint para debugging del sistema
 Route::get('/debug-system-info', function (Request $request) {
@@ -151,20 +165,7 @@ Route::post('/simple-login', function (Request $request) {
         ], 500);
     }
 });
-use App\Http\Controllers\Api\PendingController;
-use App\Http\Controllers\Api\SolicitationController;
-use App\Http\Controllers\Api\MessageController;
-use App\Http\Controllers\Api\PricingController;
-use App\Http\Controllers\Api\GoalController;
-use App\Http\Controllers\Api\CotizationNoteController;
-use App\Http\Controllers\Api\SacCotizationController;
-use App\Http\Controllers\Api\CallStatusController;
-use App\Http\Controllers\Api\CotizacionClienteController;
-use App\Http\Controllers\Api\CatalogController;
 
-use App\Http\Controllers\Api\SilogController;
-
-use Illuminate\Support\Facades\Log;
 
 
 Route::get('/testEmail', function () {
@@ -714,7 +715,8 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
 
     Route::post('/pricings-solutions',  [PricingController::class,'store']);
     Route::put ('/pricings-solutions/{id}', [PricingController::class,'update']);
-
+    Route::get('/pricings-solutions/latest-by-route', [PricingController::class, 'latestByRoute']);
+    Route::post('/pricing-suggestions', [PricingController::class, 'suggestVehicles']);
 
     // GOALS
 
