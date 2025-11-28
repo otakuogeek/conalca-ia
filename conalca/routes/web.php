@@ -717,6 +717,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::put ('/pricings-solutions/{id}', [PricingController::class,'update']);
     Route::get('/pricings-solutions/latest-by-route', [PricingController::class, 'latestByRoute']);
     Route::post('/pricing-suggestions', [PricingController::class, 'suggestVehicles']);
+    Route::get('/pricing-rentability-stats', [PricingController::class, 'rentabilityStats']);
 
     // GOALS
 

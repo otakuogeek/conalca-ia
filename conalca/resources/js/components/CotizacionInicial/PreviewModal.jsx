@@ -73,23 +73,47 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     return parameters;
   };
 
-  const calculateRouteTotal = (route, index) => {
+  const buildRouteFinancials = (route, index) => {
     const pricing = selectedPricings[index];
-    if (!pricing || !route.porcentaje) return 0;
-    
-    const basePrice = pricing.price;
-    const porcentaje = route.porcentaje || 0;
-    const withMargin = basePrice + (basePrice * porcentaje / 100);
-    const acompanamiento = parseFloat(route.itesoltra_acompanamientovalor) || 0;
-    
-    // Agregar parámetros automáticos
+    if (!pricing) {
+      return {
+        pricing: null,
+        basePrice: 0,
+        porcentaje: Number(route.porcentaje) || 0,
+        parametersTotal: 0,
+        acompanamiento: Number(route.itesoltra_acompanamientovalor) || 0,
+        valueWithMargin: 0,
+        finalValue: 0,
+      };
+    }
+
+    const basePrice = Number(pricing.price) || 0;
+    const porcentaje = Number(route.porcentaje) || 0;
+    const acompanamiento = Number(route.itesoltra_acompanamientovalor) || 0;
+
     let parametersTotal = 0;
     const parameters = getAutomaticParameters(clientData);
     parameters.forEach(param => {
-      parametersTotal += parseFloat(route[param.name]) || 0;
+      parametersTotal += Number(route[param.name]) || 0;
     });
-    
-    return withMargin + acompanamiento + parametersTotal;
+
+    const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
+    const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+
+    return {
+      pricing,
+      basePrice,
+      porcentaje,
+      parametersTotal,
+      acompanamiento,
+      valueWithMargin,
+      finalValue,
+    };
+  };
+
+  const calculateRouteTotal = (route, index) => {
+    const { finalValue } = buildRouteFinancials(route, index);
+    return finalValue;
   };
 
   const calculateTotal = () => {
@@ -139,20 +163,15 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
       // Preparar los datos para el nuevo sistema de guardado
       const quotesToSave = quoteData.map((route, index) => {
-        const pricing = selectedPricings[index];
-        const basePrice = pricing ? pricing.price : 0;
-        const porcentaje = route.porcentaje || 0;
-        const baseWithMargin = basePrice + (basePrice * porcentaje / 100);
-        
-        // Calcular parámetros automáticos
-        let parametersTotal = 0;
-        const parameters = getAutomaticParameters(clientData);
-        parameters.forEach(param => {
-          parametersTotal += parseFloat(route[param.name]) || 0;
-        });
-        
-        const finalValue = baseWithMargin + parametersTotal;
-        
+        const {
+          pricing,
+          basePrice,
+          porcentaje,
+          parametersTotal,
+          acompanamiento,
+          finalValue,
+        } = buildRouteFinancials(route, index);
+
         return {
           ciudad_origen: String(route.ciudad_origen || ''),
           ciudad_destino: String(route.ciudad_destino || ''),
@@ -160,20 +179,24 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           tipo_producto: String(route.tipo_producto || ''),
           vehiculo_requerido: String(route.vehiculo_requerido || ''),
           valor_declarado: String(route.valor_declarado || ''),
-          finalValue: finalValue,
-          valor: finalValue, // Para el email (backend espera 'valor')
-          valor_final: finalValue, // Para el template del email
-          porcentaje: porcentaje,
+          porcentaje,
+          precio_base: basePrice,
+          valor_parametros: parametersTotal,
+          valor_acompanamiento: acompanamiento,
+          finalValue,
+          valor: finalValue,
+          valor_final: finalValue,
+          precio_pricing_id: pricing?.id ?? null,
           cantidad: String(route.cantidad || '1'),
           tipo_embajale: String(route.tipo_embajale || 'Bultos'),
           dimensiones_exactas: String(route.dimensiones_exactas || 'No especificado'),
           registro_fotografico: String(route.registro_fotografico || 'No requerido'),
-          // Incluir parámetros automáticos
-          candado_satelital: parseFloat(route.candado_satelital) || 0,
-          jen_set: parseFloat(route.jen_set) || 0,
-          combustible: parseFloat(route.combustible) || 0,
-          kit_derrames: parseFloat(route.kit_derrames) || 0,
-          pictogramas: parseFloat(route.pictogramas) || 0
+          candado_satelital: Number(route.candado_satelital) || 0,
+          jen_set: Number(route.jen_set) || 0,
+          combustible: Number(route.combustible) || 0,
+          kit_derrames: Number(route.kit_derrames) || 0,
+          pictogramas: Number(route.pictogramas) || 0,
+          itesoltra_acompanamientovalor: acompanamiento,
         };
       });
 
@@ -424,43 +447,24 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                     </thead>
                     <tbody>
                       {quoteData.map((route, index) => {
-                        const pricing = selectedPricings[index];
-                        const basePrice = pricing ? pricing.price : 0;
-                        const porcentaje = route.porcentaje || 0;
-                        const baseWithMargin = basePrice + (basePrice * porcentaje / 100);
-                        
-                        // Debug: Log para verificar datos
-                        console.log(`Ruta ${index + 1}:`, {
+                        const {
                           basePrice,
                           porcentaje,
-                          baseWithMargin,
-                          candado_satelital: route.candado_satelital,
-                          jen_set: route.jen_set,
-                          combustible: route.combustible,
-                          kit_derrames: route.kit_derrames,
-                          pictogramas: route.pictogramas
-                        });
-                        
-                        // Calcular parámetros automáticos
+                          parametersTotal,
+                          acompanamiento,
+                          valueWithMargin,
+                          finalValue,
+                        } = buildRouteFinancials(route, index);
+
                         const automaticParameters = getAutomaticParameters(clientData);
-                        let parametersTotal = 0;
-                        const activeParameters = [];
-                        
-                        automaticParameters.forEach(param => {
-                          const value = parseFloat(route[param.name]) || 0;
+                        const activeParameters = automaticParameters.reduce((list, param) => {
+                          const value = Number(route[param.name]) || 0;
                           if (value > 0) {
-                            parametersTotal += value;
-                            activeParameters.push({
-                              ...param,
-                              value: value
-                            });
+                            list.push({ ...param, value });
                           }
-                        });
-                        
-                        const finalValue = baseWithMargin + parametersTotal;
-                        
-                        console.log(`Ruta ${index + 1} - Total parámetros:`, parametersTotal, 'Valor final:', finalValue);
-                        
+                          return list;
+                        }, []);
+
                         return (
                           <tr key={index} className="bg-orange-50 hover:bg-orange-100 transition-colors duration-150">
                             <td className="border border-gray-200 px-2 py-2 text-center font-medium">{index + 1}</td>
@@ -476,12 +480,21 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                                       <div className="text-xs">${param.value.toLocaleString()}</div>
                                     </div>
                                   ))}
+                                  {acompanamiento > 0 && (
+                                    <div className="text-blue-600 text-[10px] font-medium">
+                                      Acompañamiento: ${acompanamiento.toLocaleString()}
+                                    </div>
+                                  )}
                                   <div className="text-[10px] text-gray-500 mt-1">
-                                    Total: ${parametersTotal.toLocaleString()}
+                                    Total: ${(parametersTotal + acompanamiento).toLocaleString()}
                                   </div>
                                 </div>
                               ) : (
-                                <span className="text-gray-400">-</span>
+                                <span className="text-gray-400">
+                                  {acompanamiento > 0
+                                    ? `Acompañamiento: $${acompanamiento.toLocaleString()}`
+                                    : '-'}
+                                </span>
                               )}
                             </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
@@ -489,9 +502,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                                 <div className="font-bold text-green-700">
                                   ${Number(finalValue).toLocaleString()}
                                 </div>
-                                {parametersTotal > 0 && (
+                                <div className="text-[10px] text-gray-500">
+                                  Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
+                                </div>
+                                {(parametersTotal + acompanamiento) > 0 && (
                                   <div className="text-[10px] text-gray-500">
-                                    Base: ${baseWithMargin.toLocaleString()} + Param: ${parametersTotal.toLocaleString()}
+                                    Parámetros/Acomp.: ${(parametersTotal + acompanamiento).toLocaleString()}
                                   </div>
                                 )}
                               </div>

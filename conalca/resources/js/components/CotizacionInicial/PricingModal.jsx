@@ -2,7 +2,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
-import { fetchLatestPricingsByRoute, fetchVehicleSuggestions } from '../../services/pricingService';
+import { 
+  fetchLatestPricingsByRoute,
+  fetchVehicleSuggestions,
+  fetchRentabilityStats
+ } from '../../services/pricingService';
 import { FaSpinner } from 'react-icons/fa';
 
 const PricingModal = ({ 
@@ -24,6 +28,13 @@ const PricingModal = ({
   const [suggestionsKey, setSuggestionsKey] = useState(null);
   const [errors, setErrors] = useState({});
   const [vehicleSuggestions, setVehicleSuggestions] = useState({});
+  const [initialPorcentajeApplied, setInitialPorcentajeApplied] = useState(false);
+  const [rentabilityDefaults, setRentabilityDefaults] = useState({
+    min: 17,
+    avg: 24,
+    max: 32,
+    scope: 'fallback',
+  });
   const showBlockingSpinner = loadingPricings || loadingSuggestions;
 
   const routesSignature = useMemo(() => (
@@ -39,10 +50,42 @@ const PricingModal = ({
   useEffect(() => {
     if (!routesSignature) return;
     loadPricingsForRoutes();
+    loadRentabilityStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routesSignature]);
 
-  
+  useEffect(() => {
+    if (
+      !initialPorcentajeApplied &&
+      rentabilityDefaults.min &&
+      rentabilityDefaults.min > 0
+    ) {
+      applyGlobalPorcentaje(rentabilityDefaults.min);
+      setInitialPorcentajeApplied(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rentabilityDefaults]);
+
+  const loadRentabilityStats = async () => {
+    // pick the first valid route as reference for the global cards
+    const referenceRoute = quoteData.find(route => route.ciudad_origen && route.ciudad_destino);
+
+    try {
+      const { data } = await fetchRentabilityStats({
+        origin: referenceRoute?.ciudad_origen,
+        destination: referenceRoute?.ciudad_destino,
+      });
+
+      setRentabilityDefaults({
+        min: data.min || 0,
+        avg: data.avg || 0,
+        max: data.max || 0,
+        scope: data.scope,
+      });
+    } catch (error) {
+      console.error('[PricingModal] Error loading rentability stats', error);
+    }
+  };
 
 const loadPricingsForRoutes = async () => {
   setLoadingPricings(true);
@@ -82,6 +125,7 @@ useEffect(() => {
 
 const requestAISuggestions = async (currentKey) => {
   setLoadingSuggestions(true);
+  
   try {
     const payload = {
       routes: quoteData.map((route, index) => ({
@@ -91,14 +135,19 @@ const requestAISuggestions = async (currentKey) => {
         pricings: pricings[index] || [],
       })),
     };
+    console.log('[PricingModal] Sending AI payload', payload);   // <--- add here
 
     const { data } = await fetchVehicleSuggestions(payload);
+
     setVehicleSuggestions(data.suggestions || {});
     setSuggestionsKey(currentKey);
 
     autoSelectFromSuggestions(data.suggestions || {});
   } catch (error) {
-    console.error('[PricingModal] Error getting AI suggestions:', error);
+    console.error('[PricingModal] Error getting AI suggestions:', {
+      error,
+      response: error?.response?.data,
+    }); // <--- existing log, keep it
   } finally {
     setLoadingSuggestions(false);
   }
@@ -242,20 +291,19 @@ const autoSelectFromSuggestions = (suggestions) => {
   const calculateFinalValue = (routeIndex) => {
     const route = quoteData[routeIndex];
     const pricing = selectedPricings[routeIndex];
-    
+
     if (!pricing || !route) return 0;
-    
-    const basePrice = pricing.price;
-    const porcentaje = route.porcentaje || 0;
-    const acompanamiento = parseFloat(route.itesoltra_acompanamientovalor) || 0;
-    
-    // Agregar costos de parámetros automáticos
+
+    const basePrice = Number(pricing.price) || 0;  // <-- force number
+    const porcentaje = Number(route.porcentaje) || 0;
+    const acompanamiento = Number(route.itesoltra_acompanamientovalor) || 0;
+
     let parametersTotal = 0;
     const parameters = getAutomaticParameters(route);
     parameters.forEach(param => {
-      parametersTotal += parseFloat(route[param.name]) || 0;
+      parametersTotal += Number(route[param.name]) || 0;
     });
-    
+
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
     return valueWithMargin + acompanamiento + parametersTotal;
   };
@@ -527,37 +575,34 @@ const autoSelectFromSuggestions = (suggestions) => {
 
           {/* Tarjetas de rentabilidad */}
           <div className="flex flex-row justify-between h-full space-x-4 w-2/5">
-            {/* Propuesta 1: 17% */}
             <RentabilityCard
               title="PROPUESTA #1"
-              subtitle="RENTABILIDAD MÍNIMA"
-              percentage={17}
-              isActive={porcentajeGlobal === 17}
-              onSelect={() => applyGlobalPorcentaje(17)}
+              subtitle={`RENTABILIDAD MÍNIMA (${rentabilityDefaults.scope === 'route' ? 'Ruta' : 'Global'})`}
+              percentage={rentabilityDefaults.min}
+              isActive={porcentajeGlobal === rentabilityDefaults.min}
+              onSelect={() => applyGlobalPorcentaje(rentabilityDefaults.min)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
               clientData={clientData}
             />
 
-            {/* Propuesta 2: 24% */}
             <RentabilityCard
               title="PROPUESTA #2"
               subtitle="RENTABILIDAD PROMEDIO"
-              percentage={24}
-              isActive={porcentajeGlobal === 24}
-              onSelect={() => applyGlobalPorcentaje(24)}
+              percentage={rentabilityDefaults.avg}
+              isActive={porcentajeGlobal === rentabilityDefaults.avg}
+              onSelect={() => applyGlobalPorcentaje(rentabilityDefaults.avg)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
               clientData={clientData}
             />
 
-            {/* Propuesta 3: 32% */}
             <RentabilityCard
               title="PROPUESTA #3"
-              subtitle="RENTABILIDAD MAYOR VENDIDA"
-              percentage={32}
-              isActive={porcentajeGlobal === 32}
-              onSelect={() => applyGlobalPorcentaje(32)}
+              subtitle="RENTABILIDAD MÁXIMA"
+              percentage={rentabilityDefaults.max}
+              isActive={porcentajeGlobal === rentabilityDefaults.max}
+              onSelect={() => applyGlobalPorcentaje(rentabilityDefaults.max)}
               quoteData={quoteData}
               selectedPricings={selectedPricings}
               clientData={clientData}
@@ -598,19 +643,20 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
     return Object.keys(selectedPricings).reduce((total, index) => {
       const pricing = selectedPricings[index];
       const route = quoteData[index];
+
       if (pricing && route) {
-        const basePrice = pricing.price;
+        const basePrice = Number(pricing.price) || 0;
         const withMargin = basePrice + (basePrice * percentage / 100);
-        
-        // Agregar parámetros automáticos
+
         let parametersTotal = 0;
         const parameters = getAutomaticParameters();
         parameters.forEach(param => {
-          parametersTotal += parseFloat(route[param.name]) || 0;
+          parametersTotal += Number(route[param.name]) || 0;
         });
-        
+
         return total + withMargin + parametersTotal;
       }
+
       return total;
     }, 0);
   };
@@ -697,16 +743,15 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
               let finalRoutePrice = 0;
               
               if (pricing) {
-                const basePrice = pricing.price;
+                const basePrice = Number(pricing.price) || 0;
                 const withMargin = basePrice + (basePrice * percentage / 100);
-                
-                // Agregar parámetros automáticos
+
                 let parametersTotal = 0;
                 const parameters = getAutomaticParameters();
                 parameters.forEach(param => {
-                  parametersTotal += parseFloat(route[param.name]) || 0;
+                  parametersTotal += Number(route[param.name]) || 0;
                 });
-                
+
                 finalRoutePrice = withMargin + parametersTotal;
               }
               

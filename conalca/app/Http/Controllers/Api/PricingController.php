@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Pricing;
+use App\Models\CotizacionModel;
 use App\Models\Solicitation;
 use Illuminate\Support\Facades\Log;
 use OpenAI\Laravel\Facades\OpenAI;
@@ -54,6 +55,27 @@ class PricingController extends Controller
 
     public function suggestVehicles(Request $request)
     {
+        Log::info('[PricingController] suggestVehicles called', [
+            'request_data' => $request->all(),
+        ]);
+
+        // Normalize "" weights to null before validating
+        $normalizedRoutes = collect($request->input('routes', []))->map(function ($route) {
+            $route['pricings'] = collect($route['pricings'] ?? [])->map(function ($pricing) {
+                $pricing['weight'] = $pricing['weight'] === '' ? null : $pricing['weight'];
+                return $pricing;
+            })->all();
+            return $route;
+        })->all();
+
+        // Overwrite the request payload so the validator sees the normalized data
+        $request->merge(['routes' => $normalizedRoutes]);
+
+        Log::info('[PricingController] Routes after normalization', [
+            'routes' => $normalizedRoutes,
+        ]);
+
+        // Validate
         $validated = $request->validate([
             'routes' => 'required|array',
             'routes.*.ciudad_origen'   => 'required|string',
@@ -62,11 +84,21 @@ class PricingController extends Controller
             'routes.*.pricings'        => 'array',
             'routes.*.pricings.*.vehicle_type' => 'required|string',
             'routes.*.pricings.*.price'        => 'required|numeric',
+            'routes.*.pricings.*.weight'       => 'nullable|numeric',
         ]);
 
+        Log::info('[PricingController] Validation passed', ['validated' => $validated]);
+
+        // Build prompt
         $prompt = $this->buildPrompt($validated['routes']);
+        Log::info('[PricingController] Prompt built', ['prompt' => $prompt]);
 
         try {
+            Log::info('[PricingController] Sending request to OpenAI', [
+                'model' => 'gpt-4o-mini',
+                'routes_count' => count($validated['routes']),
+            ]);
+
             $response = OpenAI::chat()->create([
                 'model' => 'gpt-4o-mini',
                 'messages' => [
@@ -75,8 +107,15 @@ class PricingController extends Controller
                 ],
                 'response_format' => ['type' => 'json_object'],
             ]);
+
+            Log::info('[PricingController] OpenAI response received', [
+                'response_meta' => [
+                    'usage' => $response->usage ?? null,
+                    'choices_count' => count($response->choices ?? []),
+                ],
+            ]);
         } catch (\Throwable $e) {
-            \Log::error('[PricingController] OpenAI call failed', [
+            Log::error('[PricingController] OpenAI call failed', [
                 'message' => $e->getMessage(),
                 'trace'   => $e->getTraceAsString(),
             ]);
@@ -85,17 +124,23 @@ class PricingController extends Controller
             ], 500);
         }
 
+        // Raw content
         $content = $response->choices[0]->message->content ?? '';
-        \Log::debug('[PricingController] Raw OpenAI content', ['content' => $content]);
+        Log::info('[PricingController] Raw OpenAI content', ['content' => $content]);
 
         $suggestions = json_decode($content, true);
+        Log::info('[PricingController] Parsed suggestions', ['suggestions' => $suggestions]);
 
         if (!$suggestions || !isset($suggestions['suggestions'])) {
-            \Log::warning('[PricingController] Invalid AI response', ['content' => $content]);
+            Log::warning('[PricingController] Invalid AI response', ['content' => $content]);
             return response()->json([
                 'message' => 'Invalid AI response format',
             ], 500);
         }
+
+        Log::info('[PricingController] Returning suggestions', [
+            'suggestions_count' => count($suggestions['suggestions']),
+        ]);
 
         return response()->json($suggestions);
     }
@@ -109,18 +154,59 @@ class PricingController extends Controller
                 'route_index' => $index,
                 'origin'      => $route['ciudad_origen'],
                 'destination' => $route['ciudad_destino'],
-                'weight'      => $route['peso_mercancia'] ?? 0,
+                'cargo_weight'=> $route['peso_mercancia'] ?? 0,
                 'options'     => array_map(function ($pricing) {
                     return [
                         'vehicle_type' => $pricing['vehicle_type'],
                         'price'        => $pricing['price'],
+                        'max_load_kg'  => $pricing['weight'] ?? null,
                     ];
                 }, $route['pricings'] ?? []),
             ];
         }
 
-        return 'Given these route options: ' . json_encode($payload) . '. '
-            . 'Pick the best vehicle_type for each route considering weight and price. '
-            . 'Respond as JSON: { "suggestions": { "<route_index>": { "vehicle_type": "...", "reason": "..." } } }';
+        $routesJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
+
+        return 'Given these routes and vehicle options (each option includes price and max_load_kg) '
+            . 'decide the best vehicle_type for each route so that the cargo weight never exceeds max_load_kg. '
+            . 'If the cargo is heavier, prefer the option that minimizes the number of trips or combine multiple trips. '
+            . 'Respond as JSON: { "suggestions": { "<route_index>": { "vehicle_type": "...", "reason": "..." } } }. '
+            . 'Routes payload: ' . $routesJson;
+    }
+
+    public function rentabilityStats(Request $request)
+    {
+        $validated = $request->validate([
+            'origin'      => 'nullable|string',
+            'destination' => 'nullable|string',
+        ]);
+
+        $baseQuery = CotizacionModel::query()
+            ->whereNotNull('porcentaje');
+
+        $queryToUse = $baseQuery->clone();
+        $scope = 'global';
+
+        if (!empty($validated['origin']) && !empty($validated['destination'])) {
+            $routeQuery = (clone $baseQuery)
+                ->where('ciudad_origen', $validated['origin'])
+                ->where('ciudad_destino', $validated['destination']);
+
+            if ($routeQuery->exists()) {
+                $queryToUse = $routeQuery;
+                $scope = 'route';
+            }
+        }
+
+        $stats = $queryToUse
+            ->selectRaw('MIN(porcentaje) as min_porcentaje, MAX(porcentaje) as max_porcentaje, AVG(porcentaje) as avg_porcentaje')
+            ->first();
+
+        return response()->json([
+            'scope'       => $scope, // "route" if it found data for that route, otherwise "global"
+            'min'         => round($stats->min_porcentaje ?? 0, 2),
+            'max'         => round($stats->max_porcentaje ?? 0, 2),
+            'avg'         => round($stats->avg_porcentaje ?? 0, 2),
+        ]);
     }
 }

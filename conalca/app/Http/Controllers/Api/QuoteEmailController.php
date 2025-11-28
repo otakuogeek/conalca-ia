@@ -105,8 +105,8 @@ class QuoteEmailController extends Controller
                 
                 // Asesor
                 'asesor_name'           => $emailData['asesor_name'] ?? 'Asesor Comercial',
-                'asesor_phone'          => $emailData['asesor_phone'] ?? '',
-                'asesor_email'          => $emailData['asesor_email'] ?? 'sebastianmarketing6@gmail.com',
+                'asesor_phone'  => $emailData['asesor_phone'] ?? optional(auth()->user())->phone ?? '',
+                'asesor_email'  => $emailData['asesor_email'] ?? optional(auth()->user())->email ?? '',
                 'asesor_pbx'            => '',
                 'asesor_ubicacion'      => '',
                 'advisor_signature'     => null,

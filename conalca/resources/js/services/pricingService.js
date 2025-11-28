@@ -18,3 +18,9 @@ export const fetchVehicleSuggestions = (routesPayload) =>
   axios.post('/pricing-suggestions', routesPayload, {
     headers: { 'X-CSRF-TOKEN': getCsrfToken() },
   });
+
+export const fetchRentabilityStats = ({ origin, destination }) =>
+  axios.get('/pricing-rentability-stats', {
+    params: { origin, destination },
+    headers: { 'X-CSRF-TOKEN': getCsrfToken() },
+  });
