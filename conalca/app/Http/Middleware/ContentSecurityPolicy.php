@@ -44,6 +44,9 @@ class ContentSecurityPolicy
             return $next($request);
         }
 
+        // Check if Vite dev server is running (hot file exists)
+        $viteDevRunning = file_exists(public_path('hot'));
+
         $response = $next($request);
 
         $scriptSrc = [
@@ -73,6 +76,25 @@ class ContentSecurityPolicy
             "*.jsdelivr.net",
             "*.cloudflare.com",
         ];
+
+        // If Vite dev server is running, add localhost:5173 and network IP
+        if ($viteDevRunning) {
+            $viteUrls = [
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://0.0.0.0:5173",
+                "ws://localhost:5173",
+                "ws://127.0.0.1:5173",
+                "ws://0.0.0.0:5173",
+                "http://172.31.18.72:5173",
+                "ws://172.31.18.72:5173",
+                "http://13.56.4.123:5173",
+                "ws://13.56.4.123:5173",
+            ];
+            $scriptSrc = array_merge($scriptSrc, $viteUrls);
+            $styleSrc = array_merge($styleSrc, $viteUrls);
+            $connectSrc = array_merge($connectSrc, $viteUrls);
+        }
 
         $imgSrc = [
             "'self'",

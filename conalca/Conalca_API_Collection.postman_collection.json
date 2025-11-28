@@ -1,0 +1,1467 @@
+{
+	"info": {
+		"_postman_id": "conalca-api-collection-2025",
+		"name": "Conalca IA Transport API",
+		"description": "Colección completa de APIs para el sistema Conalca IA Transport - Gestión de transporte, cotizaciones, conductores y más",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{access_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://conalcaia.conalca.com.co/api",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_email",
+			"value": "DonDavidNavarro@conalca.com",
+			"type": "string"
+		},
+		{
+			"key": "user_password",
+			"value": "123456789",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Autenticación",
+			"item": [
+				{
+					"name": "Login - Obtener Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('access_token', jsonData.access_token);",
+									"    pm.environment.set('access_token', jsonData.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"{{user_email}}\",\n    \"password\": \"{{user_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": "Autenticar usuario y obtener token Bearer. Requiere rol API_PRICING."
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Usuario Actual",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/users/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"users",
+								"me"
+							]
+						},
+						"description": "Obtener información del usuario autenticado"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2. Pricings (Tarifas)",
+			"item": [
+				{
+					"name": "Listar Todos los Pricings",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/pricings",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings"
+							]
+						},
+						"description": "Obtener listado completo de tarifas"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Pricing por ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/pricings/21629",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"21629"
+							]
+						},
+						"description": "Obtener pricing específico por ID"
+					},
+					"response": []
+				},
+				{
+					"name": "Crear Pricing",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"vehicle_type\": \"RÍGIDO\",\n    \"origin\": \"BOGOTÁ\",\n    \"destination\": \"CALI\",\n    \"weight\": \"1000\",\n    \"price\": \"450000\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricings",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings"
+							]
+						},
+						"description": "Crear nueva tarifa"
+					},
+					"response": []
+				},
+				{
+					"name": "Actualizar Pricing",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"price\": \"480000\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricings/21629",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"21629"
+							]
+						},
+						"description": "Actualizar tarifa existente"
+					},
+					"response": []
+				},
+				{
+					"name": "Eliminar Pricing",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/pricings/21629",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"21629"
+							]
+						},
+						"description": "Eliminar tarifa"
+					},
+					"response": []
+				},
+				{
+					"name": "Crear Múltiples Pricings (Bulk)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pricings\": [\n        {\n            \"vehicle_type\": \"RÍGIDO\",\n            \"origin\": \"BOGOTÁ\",\n            \"destination\": \"MEDELLÍN\",\n            \"weight\": \"800\",\n            \"price\": \"350000\"\n        },\n        {\n            \"vehicle_type\": \"TRACTOMULA\",\n            \"origin\": \"BOGOTÁ\",\n            \"destination\": \"BARRANQUILLA\",\n            \"weight\": \"2000\",\n            \"price\": \"650000\"\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricings/bulk",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"bulk"
+							]
+						},
+						"description": "Crear múltiples tarifas en una sola petición"
+					},
+					"response": []
+				},
+				{
+					"name": "Actualizar Múltiples Pricings (Bulk)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"updates\": [\n        {\n            \"id\": 21629,\n            \"price\": \"130000\"\n        },\n        {\n            \"id\": 21630,\n            \"price\": \"140000\"\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricings/bulk",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"bulk"
+							]
+						},
+						"description": "Actualizar múltiples tarifas"
+					},
+					"response": []
+				},
+				{
+					"name": "Eliminar Múltiples Pricings (Bulk)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"ids\": [21629, 21630, 21631]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pricings/bulk",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"pricings",
+								"bulk"
+							]
+						},
+						"description": "Eliminar múltiples tarifas"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "3. Arcangel - Conductores",
+			"item": [
+				{
+					"name": "Health Check Arcangel",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/arcangel/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"health"
+							]
+						},
+						"description": "Verificar estado de conexión con API Arcangel"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Ciudades",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/arcangel/ciudades",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"ciudades"
+							]
+						},
+						"description": "Obtener listado de ciudades disponibles"
+					},
+					"response": []
+				},
+				{
+					"name": "Vehículos Cercanos",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/arcangel/vehiculos/cercanos?ciudad=FUNZA",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"vehiculos",
+								"cercanos"
+							],
+							"query": [
+								{
+									"key": "ciudad",
+									"value": "FUNZA"
+								}
+							]
+						},
+						"description": "Obtener vehículos cercanos a una ciudad"
+					},
+					"response": []
+				},
+				{
+					"name": "Buscar Conductores",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"ciudad_origen\": \"BOGOTÁ\",\n    \"ciudad_destino\": \"MEDELLÍN\",\n    \"peso_mercancia\": 800,\n    \"clase_vehiculo\": \"RIGIDO\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/arcangel/buscar-conductores",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"buscar-conductores"
+							]
+						},
+						"description": "Buscar conductores disponibles para una ruta"
+					},
+					"response": []
+				},
+				{
+					"name": "Filtrar Vehículos",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/arcangel/vehiculos/filtrar?ciudad=BOGOTÁ&clase=RIGIDO&capacidad_min=800",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"vehiculos",
+								"filtrar"
+							],
+							"query": [
+								{
+									"key": "ciudad",
+									"value": "BOGOTÁ"
+								},
+								{
+									"key": "clase",
+									"value": "RIGIDO"
+								},
+								{
+									"key": "capacidad_min",
+									"value": "800"
+								}
+							]
+						},
+						"description": "Filtrar vehículos por criterios específicos"
+					},
+					"response": []
+				},
+				{
+					"name": "Llamar a Conductor",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conductor_id\": 12345,\n    \"telefono\": \"+573001234567\",\n    \"cotizacion_id\": 100\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/arcangel/llamar-conductor",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"arcangel",
+								"llamar-conductor"
+							]
+						},
+						"description": "Iniciar llamada a un conductor específico"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "4. Chat IA - Asistente Inteligente",
+			"item": [
+				{
+					"name": "Chat Simple",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"message\": \"Necesito cotizar un envío de Bogotá a Cali\",\n    \"thread_id\": null\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/chat/simple",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"chat",
+								"simple"
+							]
+						},
+						"description": "Chat básico con IA"
+					},
+					"response": []
+				},
+				{
+					"name": "Chat para Cotización",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"message\": \"Quiero enviar 800 kilos de mercancía de Bogotá a Medellín\",\n    \"thread_id\": null,\n    \"context\": {\n        \"tipo_servicio\": \"carga\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/chat/quote",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"chat",
+								"quote"
+							]
+						},
+						"description": "Chat especializado para crear cotizaciones"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Mensajes de Thread",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/chat/messages/thread_abc123",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"chat",
+								"messages",
+								"thread_abc123"
+							]
+						},
+						"description": "Obtener historial de mensajes de una conversación"
+					},
+					"response": []
+				},
+				{
+					"name": "Limpiar Thread (Nueva Cotización)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/chat/clear-thread",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"chat",
+								"clear-thread"
+							]
+						},
+						"description": "Limpiar thread de OpenAI para iniciar nueva cotización"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "5. Clientes",
+			"item": [
+				{
+					"name": "Buscar Clientes",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/clients/search?q=conalca",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"clients",
+								"search"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "conalca"
+								}
+							]
+						},
+						"description": "Búsqueda de clientes por nombre o razón social"
+					},
+					"response": []
+				},
+				{
+					"name": "Buscar por Documento",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/clients/search-by-document?document=900123456",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"clients",
+								"search-by-document"
+							],
+							"query": [
+								{
+									"key": "document",
+									"value": "900123456"
+								}
+							]
+						},
+						"description": "Buscar cliente por número de documento"
+					},
+					"response": []
+				},
+				{
+					"name": "Asignar Usuario a Cliente",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"client_id\": 1,\n    \"user_id\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/clients/assign",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"clients",
+								"assign"
+							]
+						},
+						"description": "Asignar un usuario comercial a un cliente"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Usuarios Asignados",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/clients/1/assigned-users",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"clients",
+								"1",
+								"assigned-users"
+							]
+						},
+						"description": "Obtener usuarios asignados a un cliente"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "6. Llamadas a Conductores",
+			"item": [
+				{
+					"name": "Iniciar Llamadas (Grupo)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"group_id\": 100,\n    \"max_drivers\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/call-drivers-group",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"call-drivers-group"
+							]
+						},
+						"description": "Iniciar llamadas a conductores por grupo de cotización"
+					},
+					"response": []
+				},
+				{
+					"name": "Llamadas Asíncronas (No Bloqueante)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"group_id\": 100\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/call-drivers-group-async",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"call-drivers-group-async"
+							]
+						},
+						"description": "Iniciar llamadas en modo asíncrono para evitar timeouts"
+					},
+					"response": []
+				},
+				{
+					"name": "Estado de Llamadas Grupo",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/call-drivers-group-status?group_id=100",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"call-drivers-group-status"
+							],
+							"query": [
+								{
+									"key": "group_id",
+									"value": "100"
+								}
+							]
+						},
+						"description": "Consultar estado de llamadas de un grupo"
+					},
+					"response": []
+				},
+				{
+					"name": "Llamada Directa a Número",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"phone\": \"+573001234567\",\n    \"cotizacion_id\": 100,\n    \"conductor_nombre\": \"Juan Pérez\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/make-direct-call",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"make-direct-call"
+							]
+						},
+						"description": "Realizar llamada directa a un número específico"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Decisiones de Conductores",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/driver-decisions?cotizacion_id=100",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"driver-decisions"
+							],
+							"query": [
+								{
+									"key": "cotizacion_id",
+									"value": "100"
+								}
+							]
+						},
+						"description": "Obtener respuestas de conductores (aceptado/rechazado)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "7. Cotizaciones",
+			"item": [
+				{
+					"name": "Crear Grupo de Cotización",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"client_id\": 1,\n    \"origen\": \"BOGOTÁ\",\n    \"destino\": \"MEDELLÍN\",\n    \"peso\": 800,\n    \"tipo_vehiculo\": \"RIGIDO\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/chat/quote/create-group",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"chat",
+								"quote",
+								"create-group"
+							]
+						},
+						"description": "Crear nuevo grupo de cotización con parámetros automáticos"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Grupo de Cotización",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/grupo-cotizacion/100",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"grupo-cotizacion",
+								"100"
+							]
+						},
+						"description": "Obtener detalles completos de un grupo de cotización"
+					},
+					"response": []
+				},
+				{
+					"name": "Eliminar Grupo de Cotización",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/cotizacion/grupos/100",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"cotizacion",
+								"grupos",
+								"100"
+							]
+						},
+						"description": "Eliminar un grupo de cotización"
+					},
+					"response": []
+				},
+				{
+					"name": "Enviar Cotización por Email",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"group_id\": 100,\n    \"email\": \"cliente@empresa.com\",\n    \"message\": \"Adjunto cotización solicitada\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/send-quote-email",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"send-quote-email"
+							]
+						},
+						"description": "Enviar cotización por correo electrónico"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "8. Catálogos",
+			"item": [
+				{
+					"name": "Empaques",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/catalog/packing",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"catalog",
+								"packing"
+							]
+						},
+						"description": "Obtener catálogo de tipos de empaque"
+					},
+					"response": []
+				},
+				{
+					"name": "Clases de Vehículos",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/catalog/vehicle-class",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"catalog",
+								"vehicle-class"
+							]
+						},
+						"description": "Obtener catálogo de clases de vehículos"
+					},
+					"response": []
+				},
+				{
+					"name": "Carrocerías",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/catalog/bodywork",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"catalog",
+								"bodywork"
+							]
+						},
+						"description": "Obtener catálogo de tipos de carrocería"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "9. Análisis y Estadísticas",
+			"item": [
+				{
+					"name": "Datos de Análisis",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/analysis/data",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"analysis",
+								"data"
+							]
+						},
+						"description": "Obtener datos para análisis y reportes"
+					},
+					"response": []
+				},
+				{
+					"name": "Datos de Mapa",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/analysis/map-data",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"analysis",
+								"map-data"
+							]
+						},
+						"description": "Obtener datos geográficos para visualización en mapas"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "10. Goals (Metas)",
+			"item": [
+				{
+					"name": "Listar Metas",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/goals",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"goals"
+							]
+						},
+						"description": "Obtener listado de metas"
+					},
+					"response": []
+				},
+				{
+					"name": "Mi Meta",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/my-goal",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"my-goal"
+							]
+						},
+						"description": "Obtener meta del usuario actual"
+					},
+					"response": []
+				},
+				{
+					"name": "Actualizar Meta",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"target_amount\": 50000000,\n    \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/goals/1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"goals",
+								"1"
+							]
+						},
+						"description": "Actualizar una meta"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "11. Solicitudes de Transporte",
+			"item": [
+				{
+					"name": "Guardar Parcialmente",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"step\": 1,\n    \"data\": {\n        \"origen\": \"BOGOTÁ\",\n        \"destino\": \"MEDELLÍN\",\n        \"fecha_cargue\": \"2025-12-01\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/solicitud-transporte/guardar-parcial",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"solicitud-transporte",
+								"guardar-parcial"
+							]
+						},
+						"description": "Guardar progreso de solicitud paso a paso"
+					},
+					"response": []
+				},
+				{
+					"name": "Prellenar desde Grupo",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/solicitud-transporte/prefill-from-group/100",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"solicitud-transporte",
+								"prefill-from-group",
+								"100"
+							]
+						},
+						"description": "Obtener datos para prellenar desde grupo de cotización"
+					},
+					"response": []
+				},
+				{
+					"name": "Obtener Solicitud",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/solicitud-transporte/1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"solicitud-transporte",
+								"1"
+							]
+						},
+						"description": "Obtener solicitud de transporte completa"
+					},
+					"response": []
+				},
+				{
+					"name": "Enviar a Silogtran",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/solicitud-transporte/1/enviar-silogtran",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"solicitud-transporte",
+								"1",
+								"enviar-silogtran"
+							]
+						},
+						"description": "Enviar solicitud al sistema Silogtran"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "12. Búsqueda de Empresas",
+			"item": [
+				{
+					"name": "Buscar Empresas",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/companies/search?q=Conalca",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"companies",
+								"search"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "Conalca"
+								}
+							]
+						},
+						"description": "Búsqueda en tiempo real de empresas"
+					},
+					"response": []
+				},
+				{
+					"name": "Búsqueda Legacy",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/search/companies?q=transportes",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"search",
+								"companies"
+							],
+							"query": [
+								{
+									"key": "q",
+									"value": "transportes"
+								}
+							]
+						},
+						"description": "Endpoint legacy de búsqueda de empresas"
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

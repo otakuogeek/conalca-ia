@@ -2,7 +2,18 @@ import { defineConfig } from "vite";
 import laravel from "laravel-vite-plugin";
 import react from '@vitejs/plugin-react';
 
+// Configuración específica para desarrollo
+// No afecta producción
 export default defineConfig({
+    server: {
+        host: '0.0.0.0',
+        port: 5173,
+        strictPort: true,
+        hmr: {
+            host: 'localhost',
+            port: 5173,
+        },
+    },
     plugins: [
         laravel({
             input: [
@@ -22,36 +33,4 @@ export default defineConfig({
         }),
         react(),
     ],
-    build: {
-        rollupOptions: {
-            output: {
-                manualChunks: {
-                    vendor: ['react', 'react-dom'],
-                    ui: ['@fortawesome/fontawesome-free'],
-                },
-            },
-        },
-        chunkSizeWarningLimit: 1000,
-        minify: 'terser',
-        terserOptions: {
-            compress: {
-                drop_console: true,
-                drop_debugger: true,
-            },
-        },
-    },
-    server: {
-        host: '0.0.0.0',
-        port: 5173,
-        strictPort: true,
-        hmr: {
-            host: '13.56.4.123',
-            port: 5173,
-            protocol: 'ws',
-            overlay: false,
-        },
-    },
-    optimizeDeps: {
-        include: ['react', 'react-dom', 'react-router-dom'],
-    },
 });
