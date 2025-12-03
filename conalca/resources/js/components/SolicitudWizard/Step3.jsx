@@ -14,19 +14,58 @@ import {
   FiChevronRight    // botón siguiente
 } from 'react-icons/fi';
 
+const DebugInspector = ({ form, formData, data, show }) => {
+  if (!show) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
+      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step1 snapshot</h3>
+
+      <div>
+        <p className="text-red-200 font-medium">form (local state)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(form, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">formData (wizard cache)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(formData, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">data (prefill/localData)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
+const buildStep3State = (formData = {}, cargue = {}) => ({
+  fecha_cargue         : formData.fecha_cargue         || cargue.fecha_cargue         || '',
+  hora_cargue          : formData.hora_cargue          || cargue.hora_cargue          || '',
+  remitente            : formData.remitente            || cargue.remitente            || '',
+  destinario           : formData.destinario ?? formData.destinatario ?? cargue.destinario ?? cargue.destinatario ?? '',
+  contacto             : formData.contacto             || cargue.contacto             || '',
+  promesa_servicio     : formData.promesa_servicio     || cargue.promesa_servicio     || '',
+  documento_transporte : formData.documento_transporte || cargue.documento_transporte || '',
+  observacion_cargue   : formData.observacion_cargue   || cargue.observacion_cargue   || ''
+});
+
 export default function Step3({ data = {}, formData = {}, onNext, onPrev, loading }) {
   const c = data.cargue || {};
+  
+  const [showDebug, setShowDebug] = useState(false);
+  const [form, setForm] = useState(buildStep3State(formData, c));
 
-  const [form, setForm] = useState({
-    fecha_cargue        : formData.fecha_cargue         || c.fecha_cargue         || '',
-    hora_cargue         : formData.hora_cargue          || c.hora_cargue          || '',
-    remitente           : formData.remitente            || c.remitente            || '',
-    destinatario        : formData.destinatario         || c.destinatario         || '',
-    contacto            : formData.contacto             || c.contacto             || '',
-    promesa_servicio    : formData.promesa_servicio     || c.promesa_servicio     || '',
-    documento_transporte: formData.documento_transporte || c.documento_transporte || '',
-    observacion_cargue  : formData.observacion_cargue   || c.observacion_cargue   || ''
-  });
+  useEffect(() => {
+    setForm(buildStep3State(formData, data.cargue || {}));
+  }, [formData, data]);
+  
 
   /* chat → auto-fill */
   useEffect(() => {
@@ -113,12 +152,21 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
           >
             <FiUserCheck className="text-orange-500" /> Destinatario
           </label>
-          <input
+          {/* <input
             id="destinatario"
             name="destinatario"
             value={form.destinatario}
             onChange={change}
             className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            placeholder="Destinatario"
+            required
+          /> */}
+          <input
+            id="destinario"
+            name="destinario"
+            value={form.destinario}
+            onChange={change}
+            className="…"
             placeholder="Destinatario"
             required
           />
@@ -220,6 +268,23 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
           {loading ? 'Guardando…' : <>Siguiente <FiChevronRight /></>}
         </button>
       </div>
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        <DebugInspector
+          show={showDebug}
+          form={form}
+          formData={formData}
+          data={data}
+        />
+      </div> */}
     </form>
   );
 }

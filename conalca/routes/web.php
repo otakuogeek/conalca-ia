@@ -737,7 +737,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::middleware('auth')->group(function () {
         Route::get('/quotes-news-alerts', function () {
             return view('cotizations.index');
-        })->name('cotizations.index');
+        })->name('alertsnews.index');
     });
 
     Route::prefix('cotizations')->group(function () {
@@ -809,6 +809,12 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             Route::delete('/{id}', [App\Http\Controllers\ConductorController::class, 'destroy']);
             Route::patch('/{id}/status', [App\Http\Controllers\ConductorController::class, 'changeStatus']);
         });
+    });
+
+    // Módulo de Vehículos (Solo SUPER ADMIN y SAC)
+    Route::middleware(['auth'])->group(function () {
+        Route::get('/vehiculos', [App\Http\Controllers\VehiculoController::class, 'index'])->name('vehiculos.index');
+        Route::get('/vehiculos/sincronizar', [App\Http\Controllers\VehiculoController::class, 'sincronizar'])->name('vehiculos.sincronizar');
     });
 
 // ═══════════════════════════════════════════════════════════════

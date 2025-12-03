@@ -22,26 +22,84 @@ import {
   FiLoader
 } from 'react-icons/fi';
 
+// helper to build the state consistently
+const buildStep1State = (formData = {}, data = {}) => ({
+  tipo_viaje            : formData.tipo_viaje            || data.tipo_viaje            || '',
+  moneda                : formData.moneda                || data.moneda                || '',
+  fuente_solicitud      : formData.fuente_solicitud      || data.fuente_solicitud      || '',
+  condicion_despacho    : formData.condicion_despacho    || data.condicion_despacho    || '',
+  condicion_facturacion : formData.condicion_facturacion || data.condicion_facturacion || '',
+  ciudad_facturacion        : formData.ciudad_facturacion        || data.ciudad_facturacion        || '',
+  ciudad_facturacion_label  : formData.ciudad_facturacion_label  || data.ciudad_facturacion_label  || '',
+  vendedor                  : formData.vendedor                  || data.vendedor                  || '',
+  vendedor_label            : formData.vendedor_label            || data.vendedor_label            || '',
+  cliente_codigo            : formData.cliente_codigo            || data.cliente_codigo            || '',
+  cliente_nombre            : formData.cliente_nombre            || data.cliente_nombre            || '',
+  tipo_operacion         : formData.tipo_operacion        || data.tipo_operacion        || '',
+  centro_costo_despacho  : formData.centro_costo_despacho || data.centro_costo_despacho || ''
+});
+
+const DebugInspector = ({ form, formData, data, show }) => {
+  if (!show) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
+      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step1 snapshot</h3>
+
+      <div>
+        <p className="text-red-200 font-medium">form (local state)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(form, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">formData (wizard cache)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(formData, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">data (prefill/localData)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
 export default function Step1({ data = {}, formData = {}, onNext, loading }) {
-  const [form, setForm] = useState({
-    tipo_viaje            : formData.tipo_viaje            || data.tipo_viaje            || '',
-    moneda                : formData.moneda                || data.moneda                || '',
-    fuente_solicitud      : formData.fuente_solicitud      || data.fuente_solicitud      || '',
-    condicion_despacho    : formData.condicion_despacho    || data.condicion_despacho    || '',
-    condicion_facturacion : formData.condicion_facturacion || data.condicion_facturacion || '',
-    /* combos dinámicos -------------------------------- */
-    ciudad_facturacion        : formData.ciudad_facturacion        || data.ciudad_facturacion        || '',
-    ciudad_facturacion_label  : formData.ciudad_facturacion_label  || data.ciudad_facturacion_label  || '',
-    vendedor                  : formData.vendedor                  || data.vendedor                  || '',
-    vendedor_label            : formData.vendedor_label            || data.vendedor_label            || '',
-    cliente_codigo            : formData.cliente_codigo            || data.cliente_codigo            || '',
-    cliente_nombre            : formData.cliente_nombre            || data.cliente_nombre            || '',
-    /* -------------------------------------------------- */
-    tipo_operacion         : formData.tipo_operacion        || data.tipo_operacion        || '',
-    centro_costo_despacho  : formData.centro_costo_despacho || data.centro_costo_despacho || ''
-  });
+  // const [form, setForm] = useState({
+  //   tipo_viaje            : formData.tipo_viaje            || data.tipo_viaje            || '',
+  //   moneda                : formData.moneda                || data.moneda                || '',
+  //   fuente_solicitud      : formData.fuente_solicitud      || data.fuente_solicitud      || '',
+  //   condicion_despacho    : formData.condicion_despacho    || data.condicion_despacho    || '',
+  //   condicion_facturacion : formData.condicion_facturacion || data.condicion_facturacion || '',
+  //   /* combos dinámicos -------------------------------- */
+  //   ciudad_facturacion        : formData.ciudad_facturacion        || data.ciudad_facturacion        || '',
+  //   ciudad_facturacion_label  : formData.ciudad_facturacion_label  || data.ciudad_facturacion_label  || '',
+  //   vendedor                  : formData.vendedor                  || data.vendedor                  || '',
+  //   vendedor_label            : formData.vendedor_label            || data.vendedor_label            || '',
+  //   cliente_codigo            : formData.cliente_codigo            || data.cliente_codigo            || '',
+  //   cliente_nombre            : formData.cliente_nombre            || data.cliente_nombre            || '',
+  //   /* -------------------------------------------------- */
+  //   tipo_operacion         : formData.tipo_operacion        || data.tipo_operacion        || '',
+  //   centro_costo_despacho  : formData.centro_costo_despacho || data.centro_costo_despacho || ''
+  // });
+
+
 
   // Estado para manejar la validación de tipo de operación
+  
+  const [showDebug, setShowDebug] = useState(false);
+  const [form, setForm] = useState(buildStep1State(formData, data));
+
+  useEffect(() => {
+    setForm(buildStep1State(formData, data));
+  }, [formData, data]);
+
   const [operationType, setOperationType] = useState(formData.tipo_operacion || data.tipo_operacion || '');
   const [showOperationInfo, setShowOperationInfo] = useState(false);
   /* ------------------------------------------------------------------ */
@@ -178,8 +236,14 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
     try {
       const { data } = await searchCiudades(code);
       const found = data.find(c => String(c.ciudad_codigodane) === String(code));
-      return found ? found.ciudad_nombre : '';
-    } catch { return ''; }
+      return found
+        ? `${found.ciudad_codigodane} – ${found.ciudad_nombre}${
+            found.municipio_nombre ? ` – ${found.municipio_nombre}` : ''
+          }`
+        : '';
+    } catch {
+      return '';
+    }
   };
 
   /* Busca vendedor por documento/código */
@@ -449,13 +513,17 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
             load={searchCiudades}
             getOpt={c => ({
               value : c.ciudad_codigodane,
-              label : c.ciudad_nombre
+              label : `${c.ciudad_codigodane} – ${c.ciudad_nombre}${
+                c.municipio_nombre ? ` – ${c.municipio_nombre}` : ''
+              }`
             })}
             value={
               form.ciudad_facturacion
                 ? {
                     value: form.ciudad_facturacion,
-                    label: form.ciudad_facturacion_label || form.ciudad_facturacion
+                    label:
+                      form.ciudad_facturacion_label ||
+                      form.ciudad_facturacion
                   }
                 : null
             }
@@ -584,6 +652,23 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
           )}
         </button>
       </div>
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        <DebugInspector
+          show={showDebug}
+          form={form}
+          formData={formData}
+          data={data}
+        />
+      </div> */}
     </form>
   );
 }

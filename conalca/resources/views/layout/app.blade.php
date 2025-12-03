@@ -565,7 +565,7 @@
                                         auth()->user()->hasRole('GERENTE DE CUENTA') ||
                                         auth()->user()->hasRole('SAC')
                                     )
-                                        <a href="{{ route('goals.index') }}"
+                                        <a href="{{ route('alertsnews.index') }}"
                                             class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                             text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
                                             role="button" aria-haspopup="true" data-button="news&alerts">
@@ -597,6 +597,25 @@
                                                 </svg>
                                             </span>
                                             <span class="ml-2 text-sm"> Conductores </span>
+                                        </a>
+                                    @endif
+
+                                    {{-- Vehículos --}}
+                                    @if (
+                                        auth()->user()->hasRole('SUPER ADMIN') ||
+                                        auth()->user()->hasRole('SAC')
+                                    )
+                                        <a href="{{ route('vehiculos.index') }}"
+                                            class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                                            text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
+                                            role="button" aria-haspopup="true" data-button="vehiculos">
+                                            <span aria-hidden="true">
+                                                {{-- Ícono de vehículo/truck --}}
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 17h8M8 17a2 2 0 11-4 0 2 2 0 014 0zm8 0a2 2 0 104 0 2 2 0 00-4 0zm-8 0H5a2 2 0 01-2-2V9a2 2 0 012-2h2.5M17 17h2a2 2 0 002-2v-5a2 2 0 00-2-2h-1.5l-2-3H10a2 2 0 00-2 2v5" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Vehículos </span>
                                         </a>
                                     @endif
                                 </div>

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CotizacionModel;
 use App\Models\Email;
+use App\Models\City;
 use App\Models\GroupCotization;
 use App\Models\SolicitudTransporte;
 use App\Models\SolicitudTransporteAcompanamiento;
@@ -19,6 +20,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\Services\SilogtranTransform as ST;
+use Illuminate\Support\Str;
 
 use App\Helpers\SilogtranHelper as SH;
 
@@ -135,7 +137,7 @@ class SolicitudTransporteController extends Controller
             /* ------------   STEP 2  (Detalle)   -------------- */
             case 'step_2':
                 $step2Data = [...$data, 'cotizacion_model_id' => $cotizacionId];
-                
+
                 // Agregar campos por defecto para import/export
                 if ($isImportExport) {
                     $defaults = [
@@ -183,7 +185,7 @@ class SolicitudTransporteController extends Controller
                     'numero_viaje', 'numero_pedido', 'nota_entrega', 'planilla_entrega', 'numero_factura',
                     'modelo', 'qty', 't_cbm', 'order_no', 'o_c_cliente', 'bodega', 'fecha_expiracion',
                     'net_amt_txn', 'prec_unit', 'remark', 'addr', 'appoint_date', 'tipo_vehiculo',
-                    'item', 'load', 'cotizacion_model_id'
+                    'item', 'load', 'tipo_remesa_rndc', 'cotizacion_model_id'
                 ];
                 
                 $filteredStep2Data = array_intersect_key($step2Data, array_flip($allowedFields));
@@ -232,29 +234,29 @@ class SolicitudTransporteController extends Controller
                 break;
 
             /* ------------   STEP 4  (Contenedor) ------------- */
-            case 'step_4':
+           case 'step_4':
                 $step4Data = $data;
-                
-                // Agregar campos por defecto para import/export
+
+                // Normalize the simple yes/no flag
+                $step4Data['contenedor'] = $data['contenedor'] ?? 'NO';
+
                 if ($isImportExport) {
                     $defaults = [
-                        'contenedor'                => $data['contenedor'] ?? 'SI',  // Para import/export usualmente SI
-                        'contenedor'                   => $data['contenedor'] ?? 10,
-                        'lugar_codigo'              => $data['lugar_codigo'] ?? 1,
-                        'cantidad_cont'       => $data['cantidad_cont'] ?? 1,
-                        'fecha_entrega_cont'   => $data['fecha_entrega_cont'] ?? date('Y-m-d'),
-                        'numero_cont'          => $data['numero_cont'] ?? 1,
-                        'devolucioncontenedor'      => $data['devolucioncontenedor'] ?? 'NO',
+                        'contenedor'            => $step4Data['contenedor'],
+                        'lugar_codigo'          => $data['lugar_codigo'] ?? 1,
+                        'cantidad_cont'         => $data['cantidad_cont'] ?? 1,
+                        'fecha_entrega_cont'    => $data['fecha_entrega_cont'] ?? date('Y-m-d'),
+                        'numero_cont'           => $data['numero_cont'] ?? 1,
+                        'devolucioncontenedor'  => $data['devolucioncontenedor'] ?? 'NO',
                     ];
-                    
-                    // Completar solo campos que no están ya definidos
+
                     foreach ($defaults as $key => $defaultValue) {
-                        if (!array_key_exists($key, $step4Data) || empty($step4Data[$key])) {
+                        if (!array_key_exists($key, $step4Data) || $step4Data[$key] === '' || $step4Data[$key] === null) {
                             $step4Data[$key] = $defaultValue;
                         }
                     }
                 }
-                
+
                 SolicitudTransporteContenedor::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
                     $step4Data
@@ -262,10 +264,23 @@ class SolicitudTransporteController extends Controller
                 break;
 
             /* ------------   STEP 5  (Internacional) ------------- */
+          
             case 'step_5':
                 $step5Data = $data;
-                
-                // Agregar campos por defecto para import/export
+
+                if (
+                    !isset($step5Data['modalidad_internacional']) ||
+                    $step5Data['modalidad_internacional'] === '' ||
+                    $step5Data['modalidad_internacional'] === 'null'
+                ) {
+                    $cotizacion = CotizacionModel::with('groupCotization')->find($cotizacionId);
+
+                    $fallback = $cotizacion?->groupCotization?->type
+                        ?: $cotizacion?->tipo;
+
+                    $step5Data['modalidad_internacional'] = strtoupper($fallback ?? '');
+                }
+
                 if ($isImportExport) {
                     $defaults = [
                         'tipomercanciainternacional' => $data['tipomercanciainternacional'] ?? 'DRY',
@@ -284,15 +299,14 @@ class SolicitudTransporteController extends Controller
                         'cut_off'                    => $data['cut_off'] ?? date('Y-m-d', strtotime('+1 day')),
                         'eta'                        => $data['eta'] ?? date('Y-m-d', strtotime('+3 days')),
                     ];
-                    
-                    // Completar solo campos que no están ya definidos
+
                     foreach ($defaults as $key => $defaultValue) {
-                        if (!array_key_exists($key, $step5Data) || empty($step5Data[$key])) {
+                        if (!array_key_exists($key, $step5Data) || $step5Data[$key] === '' || $step5Data[$key] === null) {
                             $step5Data[$key] = $defaultValue;
                         }
                     }
                 }
-                
+
                 SolicitudTransporteInternacional::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
                     $step5Data
@@ -585,53 +599,50 @@ class SolicitudTransporteController extends Controller
 
     public function prefill($cotizacionId)
     {
-        $cot = CotizacionModel::with('client')->findOrFail($cotizacionId);
+        $cot = CotizacionModel::with(['client', 'groupCotization'])->findOrFail($cotizacionId);
 
         $fechaHora = Carbon::parse($cot->fecha_hora_descargue_cargue);
 
-        /*  Mapeo  Cotización → Wizard  */
+        $origenCode  = $this->resolveCityCode($cot->ciudad_origen_dane,  $cot->ciudad_origen);
+        $destinoCode = $this->resolveCityCode($cot->ciudad_destino_dane, $cot->ciudad_destino);
+
+        $groupModalidad = $cot->groupCotization?->type;
+        $cotModalidad   = $cot->tipo;
+
         $data = [
-            /* Paso 1 */
-            'cliente_codigo'           => $cot->client?->codigo,
-            'cliente_nombre'           => $cot->client?->cliente,          
-            // 'ciudad_facturacion'       => $cot->client?->ciudad_codigo_radicacion,
-            'vendedor'         => $cot->groupCotization?->user?->documento,
-            /* Paso 2 */
-            'origen'                => $cot->ciudad_origen_dane,
-            'destino'               => $cot->ciudad_destino_dane,
-            'cantidad_mercancia'    => $cot->cantidad,
-            'peso'                  => $cot->peso_mercancia,
-            'producto'              => $cot->tipo_producto,
-            'empaque'               => $cot->tipo_embajale,
-            'cantidad_vehiculos'    => $cot->cantidad_vh,
-            'tipo_operacion'        => $cot->operation_type,
-            // 'clase_vehiculo'        => $cot->vehiculo_requerido,
-            // 'carroceria'            => $cot->tipo_carroceria,
-            'tipo_flete'            => strtoupper($cot->consolidado_expreso ?: $cot->fcl_lcl),
-            'valor_mercancia'       => $cot->valor_declarado ?: $cot->valor,
+            'cliente_codigo'     => $cot->client?->codigo,
+            'cliente_nombre'     => $cot->client?->cliente,
+            'vendedor'           => $cot->groupCotization?->user?->documento,
+            'origen'             => $origenCode,
+            'destino'            => $destinoCode,
+            'cantidad_mercancia' => $cot->cantidad,
+            'peso'               => $cot->peso_mercancia,
+            'producto'           => $cot->tipo_producto,
+            'empaque'            => $cot->tipo_embajale,
+            'cantidad_vehiculos' => $cot->cantidad_vh,
+            'tipo_operacion'     => $cot->operation_type,
+            'tipo_flete'         => strtoupper($cot->consolidado_expreso ?: $cot->fcl_lcl),
+            'valor_mercancia'    => $cot->valor_declarado ?: $cot->valor,
             'descripcion_mercancia' => $cot->tipo_mercancia,
-            'cargue_cuenta_de'      => strtoupper($cot->descargue_cargue) ?: 'CLIENTE',
-            /* Paso 3 */
-            'fecha_cargue'          => $fechaHora?->toDateString(),
-            'hora_cargue'           => $fechaHora?->format('H:i'),
-            /* Paso 4 */
-            'contenedor'            => $cot->fcl_lcl === 'FCL' ? 'SI' : 'NO',
-            /* Paso 5 */
-            'modalidad_internacional'=> strtoupper($cot->tipo),
-            /* Paso 6 */
-            // 'vehiculo_acom'         => $cot->cantidad_vh,
+            'cargue_cuenta_de'   => strtoupper($cot->descargue_cargue) ?: 'CLIENTE',
+            'fecha_cargue'       => $fechaHora?->toDateString(),
+            'hora_cargue'        => $fechaHora?->format('H:i'),
+            'contenedor'         => $cot->fcl_lcl === 'FCL' ? 'SI' : 'NO',
+            // Step 5 – prefer group type, fall back to cotización type
+            'modalidad_internacional' => strtoupper(
+                $groupModalidad ?? $cotModalidad ?? ''
+            ),
             'itesoltra_vehiculoacompanamiento'  => $cot->itesoltra_vehiculoacompanamiento,
             'tipaco_codigo'                     => $cot->tipaco_codigo,
             'itesoltra_acompanamientocuentade'  => $cot->itesoltra_acompanamientocuentade,
             'itesoltra_acompanamientovalor'     => $cot->itesoltra_acompanamientovalor,
         ];
 
+        Log::info('Valor de group type para modalidad: ' . ($groupModalidad ?? 'null'));
+
         return response()->json($data);
     }
 
-    /**
-     * Prefill wizard desde un grupo de cotización
-     */
     public function prefillFromGroup($groupId)
     {
         try {
@@ -645,10 +656,9 @@ class SolicitudTransporteController extends Controller
                 'operation_type' => $grupo->operation_type,
                 'cotizaciones_count' => $grupo->cotizaciones->count()
             ]);
-            
-            // Tomar datos de la primera cotización como base
+
             $primera_cotizacion = $grupo->cotizaciones->first();
-            
+
             if (!$primera_cotizacion) {
                 Log::error('[PREFILL] Grupo sin cotizaciones');
                 return response()->json(['error' => 'Grupo sin cotizaciones'], 404);
@@ -660,48 +670,53 @@ class SolicitudTransporteController extends Controller
                 'destino' => $primera_cotizacion->ciudad_destino
             ]);
 
-            /*  Mapeo  Grupo de Cotización → Wizard  */
+            // 🔁 Make sure we always return DANE codes (strings) so the wizard stores them in DB
+            $origenCode = $this->resolveCityCode(
+                $primera_cotizacion->ciudad_origen_dane,
+                $primera_cotizacion->ciudad_origen
+            );
+            $destinoCode = $this->resolveCityCode(
+                $primera_cotizacion->ciudad_destino_dane,
+                $primera_cotizacion->ciudad_destino
+            );
+
             $data = [
-                /* Paso 1 - Datos básicos */
-                'cliente_codigo'           => $grupo->client?->codigo,
-                'cliente_nombre'           => $grupo->client?->cliente,
-                'tipo_operacion'           => $grupo->operation_type ?: 'DISTRIBUCION',
-                'vendedor'                 => $grupo->user?->documento,
-                
-                /* Paso 2 - Detalle del servicio */
-                'origen'                   => $primera_cotizacion->ciudad_origen,
-                'destino'                  => $primera_cotizacion->ciudad_destino,
-                'peso'                     => $primera_cotizacion->peso,
-                'valor_mercancia'          => $primera_cotizacion->valor_declarado,
-                'descripcion_mercancia'    => $primera_cotizacion->tipo_mercancia,
-                'vehiculo_requerido'       => $primera_cotizacion->vehiculo_requerido,
-                
-                /* Campos específicos para import/export */
-                'tipo_carga'               => $primera_cotizacion->tipo_carga,
+                // Step 1
+                'cliente_codigo' => $grupo->client?->codigo,
+                'cliente_nombre' => $grupo->client?->cliente,
+                'tipo_operacion' => $grupo->operation_type ?: 'DISTRIBUCION',
+                'vendedor'       => $grupo->user?->documento,
+
+                // Step 2 – use numeric codes
+                'origen'             => $origenCode,
+                'destino'            => $destinoCode,
+                'peso'               => $primera_cotizacion->peso,
+                'valor_mercancia'    => $primera_cotizacion->valor_declarado,
+                'descripcion_mercancia' => $primera_cotizacion->tipo_mercancia,
+                'vehiculo_requerido' => $primera_cotizacion->vehiculo_requerido,
+                'tipo_carga'         => $primera_cotizacion->tipo_carga,
                 'clasificacion_contenedor' => $primera_cotizacion->clasificacion_contenedor,
-                'tipo_contenedor'          => $primera_cotizacion->tipo_contenedor,
-                'toneladas'                => $primera_cotizacion->toneladas,
-                'incluye_tara'             => $primera_cotizacion->incluye_tara,
+                'tipo_contenedor'    => $primera_cotizacion->tipo_contenedor,
+                'toneladas'          => $primera_cotizacion->toneladas,
+                'incluye_tara'       => $primera_cotizacion->incluye_tara,
                 'acompanamiento_seguridad' => $primera_cotizacion->acompanamiento_seguridad,
-                
-                /* Paso 5 - Modalidad internacional */
-                'modalidad_internacional'  => strtoupper($grupo->type ?: ''),
-                
-                /* Información del flujo */
+
+                // Step 5
+                'modalidad_internacional' => strtoupper($grupo->type ?: ''),
+
+                // Operation flow metadata
                 'operation_flow' => [
                     'type' => $grupo->operation_type,
                     'isImportExport' => in_array($grupo->operation_type, ['IMPORTACION', 'EXPORTACION'])
                 ],
-                
-                /* Metadatos */
-                'source_group_id'          => $groupId,
-                'total_routes'             => $grupo->cotizaciones->count(),
+
+                'source_group_id' => $groupId,
+                'total_routes'    => $grupo->cotizaciones->count(),
             ];
 
             Log::info('[PREFILL] Datos mapeados exitosamente, total campos: ' . count($data));
-            
             return response()->json($data);
-            
+
         } catch (\Exception $e) {
             Log::error('[PREFILL] Error en prefillFromGroup:', [
                 'group_id' => $groupId,
@@ -710,13 +725,31 @@ class SolicitudTransporteController extends Controller
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Error interno del servidor',
                 'message' => $e->getMessage()
             ], 500);
         }
     }
+
+    private function resolveCityCode(?string $dane, ?string $name): ?string
+    {
+        if ($dane && $dane !== 'null' && preg_match('/^\d+$/', $dane)) {
+            return $dane;
+        }
+
+        if (!$name || Str::lower($name) === 'null') {
+            return null;
+        }
+
+        $city = City::whereRaw('LOWER(ciudad_nombre) = ?', [Str::lower(trim($name))])
+                    ->where('estado_nombre', 'ACTIVO')
+                    ->orderBy('ciudad_codigodane')
+                    ->first();
+
+        return $city?->ciudad_codigodane;
+}
 
     /**
      * Completa todos los datos obligatorios para el API Silogtran

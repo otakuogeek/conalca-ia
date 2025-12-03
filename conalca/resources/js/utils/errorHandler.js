@@ -6,51 +6,51 @@
 class ErrorHandler {
     constructor() {
         this.errors = [];
-        this.initModal();
+        // this.initModal();
         this.setupGlobalErrorHandler();
     }
 
-    initModal() {
-        // Crear modal si no existe
-        if (!document.getElementById('global-error-modal')) {
-            const modalHTML = `
-                <div id="global-error-modal" class="fixed inset-0 z-[9999] hidden bg-black bg-opacity-50 flex items-center justify-center p-4">
-                    <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-                        <div class="bg-red-600 text-white px-6 py-4 flex justify-between items-center">
-                            <h3 class="text-xl font-bold flex items-center">
-                                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                Error Detectado
-                            </h3>
-                            <button onclick="window.errorHandler.closeModal()" class="text-white hover:text-gray-200">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-                            <div id="error-content" class="space-y-4"></div>
-                        </div>
-                        <div class="bg-gray-100 px-6 py-4 flex justify-between items-center border-t">
-                            <button onclick="window.errorHandler.copyErrors()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-                                📋 Copiar Errores
-                            </button>
-                            <div class="flex gap-2">
-                                <button onclick="window.errorHandler.clearErrors()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded">
-                                    🗑️ Limpiar
-                                </button>
-                                <button onclick="window.errorHandler.closeModal()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">
-                                    Cerrar
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.insertAdjacentHTML('beforeend', modalHTML);
-        }
-    }
+    // initModal() {
+    //     // Crear modal si no existe
+    //     if (!document.getElementById('global-error-modal')) {
+    //         const modalHTML = `
+    //             <div id="global-error-modal" class="fixed inset-0 z-[9999] hidden bg-black bg-opacity-50 flex items-center justify-center p-4">
+    //                 <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+    //                     <div class="bg-red-600 text-white px-6 py-4 flex justify-between items-center">
+    //                         <h3 class="text-xl font-bold flex items-center">
+    //                             <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    //                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+    //                             </svg>
+    //                             Error Detectado
+    //                         </h3>
+    //                         <button onclick="window.errorHandler.closeModal()" class="text-white hover:text-gray-200">
+    //                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    //                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+    //                             </svg>
+    //                         </button>
+    //                     </div>
+    //                     <div class="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+    //                         <div id="error-content" class="space-y-4"></div>
+    //                     </div>
+    //                     <div class="bg-gray-100 px-6 py-4 flex justify-between items-center border-t">
+    //                         <button onclick="window.errorHandler.copyErrors()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+    //                             📋 Copiar Errores
+    //                         </button>
+    //                         <div class="flex gap-2">
+    //                             <button onclick="window.errorHandler.clearErrors()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded">
+    //                                 🗑️ Limpiar
+    //                             </button>
+    //                             <button onclick="window.errorHandler.closeModal()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">
+    //                                 Cerrar
+    //                             </button>
+    //                         </div>
+    //                     </div>
+    //                 </div>
+    //             </div>
+    //         `;
+    //         document.body.insertAdjacentHTML('beforeend', modalHTML);
+    //     }
+    // }
 
     setupGlobalErrorHandler() {
         // Capturar errores JavaScript globales

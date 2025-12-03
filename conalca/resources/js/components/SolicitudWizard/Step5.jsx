@@ -7,27 +7,66 @@ import {
   FiChevronRight  // botón siguiente
 } from 'react-icons/fi';
 
+const buildStep5State = (formData = {}, data = {}) => ({
+  modalidad_internacional:
+    formData.modalidad_internacional ||
+    data.modalidad_internacional ||
+    (data.internacional && data.internacional.modalidad_internacional) ||
+    ''
+});
+
+const DebugInspector = ({ form, formData, data, show }) => {
+  if (!show) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
+      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step1 snapshot</h3>
+
+      <div>
+        <p className="text-red-200 font-medium">form (local state)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(form, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">formData (wizard cache)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(formData, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">data (prefill/localData)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
 export default function Step5({data={},formData={},onNext,onPrev,loading}){
 
   const i=data.internacional||{};
-  const [form,setForm]=useState({
-     modalidad_internacional: formData.modalidad_internacional || i.modalidad_internacional || ''
-  });
+  // const [form,setForm]=useState({
+  //    modalidad_internacional: formData.modalidad_internacional || i.modalidad_internacional || ''
+  // });
 
-  useEffect(()=>{
-    const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-    chatBus.on('fill-field',f);
-    return()=>chatBus.off('fill-field',f);
-  },[]);
+  const [showDebug, setShowDebug] = useState(false);
+  const [form, setForm] = useState(buildStep5State(formData, data));
 
-  // Actualizar form cuando cambien los datos del prefill
   useEffect(() => {
-    const i = data.internacional || {};
-    setForm(prevForm => ({
-      ...prevForm,
-      modalidad_internacional: formData.modalidad_internacional || i.modalidad_internacional || prevForm.modalidad_internacional
-    }));
-  }, [data, formData]);
+    setForm(buildStep5State(formData, data));
+  }, [formData, data]);
+
+  useEffect(() => {
+    const fill = (field, value) => {
+      setForm(prev => ({ ...prev, [field]: value }));
+    };
+    chatBus.on('fill-field', fill);
+    return () => chatBus.off('fill-field', fill);
+  }, []);
 
   const submit=e=>{e.preventDefault(); onNext(form);};
 
@@ -87,6 +126,60 @@ export default function Step5({data={},formData={},onNext,onPrev,loading}){
           {loading ? 'Guardando…' : <>Siguiente <FiChevronRight /></>}
         </button>
       </div>
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        <DebugInspector
+          show={showDebug}
+          form={form}
+          formData={formData}
+          data={data}
+        />
+      </div> */}
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        {showDebug && (
+          <div className="mt-4 text-left text-xs bg-gray-900 text-green-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-red-300">🪲 Step5 debug</p>
+            <div>
+              <p className="text-red-200 font-medium">form (local state)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(form, null, 2)}
+              </pre>
+            </div>
+            <div>
+              <p className="text-red-200 font-medium">formData (wizard cache)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(formData, null, 2)}
+              </pre>
+            </div>
+            <div>
+              <p className="text-red-200 font-medium">data (prefill/localData)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify({
+                  flat_modalidad: data.modalidad_internacional,
+                  internacional: data.internacional
+                }, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div> */}
     </form>
   );
 }

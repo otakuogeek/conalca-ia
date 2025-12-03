@@ -37,7 +37,7 @@ class SolicitudTransporteDetalle extends Model
         'restricciones_cliente',
         'cargue_cuenta_de',
         'descargue_cuenta_de',
-        'descargue_cuenta_de',
+        'seguro_cuenta_de',  
         'descripcion_mercancia',
         'servicio_escolta',
         'kit_seguridad',

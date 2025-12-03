@@ -8,28 +8,116 @@ import {
   FiCheckCircle    // botón finalizar
 } from 'react-icons/fi';
 
+// const buildStep6State = (formData = {}, acompanamiento = {}) => ({
+//   vehiculo_acom:
+//     formData.vehiculo_acom ??
+//     acompanamiento.vehiculo_acom ??
+//     acompanamiento.itesoltra_vehiculoacompanamiento ??
+//     1,
+
+//   tipo_vehiculo_acom:
+//     formData.tipo_vehiculo_acom ??
+//     acompanamiento.tipo_vehiculo_acom ??
+//     acompanamiento.tipaco_codigo ??
+//     '',
+
+//   acompanamiento_cuenta_acom:
+//     formData.acompanamiento_cuenta_acom ??
+//     acompanamiento.acompanamiento_cuenta_acom ??
+//     acompanamiento.itesoltra_acompanamientocuentade ??
+//     '',
+
+//   valor_acompanante_acom:
+//     formData.valor_acompanante_acom ??
+//     acompanamiento.valor_acompanante_acom ??
+//     acompanamiento.itesoltra_acompanamientovalor ??
+//     ''
+// });
+
+const buildStep6State = (
+  formData = {},
+  acompanamiento = {},
+  flatData = {}              // NEW
+) => ({
+  vehiculo_acom:
+    formData.vehiculo_acom ??
+    acompanamiento.vehiculo_acom ??
+    acompanamiento.itesoltra_vehiculoacompanamiento ??
+    flatData.vehiculo_acom ??               // NEW
+    1,
+
+  tipo_vehiculo_acom:
+    formData.tipo_vehiculo_acom ??
+    acompanamiento.tipo_vehiculo_acom ??
+    acompanamiento.tipaco_codigo ??
+    flatData.tipo_vehiculo_acom ??          // NEW
+    '',
+
+  acompanamiento_cuenta_acom:
+    formData.acompanamiento_cuenta_acom ??
+    acompanamiento.acompanamiento_cuenta_acom ??
+    acompanamiento.itesoltra_acompanamientocuentade ??
+    flatData.acompanamiento_cuenta_acom ??  // NEW
+    '',
+
+  valor_acompanante_acom:
+    formData.valor_acompanante_acom ??
+    acompanamiento.valor_acompanante_acom ??
+    acompanamiento.itesoltra_acompanamientovalor ??
+    flatData.valor_acompanante_acom ??      // NEW
+    ''
+});
+
+const DebugInspector = ({ form, formData, data, show }) => {
+  if (!show) return null;
+  return (
+    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
+      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step6 snapshot</h3>
+      <div>
+        <p className="text-red-200 font-medium">form (local state)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(form, null, 2)}
+        </pre>
+      </div>
+      <div>
+        <p className="text-red-200 font-medium">formData (wizard cache)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(formData, null, 2)}
+        </pre>
+      </div>
+      <div>
+        <p className="text-red-200 font-medium">data (prefill/localData)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
 export default function Step6({ data = {}, formData = {}, onNext, onPrev, loading }) {
   /* ------------------------------------------------------------------
    *  Prefill (cuando la solicitud ya existe)
    * ----------------------------------------------------------------*/
   const ac = data.acompanamiento || {};
-console.log(ac)
-  const [form, setForm] = useState({
-    vehiculo_acom :
-        formData.vehiculo_acom || (ac.vehiculo_acom ?? ac.itesoltra_vehiculoacompanamiento ?? 1),
-    tipo_vehiculo_acom :
-        formData.tipo_vehiculo_acom || (ac.tipo_vehiculo_acom ?? ac.tipaco_codigo ?? ''),
-    acompanamiento_cuenta_acom :
-        formData.acompanamiento_cuenta_acom || (ac.acompanamiento_cuenta_acom ?? ac.itesoltra_acompanamientocuentade ?? ''),
-    valor_acompanante_acom :
-        formData.valor_acompanante_acom || (ac.valor_acompanante_acom ?? ac.itesoltra_acompanamientovalor ?? ''),
-  });
+
+  const [showDebug, setShowDebug] = useState(false);
+   const [debugLog, setDebugLog] = useState([]);  
+   const [form, setForm] = useState(buildStep6State(formData, ac, data)); 
+  
+
+  useEffect(() => {
+    setForm(buildStep6State(formData, data.acompanamiento || {}, data));   // NEW
+  }, [formData, data]);
 
   /* ------------------------------------------------------------------
    *  Chat → autocompletado
    * ----------------------------------------------------------------*/
   useEffect(() => {
-    const fill = (k, v) => setForm(p => ({ ...p, [k]: v }));
+    const fill = (field, value) => {
+      setDebugLog(prev => [...prev, `${field} = ${value}`]);
+      setForm(prev => ({ ...prev, [field]: value }));
+    };
     chatBus.on('fill-field', fill);
     return () => chatBus.off('fill-field', fill);
   }, []);
@@ -37,9 +125,7 @@ console.log(ac)
   /* ------------------------------------------------------------------
    *  Handlers
    * ----------------------------------------------------------------*/
-  const handle = e =>
-    setForm(p => ({ ...p, [e.target.name]: e.target.value }));
-
+   const handle = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
   const submit = e => { e.preventDefault(); onNext(form); };
 
   /* ------------------------------------------------------------------
@@ -161,6 +247,60 @@ console.log(ac)
           {loading ? 'Guardando…' : <>Finalizar <FiCheckCircle /></>}
         </button>
       </div>
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        <DebugInspector
+          show={showDebug}
+          form={form}
+          formData={formData}
+          data={data}
+        />
+      </div> */}
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        {showDebug && (
+          <div className="mt-4 text-left text-xs bg-gray-900 text-green-200 rounded-lg p-3 space-y-2">
+            <p className="font-semibold text-red-300">🪲 Step5 debug</p>
+            <div>
+              <p className="text-red-200 font-medium">form (local state)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(form, null, 2)}
+              </pre>
+            </div>
+            <div>
+              <p className="text-red-200 font-medium">formData (wizard cache)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(formData, null, 2)}
+              </pre>
+            </div>
+            <div>
+              <p className="text-red-200 font-medium">data (prefill/localData)</p>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify({
+                  flat_modalidad: data.modalidad_internacional,
+                  internacional: data.internacional
+                }, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div> */}
     </form>
   );
 }

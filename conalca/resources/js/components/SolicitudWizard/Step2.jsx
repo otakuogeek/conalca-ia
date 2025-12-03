@@ -26,70 +26,159 @@ import {
 } from 'react-icons/fi';
 import { FaWeight } from 'react-icons/fa';
 
+const normalizeCityCode = value =>
+  (typeof value === 'string' && /^\d+$/.test(value.trim()))
+    ? value.trim()
+    : '';
 
+const buildStep2State = (formData = {}, detalle = {}, data = {}) => {
+  const flow = formData.operation_flow || data.operation_flow || {};
+
+  return {
+    origen        : normalizeCityCode(formData.origen ?? detalle.origen),
+    origen_label           : formData.origen_label           || detalle.origen_label           || '',
+    destino       : normalizeCityCode(formData.destino ?? detalle.destino),
+    destino_label          : formData.destino_label          || detalle.destino_label          || '',
+    lugar_recogida_contenedor: normalizeCityCode(
+      formData.lugar_recogida_contenedor ?? detalle.lugar_recogida_contenedor
+    ),
+    lugar_recogida_contenedor_label : formData.lugar_recogida_contenedor_label || detalle.lugar_recogida_contenedor_label || '',
+    tipo_carga             : formData.tipo_carga             || detalle.tipo_carga             || '',
+    cantidad_mercancia     : formData.cantidad_mercancia     || detalle.cantidad_mercancia     || '',
+    peso                   : formData.peso                   || detalle.peso                   || '',
+    valor_mercancia        : formData.valor_mercancia        || detalle.valor_mercancia        || '',
+    producto               : formData.producto               || detalle.producto               || '',
+    producto_label         : formData.producto_label         || detalle.producto_label         || '',
+    empaque                : formData.empaque                || detalle.empaque                || '',
+    empaque_label          : formData.empaque_label          || detalle.empaque_label          || '',
+    cantidad_vehiculos     : formData.cantidad_vehiculos     || detalle.cantidad_vehiculos     || '',
+    clase_vehiculo         : formData.clase_vehiculo         || detalle.clase_vehiculo         || '',
+    clase_vehiculo_label   : formData.clase_vehiculo_label   || detalle.clase_vehiculo_label   || '',
+    carroceria             : formData.carroceria             || detalle.carroceria             || '',
+    carroceria_label       : formData.carroceria_label       || detalle.carroceria_label       || '',
+    minimo_modelo          : formData.minimo_modelo          || detalle.minimo_modelo          || '',
+    tipo_flete             : formData.tipo_flete             || detalle.tipo_flete             || '',
+    flete_conductor        : formData.flete_conductor        || detalle.flete_conductor        || '',
+    flete_ministerio       : formData.flete_ministerio       || detalle.flete_ministerio       || '',
+    tipo_tarifa            : formData.tipo_tarifa            || detalle.tipo_tarifa            || '',
+    tarifa_cliente         : formData.tarifa_cliente         || detalle.tarifa_cliente         || '',
+    cargue_cuenta_de       : formData.cargue_cuenta_de       || detalle.cargue_cuenta_de       || '',
+    descargue_cuenta_de    : formData.descargue_cuenta_de    || detalle.descargue_cuenta_de    || '',
+    seguro_cuenta_de       : formData.seguro_cuenta_de       || detalle.seguro_cuenta_de       || '',
+    descripcion_mercancia  : formData.descripcion_mercancia  || detalle.descripcion_mercancia  || '',
+    kit_seguridad          : formData.kit_seguridad          || detalle.kit_seguridad          || '',
+    sub_cliente            : formData.sub_cliente            || detalle.sub_cliente            || '',
+    tipo_remesa_rndc       : formData.tipo_remesa_rndc       || detalle.tipo_remesa_rndc       || '',
+    operation_flow         : flow
+  };
+};
+
+const DebugInspector = ({ form, formData, data, show }) => {
+  if (!show) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
+      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step1 snapshot</h3>
+
+      <div>
+        <p className="text-red-200 font-medium">form (local state)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(form, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">formData (wizard cache)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(formData, null, 2)}
+        </pre>
+      </div>
+
+      <div>
+        <p className="text-red-200 font-medium">data (prefill/localData)</p>
+        <pre className="whitespace-pre-wrap break-words">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
 
 export default function Step2({ data = {}, formData = {}, onNext, onPrev, loading }) {
 
   const d = data.detalle || {};
   
   // Detectar tipo de operación
-  const operationType = data.operation_flow?.type || data.tipo_operacion || '';
+  // const operationType = data.operation_flow?.type || data.tipo_operacion || '';
+  const operationType =
+    formData.operation_flow?.type ??
+    formData.tipo_operacion ??
+    data.operation_flow?.type ??
+    data.tipo_operacion ??
+    '';
   const isImportExport = operationType === 'IMPORTACION' || operationType === 'EXPORTACION';
 
-  const [form, setForm] = useState({
-    /* ciudades */
-    origen                 : formData.origen                 || d.origen  || '',
-    origen_label           : formData.origen_label           || d.origen_label  || '',
-    destino                : formData.destino                || d.destino || '',
-    destino_label          : formData.destino_label          || d.destino_label || '',
+  // const [form, setForm] = useState({
+  //   /* ciudades */
+  //   origen                 : formData.origen                 || d.origen  || '',
+  //   origen_label           : formData.origen_label           || d.origen_label  || '',
+  //   destino                : formData.destino                || d.destino || '',
+  //   destino_label          : formData.destino_label          || d.destino_label || '',
     
-    // NUEVO: Campo específico para exportaciones
-    lugar_recogida_contenedor: formData.lugar_recogida_contenedor || d.lugar_recogida_contenedor || '',
-    lugar_recogida_contenedor_label: formData.lugar_recogida_contenedor_label || d.lugar_recogida_contenedor_label || '',
+  //   // NUEVO: Campo específico para exportaciones
+  //   lugar_recogida_contenedor: formData.lugar_recogida_contenedor || d.lugar_recogida_contenedor || '',
+  //   lugar_recogida_contenedor_label: formData.lugar_recogida_contenedor_label || d.lugar_recogida_contenedor_label || '',
     
-    // NUEVO: Tipo de carga para import/export
-    tipo_carga             : formData.tipo_carga             || d.tipo_carga || '',
+  //   // NUEVO: Tipo de carga para import/export
+  //   tipo_carga             : formData.tipo_carga             || d.tipo_carga || '',
     
-    // Campos existentes para distribución
-    cantidad_mercancia     : formData.cantidad_mercancia     || d.cantidad_mercancia     || '',
-    peso                   : formData.peso                   || d.peso                   || '',
-    valor_mercancia        : formData.valor_mercancia        || d.valor_mercancia        || '',
+  //   // Campos existentes para distribución
+  //   cantidad_mercancia     : formData.cantidad_mercancia     || d.cantidad_mercancia     || '',
+  //   peso                   : formData.peso                   || d.peso                   || '',
+  //   valor_mercancia        : formData.valor_mercancia        || d.valor_mercancia        || '',
 
-    /* catálogo producto / empaque */
-    producto               : formData.producto               || d.producto        || '',
-    producto_label         : formData.producto_label         || d.producto_label  || '',
-    empaque                : formData.empaque                || d.empaque         || '',
-    empaque_label          : formData.empaque_label          || d.empaque_label   || '',
+  //   /* catálogo producto / empaque */
+  //   producto               : formData.producto               || d.producto        || '',
+  //   producto_label         : formData.producto_label         || d.producto_label  || '',
+  //   empaque                : formData.empaque                || d.empaque         || '',
+  //   empaque_label          : formData.empaque_label          || d.empaque_label   || '',
 
-    cantidad_vehiculos     : formData.cantidad_vehiculos     || d.cantidad_vehiculos     || '',
+  //   cantidad_vehiculos     : formData.cantidad_vehiculos     || d.cantidad_vehiculos     || '',
 
-    /* clase y carrocería de vehículo */
-    clase_vehiculo         : formData.clase_vehiculo         || d.clase_vehiculo        || '',
-    clase_vehiculo_label   : formData.clase_vehiculo_label   || d.clase_vehiculo_label  || '',
-    carroceria             : formData.carroceria             || d.carroceria            || '',
-    carroceria_label       : formData.carroceria_label       || d.carroceria_label      || '',
+  //   /* clase y carrocería de vehículo */
+  //   clase_vehiculo         : formData.clase_vehiculo         || d.clase_vehiculo        || '',
+  //   clase_vehiculo_label   : formData.clase_vehiculo_label   || d.clase_vehiculo_label  || '',
+  //   carroceria             : formData.carroceria             || d.carroceria            || '',
+  //   carroceria_label       : formData.carroceria_label       || d.carroceria_label      || '',
 
-    /* demás campos sin cambios */
-    minimo_modelo          : formData.minimo_modelo          || d.minimo_modelo          || '',
-    tipo_flete             : formData.tipo_flete             || d.tipo_flete             || '',
-    flete_conductor        : formData.flete_conductor        || d.flete_conductor        || '',
-    flete_ministerio       : formData.flete_ministerio       || d.flete_ministerio       || '',
-    tipo_tarifa            : formData.tipo_tarifa            || d.tipo_tarifa            || '',
-    tarifa_cliente         : formData.tarifa_cliente         || d.tarifa_cliente         || '',
-    cargue_cuenta_de       : formData.cargue_cuenta_de       || d.cargue_cuenta_de       || '',
-    descargue_cuenta_de    : formData.descargue_cuenta_de    || d.descargue_cuenta_de    || '',
-    seguro_cuenta_de       : formData.seguro_cuenta_de       || d.seguro_cuenta_de       || '',
-    descripcion_mercancia  : formData.descripcion_mercancia  || d.descripcion_mercancia  || '',
-    kit_seguridad          : formData.kit_seguridad          || d.kit_seguridad          || '',
-    sub_cliente            : formData.sub_cliente            || d.sub_cliente            || '',
-    tipo_remesa_rndc       : formData.tipo_remesa_rndc       || d.tipo_remesa_rndc       || ''
-  });
+  //   /* demás campos sin cambios */
+  //   minimo_modelo          : formData.minimo_modelo          || d.minimo_modelo          || '',
+  //   tipo_flete             : formData.tipo_flete             || d.tipo_flete             || '',
+  //   flete_conductor        : formData.flete_conductor        || d.flete_conductor        || '',
+  //   flete_ministerio       : formData.flete_ministerio       || d.flete_ministerio       || '',
+  //   tipo_tarifa            : formData.tipo_tarifa            || d.tipo_tarifa            || '',
+  //   tarifa_cliente         : formData.tarifa_cliente         || d.tarifa_cliente         || '',
+  //   cargue_cuenta_de       : formData.cargue_cuenta_de       || d.cargue_cuenta_de       || '',
+  //   descargue_cuenta_de    : formData.descargue_cuenta_de    || d.descargue_cuenta_de    || '',
+  //   seguro_cuenta_de       : formData.seguro_cuenta_de       || d.seguro_cuenta_de       || '',
+  //   descripcion_mercancia  : formData.descripcion_mercancia  || d.descripcion_mercancia  || '',
+  //   kit_seguridad          : formData.kit_seguridad          || d.kit_seguridad          || '',
+  //   sub_cliente            : formData.sub_cliente            || d.sub_cliente            || '',
+  //   tipo_remesa_rndc       : formData.tipo_remesa_rndc       || d.tipo_remesa_rndc       || ''
+  // });
+  const [showDebug, setShowDebug] = useState(false);
+  const [form, setForm] = useState(buildStep2State(formData, d, data));
+  useEffect(() => {
+    setForm(buildStep2State(formData, data.detalle || {}, data));
+  }, [formData, data]);
+  
   /* ------------------------------------------------------------------ */
   /*  VALIDACIÓN                                                        */
   /* ------------------------------------------------------------------ */
   const [submitted, setSubmitted] = useState(false);
   const isEmpty  = v => v === '' || v === null || v === undefined;
-
+  const [debugLog, setDebugLog] = useState([]);
+  
   /* campos obligatorios según tipo de operación */
   const getRequiredFields = () => {
     if (isImportExport) {
@@ -136,22 +225,55 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
   /* ¿el campo tiene error? (solo después de enviar) */
   const hasError = name => submitted && isEmpty(form[name]);
 
-  /* chat → auto-fill */
-  useEffect(()=>{
-    const fill = (f,v)=>{
-      console.log('📝 Step2 recibió fill-field:', f, '=', v);
-      setForm(p=>({...p,[f]:v}));
+  useEffect(() => {
+    const labelReset = {
+      origen: 'origen_label',
+      destino: 'destino_label',
+      lugar_recogida_contenedor: 'lugar_recogida_contenedor_label',
+      producto: 'producto_label',
+      empaque: 'empaque_label',
+      clase_vehiculo: 'clase_vehiculo_label',
+      carroceria: 'carroceria_label'
     };
-    chatBus.on('fill-field',fill);
-    return()=>chatBus.off('fill-field',fill);
-  },[]);
+
+    const fill = (field, value) => {
+      setForm(prev => {
+        // Ignore null/undefined/""
+        if (value === null || value === undefined || value === '' || value === 'null') {
+          return prev;
+        }
+
+        const next = { ...prev };
+
+        if (['origen', 'destino', 'lugar_recogida_contenedor'].includes(field)) {
+          const normalized = normalizeCityCode(String(value));
+          if (!normalized) return prev;         // don’t wipe the city if the AI sends garbage
+
+          next[field] = normalized;
+          next[`${field}_label`] = '';          // force AsyncSelect to refresh label
+        } else {
+          next[field] = value;
+          if (labelReset[field]) next[labelReset[field]] = '';
+        }
+
+        return next;
+      });
+    };
+
+    chatBus.on('fill-field', fill);
+    return () => chatBus.off('fill-field', fill);
+  }, []);
 
   /* helpers asincrónicos  ─────────────────────────── */
-  const getCityName   = async code => {
+  const getCityName = async code => {
     if (!code) return '';
     const { data } = await searchCiudades(code);
     const f = data.find(c => String(c.ciudad_codigodane) === String(code));
-    return f ? f.ciudad_nombre : '';
+    return f
+      ? `${f.ciudad_codigodane} – ${f.ciudad_nombre}${
+          f.municipio_nombre ? ` – ${f.municipio_nombre}` : ''
+        }`
+      : '';
   };
 
   const getProductName = async code => {
@@ -253,7 +375,6 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
 
   return (
     <form onSubmit={submit} className="space-y-10">
-
       {/* ───── Título ───── */}
       <h2 className="text-2xl font-semibold flex items-center gap-2 text-gray-800">
         <FiPackage className="text-orange-500" />
@@ -264,52 +385,54 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
       <div className="grid md:grid-cols-2 gap-8">
 
         {/* ───── Ciudad de origen ───── */}
-        <div className={hasError('origen') ? 'border border-red-500 rounded p-1' : ''}>
-          <label htmlFor="origen" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
-            <FiMapPin className="text-orange-500" /> Ciudad de origen
-          </label>
-          <AsyncSearchSelect
-            id="origen"
-            load={searchCiudades}
-            getOpt={c => ({ value: c.ciudad_codigodane, label: c.ciudad_nombre })}
-            value={
-              form.origen
-                ? { value: form.origen, label: form.origen_label || form.origen }
-                : null
-            }
-            onChange={opt =>
-              setForm(p => ({
-                ...p,
-                origen: opt?.value || '',
-                origen_label: opt?.label || ''
-              }))
-            }
-          />
-        </div>
+    
+        <AsyncSearchSelect
+          id="origen"
+          load={searchCiudades}
+          getOpt={c => ({
+            value : c.ciudad_codigodane,
+            label : `${c.ciudad_codigodane} – ${c.ciudad_nombre}${
+              c.municipio_nombre ? ` – ${c.municipio_nombre}` : ''
+            }`
+          })}
+          value={
+            form.origen
+              ? { value: form.origen, label: form.origen_label || form.origen }
+              : null
+          }
+          onChange={opt =>
+            setForm(p => ({
+              ...p,
+              origen       : opt?.value || '',
+              origen_label : opt?.label || ''
+            }))
+          }
+        />
 
         {/* ───── Ciudad de destino ───── */}
-        <div className={hasError('destino') ? 'border border-red-500 rounded p-1' : ''}>
-          <label htmlFor="destino" className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
-            <FiMapPin className="text-orange-500" /> Ciudad de destino
-          </label>
-          <AsyncSearchSelect
-            id="destino"
-            load={searchCiudades}
-            getOpt={c => ({ value: c.ciudad_codigodane, label: c.ciudad_nombre })}
-            value={
-              form.destino
-                ? { value: form.destino, label: form.destino_label || form.destino }
-                : null
-            }
-            onChange={opt =>
-              setForm(p => ({
-                ...p,
-                destino: opt?.value || '',
-                destino_label: opt?.label || ''
-              }))
-            }
-          />
-        </div>
+       
+        <AsyncSearchSelect
+          id="destino"
+          load={searchCiudades}
+          getOpt={c => ({
+            value : c.ciudad_codigodane,
+            label : `${c.ciudad_codigodane} – ${c.ciudad_nombre}${
+              c.municipio_nombre ? ` – ${c.municipio_nombre}` : ''
+            }`
+          })}
+          value={
+            form.destino
+              ? { value: form.destino, label: form.destino_label || form.destino }
+              : null
+          }
+          onChange={opt =>
+            setForm(p => ({
+              ...p,
+              destino       : opt?.value || '',
+              destino_label : opt?.label || ''
+            }))
+          }
+        />
 
         {/* ───── Campo específico para EXPORTACIONES: Lugar de recogida del contenedor ───── */}
         {operationType === 'EXPORTACION' && (
@@ -320,17 +443,25 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
             <AsyncSearchSelect
               id="lugar_recogida_contenedor"
               load={searchCiudades}
-              getOpt={c => ({ value: c.ciudad_codigodane, label: c.ciudad_nombre })}
+              getOpt={c => ({
+                value : c.ciudad_codigodane,
+                label : `${c.ciudad_codigodane} – ${c.ciudad_nombre}${
+                  c.municipio_nombre ? ` – ${c.municipio_nombre}` : ''
+                }`
+              })}
               value={
                 form.lugar_recogida_contenedor
-                  ? { value: form.lugar_recogida_contenedor, label: form.lugar_recogida_contenedor_label || form.lugar_recogida_contenedor }
+                  ? {
+                      value: form.lugar_recogida_contenedor,
+                      label: form.lugar_recogida_contenedor_label || form.lugar_recogida_contenedor
+                    }
                   : null
               }
               onChange={opt =>
                 setForm(p => ({
                   ...p,
-                  lugar_recogida_contenedor: opt?.value || '',
-                  lugar_recogida_contenedor_label: opt?.label || ''
+                  lugar_recogida_contenedor       : opt?.value || '',
+                  lugar_recogida_contenedor_label : opt?.label || ''
                 }))
               }
             />
@@ -798,6 +929,23 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
           {loading ? 'Guardando…' : <>Siguiente <FiChevronRight /></>}
         </button>
       </div>
+      {/* ────────── Debug tools ────────── */}
+      {/* <div className="pt-4 border-t border-dashed border-gray-200">
+        <button
+          type="button"
+          onClick={() => setShowDebug(v => !v)}
+          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
+        >
+          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
+        </button>
+
+        <DebugInspector
+          show={showDebug}
+          form={form}
+          formData={formData}
+          data={data}
+        />
+      </div> */}
     </form>
   );
 }

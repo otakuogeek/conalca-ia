@@ -28,6 +28,8 @@ class VerifyCsrfToken extends Middleware
         'api/agent/*',
         // Rutas del agente de voz
         'api/voice/*',
+        // Sincronización de vehículos (proceso largo)
+        'vehiculos/sincronizar',
     ];
 
     /**

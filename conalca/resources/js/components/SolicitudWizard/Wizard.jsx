@@ -26,6 +26,12 @@ const TOTAL = 6;
 /* ───── helpers ─────────────────────────────────────────── */
 
 // campos de cada paso para re-estructurar el prefill plano
+const STEP1_FIELDS = [
+  'tipo_viaje', 'moneda', 'fuente_solicitud', 'condicion_despacho',
+  'condicion_facturacion', 'ciudad_facturacion', 'ciudad_facturacion_label',
+  'vendedor', 'vendedor_label', 'cliente_codigo', 'cliente_nombre',
+  'tipo_operacion', 'centro_costo_despacho', 'operation_flow'
+];
 const STEP2 = ['origen','destino','cantidad_mercancia','peso','valor_mercancia',
   'producto','empaque','cantidad_vehiculos','clase_vehiculo','carroceria',
   'minimo_modelo','tipo_flete','flete_conductor','flete_ministerio','tipo_tarifa',
@@ -43,6 +49,16 @@ const STEP6 = [
   'acompanamiento_cuenta_acom',
   'valor_acompanante_acom'
 ];
+
+const fieldToStepKey = field => {
+  if (STEP2.includes(field)) return 'step2';
+  if (STEP3.includes(field)) return 'step3';
+  if (STEP4.includes(field)) return 'step4';
+  if (STEP5.includes(field)) return 'step5';
+  if (STEP6.includes(field)) return 'step6';
+  if (STEP1_FIELDS.includes(field)) return 'step1';
+  return null; // ignore unknown fields
+};
 
 /* Convierte el objeto plano devuelto por /prefill
    al formato que usan los componentes (detalle, cargue, etc.) */
@@ -64,6 +80,53 @@ const reshapePrefill = (pref) => {
     else                             out[k]                = v;  // paso 1
   }
   return out;
+};
+
+const mergeMissingSteps = (solicitud, fallbackPrefill) => {
+  if (!fallbackPrefill) return solicitud;
+
+  const merged = { ...solicitud };
+
+  if (!merged.detalle || !Object.keys(merged.detalle).length) {
+    merged.detalle = fallbackPrefill.detalle;
+  }
+  if (!merged.cargue || !Object.keys(merged.cargue).length) {
+    merged.cargue = fallbackPrefill.cargue;
+  }
+  if (!merged.contenedor || !Object.keys(merged.contenedor).length) {
+    merged.contenedor = fallbackPrefill.contenedor;
+  }
+  if (!merged.internacional || !Object.keys(merged.internacional).length) {
+    merged.internacional = fallbackPrefill.internacional;
+  }
+  if (!merged.acompanamiento || !Object.keys(merged.acompanamiento).length) {
+    merged.acompanamiento = fallbackPrefill.acompanamiento;
+  }
+
+  const fallbackIntl = fallbackPrefill.internacional || {};
+  if (
+    fallbackIntl.modalidad_internacional &&
+    (!merged.internacional ||
+     merged.internacional.modalidad_internacional === '' ||
+     merged.internacional.modalidad_internacional === null ||
+     merged.internacional.modalidad_internacional === 'null')
+  ) {
+    merged.internacional = {
+      ...(merged.internacional || {}),
+      modalidad_internacional: fallbackIntl.modalidad_internacional
+    };
+  }
+
+  if (
+    fallbackPrefill.modalidad_internacional &&
+    (!merged.modalidad_internacional ||
+     merged.modalidad_internacional === '' ||
+     merged.modalidad_internacional === 'null')
+  ) {
+    merged.modalidad_internacional = fallbackPrefill.modalidad_internacional;
+  }
+
+  return merged;
 };
 
 /* Emite TODOS los campos (también los anidados) al chatBus
@@ -95,68 +158,105 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
     step6: {}
   });
 
+  useEffect(() => {
+    const handleChatFill = (field, value) => {
+      const stepKey = fieldToStepKey(field);
+      if (!stepKey) return;
+
+      setFormData(prev => ({
+        ...prev,
+        [stepKey]: {
+          ...prev[stepKey],
+          [field]: value
+        }
+      }));
+    };
+
+    chatBus.on('fill-field', handleChatFill);
+    return () => chatBus.off('fill-field', handleChatFill);
+  }, []);
+
   // Emitir cambio de paso al ChatBox
   useEffect(() => {
     console.log('📍 Wizard: Emitiendo cambio de paso a', current);
     chatBus.emit('step-changed', current);
   }, [current]);
 
-  /* ─── al cambiar de cotización o grupo ────────────────────────── */
-  useEffect(() => {
-    if (!cotizacionId && !groupId) return;
+    useEffect(() => {
+      if (!cotizacionId && !groupId) return;
 
-    const load = async () => {
-      setCurrent(1);
-      
-      // Limpiar datos del formulario al cargar nueva cotización/grupo
-      setFormData({
-        step1: {},
-        step2: {},
-        step3: {},
-        step4: {},
-        step5: {},
-        step6: {}
-      });
-      
-      if (groupId) {
-        /* Cargar desde grupo de cotización */
-        console.log('🔄 Cargando prefill desde grupo:', groupId);
+      const load = async () => {
+        setCurrent(1);
+
+        // reset cached steps each time we load a new cotización/grupo
+        setFormData({
+          step1: {},
+          step2: {},
+          step3: {},
+          step4: {},
+          step5: {},
+          step6: {}
+        });
+
         try {
-          const { data: prefillData } = await fetchGroupPrefill(groupId);
-          console.log('✅ Prefill desde grupo cargado:', prefillData);
-          
-          const shaped = reshapePrefill(prefillData);
-          setLocal(shaped);
-          emitAll(shaped);
-          
-          console.log('📝 Datos aplicados al wizard desde grupo:', shaped);
+          /* 1) Always try to bring the existing solicitud (if any) */
+          if (cotizacionId) {
+            const { data: solicitud } = await fetchSolicitud(cotizacionId);
+
+            if (solicitud) {
+              let enriched = solicitud;
+
+              const needsFallback =
+                (!solicitud.detalle || !Object.keys(solicitud.detalle).length) ||
+                (!solicitud.cargue || !Object.keys(solicitud.cargue).length) ||
+                (!solicitud.contenedor || !Object.keys(solicitud.contenedor).length) ||
+                (!solicitud.internacional || !Object.keys(solicitud.internacional).length) ||
+                (!solicitud.acompanamiento || !Object.keys(solicitud.acompanamiento).length) ||
+                // ← NEW: modalidad exists but is empty
+                (!solicitud.internacional ||
+                !solicitud.internacional.modalidad_internacional ||
+                solicitud.internacional.modalidad_internacional === 'null');
+
+              if (needsFallback) {
+                const { data: prefill } = await fetchPrefill(cotizacionId);
+                const fallback = reshapePrefill(prefill);
+                enriched = mergeMissingSteps(solicitud, fallback);
+              }
+
+              setLocal(enriched);
+              emitAll(enriched);
+              return;
+            }
+          }
+
+          /* 2) No solicitud yet → use group prefill if available */
+          if (groupId) {
+            console.log('🔄 Loading prefill from group:', groupId);
+
+            const { data: prefillData } = await fetchGroupPrefill(groupId);
+            console.log('✅ Prefill (group) loaded:', prefillData);
+
+            const shaped = reshapePrefill(prefillData);
+            setLocal(shaped);
+            emitAll(shaped);
+
+            return;
+          }
+
+          /* 3) Fallback to single-cotización prefill */
+          if (cotizacionId) {
+            const { data: prefill } = await fetchPrefill(cotizacionId);
+            const reshaped = reshapePrefill(prefill);
+            setLocal(reshaped);
+            emitAll(prefill); // only if you still need the flat data in ChatBox
+          }
         } catch (error) {
-          console.error('❌ Error cargando prefill desde grupo:', error);
+          console.error('❌ Error loading wizard data:', error);
         }
-        return;
-      }
-      
-      if (cotizacionId) {
-        /* 1) ¿ya existe una Solicitud? */
-        const { data: solicitud } = await fetchSolicitud(cotizacionId);
+      };
 
-        if (solicitud) {
-          setLocal(solicitud);
-          // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
-          // emitAll(solicitud);
-        } else {
-          /* 2) si no, traemos el pre-fill plano y lo re-armamos */
-          const { data: pre } = await fetchPrefill(cotizacionId);
-          const reshaped = reshapePrefill(pre);
-          setLocal(reshaped);
-          // COMENTADO: No emitir automáticamente, solo cuando el usuario lo pida
-          // emitAll(pre);            // se emite el plano (el bot sólo necesita pares k/v)
-        }
-      }
-    };
-
-    load();
-  }, [cotizacionId, groupId]);
+      load();
+    }, [cotizacionId, groupId]);
 
   /* ─── escuchar rellenos on-the-fly desde ChatBox ──────── */
   useEffect(() => {
@@ -166,24 +266,11 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
   }, []);
 
   /* ─── guardar cada paso ───────────────────────────────── */
-  // const sendStep = (stepKey, fields) => {
-  //   setLoading(true);
-  //   saveStep({ step: stepKey, CotizacionModelId: cotizacionId, ...fields })
-  //     .then(() => {
-  //       if (current < TOTAL) {
-  //         setCurrent(c => c + 1);          // avanza al siguiente paso
-  //       } else {
-  //         onClose();                       // cierra el modal
-  //         window.location.reload();        // ← recarga la vista
-  //       }
-  //     })
-  //     .finally(() => setLoading(false));
-  // };
 
   const sendStep = async (stepKey, fields) => {
     setLoading(true);
 
-    // Guardar datos del formulario en el estado global
+    // Persist the snapshot of this step locally (formData) so it can be reloaded if user comes back
     const stepNumber = stepKey.replace('step_', '');
     setFormData(prev => ({
       ...prev,
@@ -197,27 +284,26 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
         ...fields
       });
 
-      /* ─── SOLO EN EL PASO 6 mostramos la alerta ─── */
+      /* ─── ONLY on step 6 do we show the Silogtran result ─── */
       if (stepKey === 'step_6') {
         await showSilogtranMsg(resp);
       }
 
-      /* navegación normal del wizard */
+      // Normal wizard navigation
       if (current < TOTAL) {
         setCurrent(c => c + 1);
       } else {
-        onClose();                    // cierra modal al terminar
-        window.location.reload();     // si todavía lo necesitas
+        onClose();                    // close modal when all steps are done
+        window.location.reload();     // remove if you prefer to refresh data manually
       }
     } catch (err) {
-      console.error('Error guardando paso', err);
-      alert('⚠️  Error guardando la solicitud. Intenta de nuevo.');
+      console.error('Error saving step', err);
+      alert('⚠️ Error saving the request. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Función para navegar hacia atrás sin guardar
   const goToPrevStep = (currentStepFields = {}) => {
     // Guardar datos actuales del paso antes de ir hacia atrás
     const stepNumber = current;

@@ -71,7 +71,7 @@ const ALIAS = {
   'tipo mercancía'     : 'tipo_mercancia',
   'mercancia'          : 'tipo_mercancia',
   'mercancía'          : 'tipo_mercancia',
-  'producto'           : 'tipo_mercancia',
+  'producto'           : 'producto',
 
   'peso'               : 'peso',
   'peso total'         : 'peso',
@@ -80,6 +80,46 @@ const ALIAS = {
   'kg'                 : 'peso',
   'kilos'              : 'peso',
 
+  // ---- NUEVOS PARA PASO 2 ----
+  'tipo de carga'      : 'tipo_carga',
+  'tipo carga'         : 'tipo_carga',
+  'carga'              : 'tipo_carga',
+
+  'descripcion mercancia' : 'descripcion_mercancia',
+  'descripción mercancía' : 'descripcion_mercancia',
+  'descripcion de la mercancia': 'descripcion_mercancia',
+  'descripción de la mercancía': 'descripcion_mercancia',
+  'mercancia descripcion' : 'descripcion_mercancia',
+
+  'lugar recogida contenedor'  : 'lugar_recogida_contenedor',
+  'recogida contenedor'        : 'lugar_recogida_contenedor',
+  'contenedor vacio'           : 'lugar_recogida_contenedor',
+
+  'cantidad vehiculos'         : 'cantidad_vehiculos',
+  'cantidad vehículos'         : 'cantidad_vehiculos',
+
+  'clase vehiculo'             : 'clase_vehiculo',
+  'carroceria'                 : 'carroceria',
+  'carrocería'                 : 'carroceria',
+
+  'minimo modelo'              : 'minimo_modelo',
+  'mínimo modelo'              : 'minimo_modelo',
+
+  'tipo flete'                 : 'tipo_flete',
+  'flete ministerio'           : 'flete_ministerio',
+  'flete conductor'            : 'flete_conductor',
+
+  'tipo tarifa'                : 'tipo_tarifa',
+  'tarifa cliente'             : 'tarifa_cliente',
+
+  'cargue cuenta de'           : 'cargue_cuenta_de',
+  'descargue cuenta de'        : 'descargue_cuenta_de',
+  'seguro cuenta de'           : 'seguro_cuenta_de',
+
+  'kit seguridad'              : 'kit_seguridad',
+  'tipo remesa rndc'           : 'tipo_remesa_rndc',
+
+  'tipo mercancia rndc'        : 'tipo_remesa_rndc', 
   'origen'             : 'origen',
   'ciudad origen'      : 'origen',
   'desde'              : 'origen',
@@ -95,7 +135,64 @@ const ALIAS = {
   'vehículo acompañamiento' : 'vehiculo_acom',
   'vehiculos acompañamiento': 'vehiculo_acom',
   'vehículos acompañamiento': 'vehiculo_acom',
-  'vehiculo_acom'           : 'vehiculo_acom'
+  'vehiculo_acom'           : 'vehiculo_acom',
+
+
+    // ---- Step 3 – Cargue ----
+  'fecha cargue'           : 'fecha_cargue',
+  'fecha_cargue'           : 'fecha_cargue',
+
+  'hora cargue'            : 'hora_cargue',
+  'horacargue'             : 'hora_cargue',
+  'hora de cargue'         : 'hora_cargue',
+
+  'remitente'              : 'remitente',
+  'remitente_codigo'       : 'remitente',
+  'remitente codigo'       : 'remitente',
+
+  'destinatario'           : 'destinatario',
+  'destinatario_codigo'    : 'destinatario',
+
+  'promesa servicio'       : 'promesa_servicio',
+  'promesa_servicio'       : 'promesa_servicio',
+
+  'promesaservicio_hora'   : 'promesa_servicio_hora',
+  'hora promesa servicio'  : 'promesa_servicio_hora',
+
+  'documento transporte'   : 'documento_transporte',
+  'documento_transporte'   : 'documento_transporte',
+
+  'observacion cargue'     : 'observacion_cargue',
+  'observación cargue'     : 'observacion_cargue',
+
+  'contacto'               : 'contacto',
+  'telefono contacto'      : 'contacto',
+
+  'email'                  : 'email',
+  'correo'                 : 'email',
+
+    // ---- Step 6 – Acompañamiento ----
+  'vehiculoacompanamiento'   : 'vehiculo_acom',
+  'vehículoacompañamiento'   : 'vehiculo_acom',
+  'vehiculo_acompanamiento'  : 'vehiculo_acom',
+
+  'tipaco_codigo'            : 'tipo_vehiculo_acom',
+  'tipo acc'                 : 'tipo_vehiculo_acom',
+  'tipo acompañamiento'      : 'tipo_vehiculo_acom',
+
+  'acompanamientocuentade'   : 'acompanamiento_cuenta_acom',
+  'acompañamientocuentade'   : 'acompanamiento_cuenta_acom',
+  'acompanamiento cuenta de' : 'acompanamiento_cuenta_acom',
+  'acompañamiento cuenta de' : 'acompanamiento_cuenta_acom',
+
+  'acompanamientovalor'      : 'valor_acompanante_acom',
+  'acompañamientovalor'      : 'valor_acompanante_acom',
+  'valor acompanamiento'     : 'valor_acompanante_acom',
+  'valor acompañamiento'     : 'valor_acompanante_acom',
+  'acompanamiento_valor'     : 'valor_acompanante_acom',      
+  'acompañamiento_valor'     : 'valor_acompanante_acom',      
+  'acompanamiento valor'     : 'valor_acompanante_acom',      
+  'acompañamiento valor'     : 'valor_acompanante_acom'       
 };
 
 /* ---------- normalizar campos ---------- */
@@ -138,10 +235,52 @@ function normalizeValue(field, rawValue) {
       if (modalidadUpper.includes('NACIONALIZADA')) return 'NACIONALIZADA';
       return modalidadUpper;
 
+    case 'tipo_carga': {
+      const upper = value.toUpperCase();
+      if (upper.includes('CONT')) return 'CARGA_CONTENEDORIZADA';
+      if (upper.includes('SUEL')) return 'CARGA_SUELTA';
+      return upper.replace(/\s+/g, '_'); // fallback normalization
+    }
+
+    case 'lugar_recogida_contenedor':
+    case 'ciudad_facturacion':
+    case 'origen':
+    case 'destino':
+      return value.replace(/[^\d]/g, '');
+
+    case 'descripcion_mercancia':
+      return value;
+
+    case 'fecha_cargue':
+    case 'promesa_servicio': {
+      const normalized = value.replace(/\./g, '/').replace(/-/g, '/');
+      const parts = normalized.split(/[\/]/);
+      if (parts.length === 3) {
+        // assume dd/MM/yyyy
+        const [d, m, y] = parts;
+        if (d.length === 2 && m.length === 2 && y.length === 4) {
+          return `${y}-${m}-${d}`;
+        }
+      }
+      // already ISO or malformed: return trimmed string
+      return value;
+    }
+    
+    case 'hora_cargue':
+    case 'promesa_servicio_hora':
+      return value.replace(/[^\d:]/g, '').slice(0, 5);
+
     case 'peso':
     case 'valor_mercancia':
     case 'cantidad_mercancia':
+    case 'cantidad_vehiculos':
     case 'vehiculo_acom':
+    case 'tarifa_cliente':
+    case 'flete_conductor':
+    case 'flete_ministerio':
+    
+    // STEP 6
+    case 'valor_acompanante_acom':
       // Extraer solo números y puntos/comas
       const number = value.replace(/[^\d.,]/g, '').replace(',', '.');
       return number;
@@ -253,6 +392,16 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 // PASO 2 - Origen y destino
 // origen: nombre de ciudad (p.ej. "Bogotá")
 // destino: nombre de ciudad (p.ej. "Medellín")
+// origen, destino, lugar_recogida_contenedor (para exportación), tipo_carga,
+// cantidad_mercancia, peso, valor_mercancia,
+// producto, empaque, cantidad_vehiculos,
+// clase_vehiculo, carroceria, minimo_modelo,
+// tipo_flete, flete_conductor, flete_ministerio,
+// tipo_tarifa, tarifa_cliente,
+// cargue_cuenta_de, descargue_cuenta_de, seguro_cuenta_de,
+// descripcion_mercancia, kit_seguridad, tipo_remesa_rndc,
+// sub_cliente, tipo_mercancia (solo si el usuario lo menciona explícitamente)
+
 
 // PASO 3 - Información de mercancía
 // tipo_mercancia: tipo de producto/mercancía (p.ej. "ALIMENTOS")
@@ -263,11 +412,19 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 // PASO 4 - Contenedor
 // contenedor: uno de [SI, NO] (indica si requiere contenedor)
 
-// PASO 5 - Internacional
+// PASO 5 - Modalidad internacional
 // modalidad_internacional: uno de [OTM, DTA, DTAI, NACIONALIZADA]
 
+// Reglas especiales:
+// • Si el usuario solo menciona "OTM", "DTA", "DTAI", "NACIONALIZADA" o frases como
+//   "ponle DTA", "mejor en nacionalizada", asume que se refiere a modalidad_internacional.
+// • No vuelvas a escribir tipo_carga con esos valores a menos que el usuario lo indique claramente.
+
 // PASO 6 - Acompañamiento
-// vehiculo_acom: número entero como string (p.ej. "2") que indica la cantidad de vehículos de acompañamiento
+// vehiculo_acom: número entero (cantidad de vehículos)
+// tipo_vehiculo_acom: uno de [MOTORIZADO, VEHICULAR, CABINA]
+// acompanamiento_cuenta_acom: uno de [CLIENTE, EMPRESA]
+// valor_acompanante_acom: valor numérico
 
 // Instrucciones:
 
@@ -312,6 +469,9 @@ PASO 3 - Información de mercancía:
 - peso: "500"
 - cantidad_mercancia: "100"
 - valor_mercancia: "1000000"
+- fecha_cargue, hora_cargue, remitente, destinatario, contacto
+- promesa_servicio, promesa_servicio_hora
+- documento_transporte, observacion_cargue
 
 PASO 4 - Contenedor:
 - contenedor: "NO"
@@ -325,13 +485,17 @@ PASO 6 - Acompañamiento:
 Cuando detectes la solicitud de llenado completo, llama a "rellenar" una vez por cada campo de la lista anterior.
 
 Campos principales para detección normal:
-- tipo_viaje: [NACIONAL, URBANO, INTERNACIONAL]
-- moneda: [PESOS, DOLARES] 
-- origen/destino: texto de ciudades
-- peso: número
-- producto: tipo de mercancía
-- cantidad_mercancia: número
-- valor_mercancia: número
+- tipo_viaje, moneda, fuente_solicitud
+- origen, destino, lugar_recogida_contenedor
+- tipo_carga, cantidad_mercancia, peso, valor_mercancia
+- producto, empaque, descripcion_mercancia
+- cantidad_vehiculos, clase_vehiculo, carroceria
+- minimo_modelo, tipo_flete, flete_conductor, flete_ministerio
+- tipo_tarifa, tarifa_cliente
+- cargue_cuenta_de, descargue_cuenta_de, seguro_cuenta_de
+- kit_seguridad, tipo_remesa_rndc
+- modalidad_internacional
+- contenedor, modalidad_internacional, vehiculo_acom
 
 IMPORTANTE: Usa SIEMPRE las funciones antes de responder.
 `;
@@ -339,6 +503,13 @@ IMPORTANTE: Usa SIEMPRE las funciones antes de responder.
 /* ---------- Componente ---------- */
 export default function ChatBox() {
   console.log('🎯 ChatBox v4.0 - REFACTORIZADO Y FUNCIONAL');
+
+  const currentStepRef = useRef(1);
+  useEffect(() => {
+    const handleStepChange = step => { currentStepRef.current = step; };
+    chatBus.on('step-changed', handleStepChange);
+    return () => chatBus.off('step-changed', handleStepChange);
+  }, []);
   
   // Estados principales
   const [messages, setMsgs] = useState([
@@ -354,19 +525,183 @@ export default function ChatBox() {
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const messagesEndRef = useRef(null);
+  const listeningRef = useRef(false);
 
   // Helper para agregar mensajes
   const pushMsg = m => {
     console.log('➕ Agregando mensaje:', m);
     setMsgs(prev => [...prev, m]);
   };
-  
+
   // Auto-scroll cuando hay nuevos mensajes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   // Función REFACTORIZADA para comunicación con OpenAI
+  // const runChat = async (history) => {
+  //   console.log('🚀 runChat iniciado');
+  //   console.log('📜 Historia recibida:', history.length, 'mensajes');
+    
+  //   let workHistory = [
+  //     { role: 'system', content: SYSTEM_PROMPT },
+  //     ...history
+  //   ];
+
+  //   console.log('📤 Enviando a OpenAI API...');
+  //   console.log('🔑 API Key presente:', !!import.meta.env.VITE_OPENAI_API_KEY);
+
+  //   // Detectar si el último mensaje del usuario contiene datos específicos
+  //   const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
+    
+  //   // Detectar comando de llenado completo
+  //   const isCompleteFormRequest = /\b(llena todo|completa el formulario|llena.*ejemplo|llena.*campos|formulario.*ejemplo|datos.*ejemplo|llena.*completo)\b/.test(lastUserMessage);
+    
+  //   // Detectar datos específicos
+  //   const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina)\b/.test(lastUserMessage);
+    
+  //   const functionCallSetting = (isCompleteFormRequest || containsData) ? { name: 'rellenar' } : 'auto';
+  //   console.log('🎯 Function call setting:', functionCallSetting, 'for message:', lastUserMessage);
+  //   console.log('🔄 Complete form request:', isCompleteFormRequest, '| Contains data:', containsData);
+
+  //   let response = await openai.chat.completions.create({
+  //     model        : 'gpt-4o-mini',
+  //     messages     : workHistory,
+  //     functions    : FUNCTIONS,
+  //     function_call: functionCallSetting
+  //   });
+
+  //   console.log('📥 Respuesta de OpenAI:', response);
+
+  //   // ── mientras la IA siga pidiendo llamar a la función ─────────────────────
+  //   while (response.choices?.[0]?.message?.function_call) {
+  //     const assistantMsg = response.choices[0].message;
+
+  //     /* ① añadimos la petición de función al histórico (solo para la IA,
+  //       no se guarda en el estado que renderiza la UI) */
+  //     workHistory.push(assistantMsg);
+
+  //     const call = assistantMsg.function_call;
+  //     try {
+  //       // const args      = JSON.parse(call.arguments || '{}');
+  //       // const field     = normalizeKey(args.field);
+  //       // const rawValue  = String(args.value ?? '');
+  //       // const value     = normalizeValue(field, rawValue);
+        
+
+  //       // const fieldRaw = args.field;
+  //       // const valueRaw = String(args.value ?? '');
+
+
+
+
+
+
+  //       // const args     = JSON.parse(call.arguments || '{}');
+  //       // const fieldRaw = args.field;
+  //       // const valueRaw = String(args.value ?? '');
+
+  //       // let field = normalizeKey(fieldRaw);
+  //       // let value = normalizeValue(field, valueRaw);
+
+  //       // const MODALITY_VALUES = ['OTM', 'DTA', 'DTAI', 'NACIONALIZADA'];
+
+  //       // if (field === 'tipo_carga' && MODALITY_VALUES.includes(value.toUpperCase())) {
+  //       //   field = 'modalidad_internacional';
+  //       // }
+
+  //       const args     = JSON.parse(call.arguments || '{}');
+  //       const fieldRaw = args.field;
+  //       const valueRaw = String(args.value ?? '');
+
+  //       let field = normalizeKey(fieldRaw);
+  //       let value = normalizeValue(field, valueRaw);
+
+  //       const MODALITY_VALUES = ['OTM', 'DTA', 'DTAI', 'NACIONALIZADA'];
+  //       const ACC_VALUES      = ['MOTORIZADO', 'VEHICULAR', 'CABINA'];
+
+  //       // Requests like "ponlo en DTA" must hit Step 5, not tipo_carga
+  //       if (field === 'tipo_carga' && MODALITY_VALUES.includes(value.toUpperCase())) {
+  //         field = 'modalidad_internacional';
+  //       }
+
+  //       // If the model insists on calling tipo_carga but the value is an ACC type,
+  //       // force it into Step 6.
+  //       if (field === 'tipo_carga' && ACC_VALUES.includes(value.toUpperCase())) {
+  //         field = 'tipo_vehiculo_acom';
+  //       }
+
+  //       const activeStep = currentStepRef.current;
+  //       const wantsStep6 = activeStep === 6 || rawClean.includes('acompanamiento');
+  //       if (wantsStep6) {
+  //         if (['cargue_cuenta_de', 'descargue_cuenta_de', 'seguro_cuenta_de'].includes(field)) {
+  //           field = 'acompanamiento_cuenta_acom';
+  //         }
+  //         if (['valor_mercancia', 'tarifa_cliente'].includes(field)) {
+  //           field = 'valor_acompanante_acom';
+  //         }
+  //         if (['tipo_carga', 'tipo_remesa_rndc'].includes(field) || ACC_VALUES.includes(value.toUpperCase())) {
+  //           field = 'tipo_vehiculo_acom';
+  //         }
+  //       }
+
+  //       // Same idea for the other ACC fields: if the raw field name clearly points
+  //       // to accompaniment but the alias failed, fix it here.
+        
+        
+  //       // const raw = String(fieldRaw || '').toLowerCase();
+  //       // if (raw.includes('acompanamientocuent') && field !== 'acompanamiento_cuenta_acom') {
+  //       //   field = 'acompanamiento_cuenta_acom';
+  //       // }
+  //       // if (raw.includes('acompanamientoval') && field !== 'valor_acompanante_acom') {
+  //       //   field = 'valor_acompanante_acom';
+  //       // }
+
+  //       const rawOriginal = String(fieldRaw ?? '');
+  //       const rawLower    = rawOriginal.toLowerCase();
+  //       const rawClean    = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // remove accents
+
+  //       if (rawClean.includes('acompanamientocuent') && field !== 'acompanamiento_cuenta_acom') {
+  //         field = 'acompanamiento_cuenta_acom';
+  //       }
+  //       if (rawClean.includes('acompanamientoval') && field !== 'valor_acompanante_acom') {
+  //         field = 'valor_acompanante_acom';
+  //       }
+
+
+  //       chatBus.emit('fill-field', field, value);   // ← rellena el formulario
+
+  //       /* ② confirmación interna hacia el modelo (role:function),
+  //             tampoco se muestra en la UI                                 */
+  //       workHistory.push({
+  //         role   : 'function',
+  //         name   : call.name,
+  //         content: JSON.stringify({ field, value })
+  //       });
+  //     } catch (err) {
+  //       console.error('Error parseando argumentos de function_call', err);
+  //       workHistory.push({
+  //         role   : 'function',
+  //         name   : call?.name || 'rellenar',
+  //         content: 'error'
+  //       });
+  //     }
+
+  //     // nueva ronda
+  //     response = await openai.chat.completions.create({
+  //       model        : 'gpt-4o-mini',
+  //       messages     : workHistory,
+  //       functions    : FUNCTIONS,
+  //       function_call: 'auto'
+  //     });
+  //   }
+
+  //   // ── cuando ya no hay más llamadas, se muestra solo el mensaje final ──────
+  //   const finalMsg = response.choices?.[0]?.message;
+  //   if (finalMsg) pushMsg(finalMsg);
+  // };
+
+  // resources/js/components/SolicitudWizard/ChatBox.jsx
   const runChat = async (history) => {
     console.log('🚀 runChat iniciado');
     console.log('📜 Historia recibida:', history.length, 'mensajes');
@@ -379,15 +714,9 @@ export default function ChatBox() {
     console.log('📤 Enviando a OpenAI API...');
     console.log('🔑 API Key presente:', !!import.meta.env.VITE_OPENAI_API_KEY);
 
-    // Detectar si el último mensaje del usuario contiene datos específicos
     const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
-    
-    // Detectar comando de llenado completo
     const isCompleteFormRequest = /\b(llena todo|completa el formulario|llena.*ejemplo|llena.*campos|formulario.*ejemplo|datos.*ejemplo|llena.*completo)\b/.test(lastUserMessage);
-    
-    // Detectar datos específicos
-    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd)\b/.test(lastUserMessage);
-    
+    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina)\b/.test(lastUserMessage);
     const functionCallSetting = (isCompleteFormRequest || containsData) ? { name: 'rellenar' } : 'auto';
     console.log('🎯 Function call setting:', functionCallSetting, 'for message:', lastUserMessage);
     console.log('🔄 Complete form request:', isCompleteFormRequest, '| Contains data:', containsData);
@@ -401,28 +730,57 @@ export default function ChatBox() {
 
     console.log('📥 Respuesta de OpenAI:', response);
 
-    // ── mientras la IA siga pidiendo llamar a la función ─────────────────────
     while (response.choices?.[0]?.message?.function_call) {
       const assistantMsg = response.choices[0].message;
-
-      /* ① añadimos la petición de función al histórico (solo para la IA,
-        no se guarda en el estado que renderiza la UI) */
       workHistory.push(assistantMsg);
 
       const call = assistantMsg.function_call;
       try {
-        const args      = JSON.parse(call.arguments || '{}');
-        const field     = normalizeKey(args.field);
-        const rawValue  = String(args.value ?? '');
-        const value     = normalizeValue(field, rawValue);
+        const args     = JSON.parse(call.arguments || '{}');
+        const fieldRaw = args.field;
+        const valueRaw = String(args.value ?? '');
 
-        console.log('[func-call]', field, rawValue, '=>', value);
-        console.log('🎯 Emitiendo evento fill-field:', field, value);
-        chatBus.emit('fill-field', field, value);   // ← rellena el formulario
-        console.log('✅ Evento emitido');
+        const rawOriginal = String(fieldRaw ?? '');
+        const rawLower    = rawOriginal.toLowerCase();
+        const rawClean    = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-        /* ② confirmación interna hacia el modelo (role:function),
-              tampoco se muestra en la UI                                 */
+        let field = normalizeKey(fieldRaw);
+        let value = normalizeValue(field, valueRaw);
+
+        const MODALITY_VALUES = ['OTM', 'DTA', 'DTAI', 'NACIONALIZADA'];
+        const ACC_VALUES      = ['MOTORIZADO', 'VEHICULAR', 'CABINA'];
+
+        if (field === 'tipo_carga' && MODALITY_VALUES.includes(value.toUpperCase())) {
+          field = 'modalidad_internacional';
+        }
+
+        if (field === 'tipo_carga' && ACC_VALUES.includes(value.toUpperCase())) {
+          field = 'tipo_vehiculo_acom';
+        }
+
+        const activeStep = currentStepRef.current;
+        const wantsStep6 = activeStep === 6 || rawClean.includes('acompanamiento');
+        if (wantsStep6) {
+          if (['cargue_cuenta_de', 'descargue_cuenta_de', 'seguro_cuenta_de'].includes(field)) {
+            field = 'acompanamiento_cuenta_acom';
+          }
+          if (['valor_mercancia', 'tarifa_cliente'].includes(field)) {
+            field = 'valor_acompanante_acom';
+          }
+          if (['tipo_carga', 'tipo_remesa_rndc'].includes(field) || ACC_VALUES.includes(value.toUpperCase())) {
+            field = 'tipo_vehiculo_acom';
+          }
+        }
+
+        if (rawClean.includes('acompanamientocuent') && field !== 'acompanamiento_cuenta_acom') {
+          field = 'acompanamiento_cuenta_acom';
+        }
+        if (rawClean.includes('acompanamientoval') && field !== 'valor_acompanante_acom') {
+          field = 'valor_acompanante_acom';
+        }
+
+        chatBus.emit('fill-field', field, value);
+
         workHistory.push({
           role   : 'function',
           name   : call.name,
@@ -437,7 +795,6 @@ export default function ChatBox() {
         });
       }
 
-      // nueva ronda
       response = await openai.chat.completions.create({
         model        : 'gpt-4o-mini',
         messages     : workHistory,
@@ -446,7 +803,6 @@ export default function ChatBox() {
       });
     }
 
-    // ── cuando ya no hay más llamadas, se muestra solo el mensaje final ──────
     const finalMsg = response.choices?.[0]?.message;
     if (finalMsg) pushMsg(finalMsg);
   };
@@ -495,45 +851,63 @@ export default function ChatBox() {
   };
 
   /* ---------- Reconocimiento de voz ---------- */
-  const startListening = () => {
+
+ const startListening = () => {
     if (!isSpeechApi) {
       alert('Reconocimiento de voz no soportado en este navegador');
       return;
     }
 
-    recognitionRef.current = new SpeechRec();
-    recognitionRef.current.lang = 'es-ES';
-    recognitionRef.current.continuous = false;
-    recognitionRef.current.interimResults = false;
+    const recognition = new SpeechRec();
+    recognitionRef.current = recognition;
+    listeningRef.current = true;
 
-    recognitionRef.current.onstart = () => {
+    recognition.lang = 'es-ES';
+    recognition.continuous = true;         // keep mic open
+    recognition.interimResults = true;     // needed to capture partials
+
+    recognition.onstart = () => {
       setListening(true);
-      console.log('🎤 Reconocimiento iniciado');
     };
 
-    recognitionRef.current.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      console.log('🗣️ Transcripción:', transcript);
-      setUserInput(transcript);
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript + ' ';
+        }
+      }
+      if (finalTranscript.trim()) {
+        setUserInput(prev =>
+          prev ? `${prev} ${finalTranscript}`.trim() : finalTranscript.trim()
+        );
+      }
     };
 
-    recognitionRef.current.onerror = (event) => {
+    recognition.onerror = (event) => {
       console.error('❌ Error en reconocimiento:', event.error);
+      listeningRef.current = false;
       setListening(false);
     };
 
-    recognitionRef.current.onend = () => {
-      setListening(false);
-      console.log('🎤 Reconocimiento terminado');
+    recognition.onend = () => {
+      if (listeningRef.current) {
+        recognition.start();   // restart automatically until user stops
+      } else {
+        setListening(false);
+      }
     };
 
-    recognitionRef.current.start();
+    recognition.start();
   };
 
   const stopListening = () => {
+    listeningRef.current = false;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
+    setListening(false);
   };
 
   /* ---------- Manejo de teclado ---------- */
