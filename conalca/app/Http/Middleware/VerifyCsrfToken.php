@@ -30,6 +30,8 @@ class VerifyCsrfToken extends Middleware
         'api/voice/*',
         // Sincronización de vehículos (proceso largo)
         'vehiculos/sincronizar',
+        // API de Arcangel (protegidas por Sanctum)
+        'api/arcangel/*',
     ];
 
     /**

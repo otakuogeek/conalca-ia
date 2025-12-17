@@ -8,7 +8,8 @@ use App\Models\Pricing;
 use App\Models\CotizacionModel;
 use App\Models\Solicitation;
 use Illuminate\Support\Facades\Log;
-use OpenAI\Laravel\Facades\OpenAI;
+use App\Models\PercentageSetting;
+use Illuminate\Support\Facades\DB;
 
 class PricingController extends Controller
 {
@@ -38,19 +39,56 @@ class PricingController extends Controller
     public function latestByRoute(Request $request)
     {
         $validated = $request->validate([
-            'origin'      => 'required|string',
-            'destination' => 'required|string',
+            'origin'        => 'required|string',
+            'destination'   => 'required|string',
+            'cargo_weight'  => 'nullable|numeric|min:0',
         ]);
 
-        $pricings = Pricing::where('origin', $validated['origin'])
+        $capacityMap = DB::table('vehiculos_pricing')
+            ->pluck('peso_maximo', 'vehiculo_silogtran');
+
+        $raw = Pricing::where('origin', $validated['origin'])
             ->where('destination', $validated['destination'])
-            ->orderBy('vehicle_type')
-            ->orderByDesc('updated_at')
-            ->get()
-            ->unique('vehicle_type')
+            ->orderByDesc('updated_at')      // newest first
+            ->orderBy('vehicle_type')        // deterministic
+            ->orderByDesc('weight')
+            ->get();
+
+        $filtered = $raw->filter(function ($pricing) use ($validated, $capacityMap) {
+            $vehicleKey = strtoupper(trim($pricing->vehicle_type));
+            $catalogCapacity = $capacityMap[$vehicleKey] ?? null;
+
+            // overwrite weight so front-end sees the official limit
+            $pricing->weight = $catalogCapacity ?: ($pricing->weight ?? null);
+
+            if (
+                !empty($validated['cargo_weight']) &&
+                $pricing->weight &&
+                $validated['cargo_weight'] > $pricing->weight
+            ) {
+                // discard options that can’t carry the cargo
+                return false;
+            }
+            return true;
+        })->values();
+
+        // NEW: keep only the cheapest option per vehicle_type
+        $deduped = $filtered
+            ->groupBy(fn ($p) => strtoupper(trim($p->vehicle_type)))
+            ->map(function ($group) {
+                // sort by price asc, tie-break by higher weight
+                return $group->sort(function ($a, $b) {
+                    $priceCmp = ($a->price ?? INF) <=> ($b->price ?? INF);
+                    if ($priceCmp !== 0) {
+                        return $priceCmp;
+                    }
+                    // tie-break: keep the one that carries more
+                    return ($b->weight ?? 0) <=> ($a->weight ?? 0);
+                })->first();
+            })
             ->values();
 
-        return response()->json($pricings);
+        return response()->json($deduped);
     }
 
     public function suggestVehicles(Request $request)
@@ -59,7 +97,7 @@ class PricingController extends Controller
             'request_data' => $request->all(),
         ]);
 
-        // Normalize "" weights to null before validating
+        // 1) Normalize incoming data
         $normalizedRoutes = collect($request->input('routes', []))->map(function ($route) {
             $route['pricings'] = collect($route['pricings'] ?? [])->map(function ($pricing) {
                 $pricing['weight'] = $pricing['weight'] === '' ? null : $pricing['weight'];
@@ -68,95 +106,72 @@ class PricingController extends Controller
             return $route;
         })->all();
 
-        // Overwrite the request payload so the validator sees the normalized data
         $request->merge(['routes' => $normalizedRoutes]);
 
-        Log::info('[PricingController] Routes after normalization', [
-            'routes' => $normalizedRoutes,
-        ]);
-
-        // Validate
         $validated = $request->validate([
             'routes' => 'required|array',
             'routes.*.ciudad_origen'   => 'required|string',
             'routes.*.ciudad_destino'  => 'required|string',
             'routes.*.peso_mercancia'  => 'nullable|numeric',
             'routes.*.pricings'        => 'array',
+            'routes.*.pricings.*.id'            => 'required|integer',  
             'routes.*.pricings.*.vehicle_type' => 'required|string',
             'routes.*.pricings.*.price'        => 'required|numeric',
             'routes.*.pricings.*.weight'       => 'nullable|numeric',
         ]);
 
-        Log::info('[PricingController] Validation passed', ['validated' => $validated]);
+        // 2) Inject catalog capacities + drop overweight options
+        $capacityMap = DB::table('vehiculos_pricing')
+            ->pluck('peso_maximo', 'vehiculo_silogtran');
 
-        // Build prompt
-        $prompt = $this->buildPrompt($validated['routes']);
-        Log::info('[PricingController] Prompt built', ['prompt' => $prompt]);
+        $normalizedWithCapacities = collect($validated['routes'])->map(function ($route) use ($capacityMap) {
+            $cargoWeight = $route['peso_mercancia'] ?? null;
 
-        try {
-            Log::info('[PricingController] Sending request to OpenAI', [
-                'model' => 'gpt-4o-mini',
-                'routes_count' => count($validated['routes']),
-            ]);
+            $route['pricings'] = collect($route['pricings'] ?? [])->filter(function ($pricing) use ($capacityMap, $cargoWeight) {
+                $vehicleKey = strtoupper(trim($pricing['vehicle_type']));
+                $catalogCapacity = $capacityMap[$vehicleKey] ?? null;
 
-            $response = OpenAI::chat()->create([
-                'model' => 'gpt-4o-mini',
-                'messages' => [
-                    ['role' => 'system', 'content' => 'Eres un asistente logístico. Recomienda la mejor opción por ruta y responde SIEMPRE en español usando el siguiente formato JSON.'],
-                    ['role' => 'user', 'content' => $prompt],
-                ],
-                'response_format' => ['type' => 'json_object'],
-            ]);
+                $pricing['weight'] = $catalogCapacity ?: ($pricing['weight'] ?? null);
 
-            Log::info('[PricingController] OpenAI response received', [
-                'response_meta' => [
-                    'usage' => $response->usage ?? null,
-                    'choices_count' => count($response->choices ?? []),
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            Log::error('[PricingController] OpenAI call failed', [
-                'message' => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
-            ]);
+                if ($cargoWeight && $pricing['weight'] && $cargoWeight > $pricing['weight']) {
+                    return false; // discard vehicles that cannot carry the load
+                }
+
+                return true;
+            })->values()->all();
+
+            return $route;
+        })->all();
+
+        if (collect($normalizedWithCapacities)->every(fn ($route) => empty($route['pricings']))) {
             return response()->json([
-                'message' => 'Could not get vehicle suggestions',
-            ], 500);
+                'suggestions' => [],
+                'message' => 'No viable vehicles found for the requested weights.',
+            ]);
         }
 
-        // Raw content
-        $content = $response->choices[0]->message->content ?? '';
-        Log::info('[PricingController] Raw OpenAI content', ['content' => $content]);
+        $routesPayload = $this->prepareRoutesPayload($normalizedWithCapacities);
 
-        $suggestions = json_decode($content, true);
-        Log::info('[PricingController] Parsed suggestions', ['suggestions' => $suggestions]);
+        $suggestions = $this->generateRuleBasedSuggestions($routesPayload);
 
-        if (!$suggestions || !isset($suggestions['suggestions'])) {
-            Log::warning('[PricingController] Invalid AI response', ['content' => $content]);
-            return response()->json([
-                'message' => 'Invalid AI response format',
-            ], 500);
-        }
-
-        Log::info('[PricingController] Returning suggestions', [
-            'suggestions_count' => count($suggestions['suggestions']),
+        return response()->json([
+            'suggestions' => $suggestions,
         ]);
-
-        return response()->json($suggestions);
     }
 
-    private function buildPrompt(array $routes): string
+    private function prepareRoutesPayload(array $routes): array
     {
         $payload = [];
 
         foreach ($routes as $index => $route) {
             $payload[] = [
-                'route_index' => $index,
-                'origin'      => $route['ciudad_origen'],
-                'destination' => $route['ciudad_destino'],
-                'cargo_weight'=> $route['peso_mercancia'] ?? 0,
-                'options'     => array_map(function ($pricing) {
+                'route_index'  => $index,
+                'origin'       => $route['ciudad_origen'],
+                'destination'  => $route['ciudad_destino'],
+                'cargo_weight' => $route['peso_mercancia'] ?? 0,
+                'options'      => array_map(function ($pricing) {
                     return [
+                        'pricing_id'  => $pricing['id'] ?? null,
                         'vehicle_type' => $pricing['vehicle_type'],
                         'price'        => $pricing['price'],
                         'max_load_kg'  => $pricing['weight'] ?? null,
@@ -165,13 +180,7 @@ class PricingController extends Controller
             ];
         }
 
-        $routesJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
-
-        return 'Given these routes and vehicle options (each option includes price and max_load_kg) '
-            . 'decide the best vehicle_type for each route so that the cargo weight never exceeds max_load_kg. '
-            . 'If the cargo is heavier, prefer the option that minimizes the number of trips or combine multiple trips. '
-            . 'Respond as JSON: { "suggestions": { "<route_index>": { "vehicle_type": "...", "reason": "..." } } }. '
-            . 'Routes payload: ' . $routesJson;
+        return $payload;
     }
 
     public function rentabilityStats(Request $request)
@@ -208,5 +217,158 @@ class PricingController extends Controller
             'max'         => round($stats->max_porcentaje ?? 0, 2),
             'avg'         => round($stats->avg_porcentaje ?? 0, 2),
         ]);
+    }
+
+    public function percentageSettings()
+    {
+        $setting = PercentageSetting::first();
+
+        if (!$setting) {
+            return response()->json([
+                'use_custom' => false,
+                'min' => null,
+                'avg' => null,
+                'max' => null,
+            ]);
+        }
+
+        return response()->json([
+            'use_custom' => (bool) $setting->use_custom_percentages,
+            'min' => (float) $setting->min_percentage,
+            'avg' => (float) $setting->avg_percentage,
+            'max' => (float) $setting->max_percentage,
+        ]);
+    }
+
+    public function vehicleCapacityGuide()
+    {
+        $records = DB::table('vehiculos_pricing')
+            ->select('vehiculo_silogtran', 'tabla_pricing', 'peso_maximo')
+            ->orderBy('tabla_pricing')
+            ->orderBy('peso_maximo')
+            ->get();
+
+        return response()->json([
+            'data' => $records,
+        ]);
+    }
+
+    private function enforceCheapestSuggestions(array $routesPayload, array $aiSuggestions): array
+    {
+        foreach ($routesPayload as $route) {
+            $routeIndex = $route['route_index'];
+
+            $options = $route['options'] ?? [];
+            if (empty($options)) {
+                continue;
+            }
+
+            // Sort ascending by price so index 0 is always the cheapest valid option
+            usort($options, fn($a, $b) =>
+                ($a['price'] ?? PHP_INT_MAX) <=> ($b['price'] ?? PHP_INT_MAX)
+            );
+
+            $cheapest = $options[0];
+
+            $aiVehicleType = $aiSuggestions[$routeIndex]['vehicle_type'] ?? null;
+            $matchedOption = collect($options)->firstWhere('vehicle_type', $aiVehicleType);
+
+            // If AI didn't match any option (or picked a wrong vehicle), force the cheapest
+            if (!$matchedOption) {
+                $aiSuggestions[$routeIndex] = [
+                    'vehicle_type' => $cheapest['vehicle_type'],
+                    'pricing_id'   => $cheapest['pricing_id'] ?? null,
+                    'reason'       => sprintf(
+                        'Selección ajustada automáticamente: %s es la opción válida más económica (%s) para transportar %s kg.',
+                        $cheapest['vehicle_type'],
+                        number_format($cheapest['price'], 0, ',', '.'),
+                        number_format($route['cargo_weight'] ?? 0, 0, ',', '.')
+                    ),
+                ];
+                continue;
+            }
+
+            // Even if the vehicle matches, make sure we use the exact pricing row (ID)
+            if (($matchedOption['vehicle_type'] ?? null) !== $cheapest['vehicle_type']) {
+                // AI picked a more expensive option
+                $aiSuggestions[$routeIndex] = [
+                    'vehicle_type' => $cheapest['vehicle_type'],
+                    'pricing_id'   => $cheapest['pricing_id'] ?? null,
+                    'reason'       => sprintf(
+                        'Selección ajustada automáticamente: %s es la opción válida más económica (%s) para transportar %s kg.',
+                        $cheapest['vehicle_type'],
+                        number_format($cheapest['price'], 0, ',', '.'),
+                        number_format($route['cargo_weight'] ?? 0, 0, ',', '.')
+                    ),
+                ];
+            } else {
+                // AI picked the cheapest vehicle; just attach the specific pricing_id
+                $aiSuggestions[$routeIndex]['pricing_id'] = $matchedOption['pricing_id'] ?? null;
+            }
+        }
+
+        return $aiSuggestions;
+    }
+
+    private function generateRuleBasedSuggestions(array $routesPayload): array
+    {
+        $suggestions = [];
+
+        foreach ($routesPayload as $route) {
+            $routeIndex  = $route['route_index'];
+            $cargoWeight = $route['cargo_weight'] ?? 0;
+            $options     = $route['options'] ?? [];
+
+            if (empty($options)) {
+                $suggestions[$routeIndex] = [
+                    'vehicle_type' => null,
+                    'pricing_id'   => null,
+                    'reason'       => 'No hay vehículos disponibles para esta ruta.',
+                ];
+                continue;
+            }
+
+            usort($options, fn ($a, $b) =>
+                ($a['price'] ?? PHP_INT_MAX) <=> ($b['price'] ?? PHP_INT_MAX)
+            );
+
+            $bestOption = null;
+            foreach ($options as $option) {
+                $maxLoad = $option['max_load_kg'] ?? null;
+
+                if ($maxLoad === null || $cargoWeight === null || $cargoWeight <= $maxLoad) {
+                    $bestOption = $option;
+                    break;
+                }
+            }
+
+            if (!$bestOption) {
+                $suggestions[$routeIndex] = [
+                    'vehicle_type' => null,
+                    'pricing_id'   => null,
+                    'reason'       => sprintf(
+                        'Ninguna opción puede transportar %s kg.',
+                        number_format($cargoWeight ?? 0, 0, ',', '.')
+                    ),
+                ];
+                continue;
+            }
+
+            $priceLabel  = number_format($bestOption['price'], 0, ',', '.');
+            $weightLabel = number_format($cargoWeight ?? 0, 0, ',', '.');
+
+            $suggestions[$routeIndex] = [
+                'vehicle_type' => $bestOption['vehicle_type'],
+                'pricing_id'   => $bestOption['pricing_id'],
+                'reason'       => sprintf(
+                    'Se elige %s porque transporta %s kg al mejor precio disponible (%s).',
+                    $bestOption['vehicle_type'],
+                    $weightLabel,
+                    $priceLabel
+                ),
+            ];
+        }
+
+        return $this->enforceCheapestSuggestions($routesPayload, $suggestions);
     }
 }

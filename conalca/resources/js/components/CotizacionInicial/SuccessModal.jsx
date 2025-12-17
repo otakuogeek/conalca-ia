@@ -22,6 +22,14 @@ const SuccessModal = ({ onClose, quoteData, clientData, threadId }) => {
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+    onClose();
+    window.location.reload();
+    }, 9000);
+    return () => clearTimeout(timeout);
+  }, [onClose]);
+
   const calculateTotal = () => {
     return quoteData.reduce((total, route) => {
       if (route.finalValue) {
@@ -54,8 +62,13 @@ const SuccessModal = ({ onClose, quoteData, clientData, threadId }) => {
     // Esta función podría emitir un evento para abrir QuoteModal
   };
 
+  const handleClose = () => {
+    onClose();
+    window.location.reload();
+  };
+
   return (
-    <Modal onClose={onClose} size="large">
+    <Modal onClose={handleClose} size="large">
       <style jsx>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         .inter-font { font-family: 'Inter', sans-serif; }
@@ -304,7 +317,7 @@ const SuccessModal = ({ onClose, quoteData, clientData, threadId }) => {
                 
                
                 <button
-                  onClick={onClose}
+                  onClick={handleClose}
                   className="sm:w-auto bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 flex items-center justify-center"
                 >
                   <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

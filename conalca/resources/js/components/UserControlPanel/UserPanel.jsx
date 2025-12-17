@@ -140,7 +140,7 @@ const UserPanel = () => {
         {/* Modal for User Form */}
         {(showModal || userToEdit) && (
           <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center pt-8 p-4 z-[99990] overflow-y-auto"
             onClick={(e) => {
               if (e.target === e.currentTarget) {
                 setShowModal(false);

@@ -184,6 +184,44 @@ class ProcessElevenLabsCall implements ShouldQueue
                     'processing_completed_at' => now()
                 ]);
 
+                // Actualizar también llamadas_conductores con el conversation_id Y datos de la orden
+                if ($conductor) {
+                    $conductor->update([
+                        'elevenlabs_conversation_id' => $response['conversation_id'] ?? null,
+                        'elevenlabs_sip_call_id' => $response['sip_call_id'] ?? null,
+                        'estado_llamada' => 'en_progreso',
+                        'fecha_llamada' => now(),
+                        // Información de la orden/cotización
+                        'cotizacion_id' => $cotizacion->id,
+                        'group_cotization_id' => $cotizacion->group_cotization_id ?? null,
+                        'ciudad_origen' => $cotizacion->ciudad_origen,
+                        'ciudad_destino' => $cotizacion->ciudad_destino,
+                        'tipo_vehiculo' => $cotizacion->vehiculo_requerido,
+                        'mercancia' => $cotizacion->tipo_mercancia,
+                        'peso_carga' => $cotizacion->peso_mercancia,
+                        'empaque' => $cotizacion->tipo_embajale,
+                        // Datos adicionales en JSON
+                        'datos_adicionales' => json_encode([
+                            'valor_declarado' => $cotizacion->valor_declarado,
+                            'tipo_carroceria' => $cotizacion->tipo_carroceria,
+                            'consolidado_expreso' => $cotizacion->consolidado_expreso,
+                            'regimen_nacionalizado' => $cotizacion->regimen_nacionalizado,
+                            'temperatura_mercancia' => $cotizacion->temperatura_mercancia,
+                            'dimensiones_exactas' => $cotizacion->dimensiones_exactas,
+                            'fecha_llamada' => now()->toDateTimeString(),
+                            'client_id' => $cotizacion->client_id,
+                            'user_id' => $cotizacion->user_id,
+                        ])
+                    ]);
+
+                    Log::info('✅ Conversation ID y datos de orden guardados en llamadas_conductores', [
+                        'conductor_id' => $conductor->id,
+                        'conversation_id' => $response['conversation_id'] ?? null,
+                        'cotizacion_id' => $cotizacion->id,
+                        'group_cotization_id' => $cotizacion->group_cotization_id ?? null
+                    ]);
+                }
+
                 Log::info('✅ ProcessElevenLabsCall: Llamada iniciada exitosamente', [
                     'llamada_id' => $this->llamadaId,
                     'conversation_id' => $response['conversation_id'] ?? null,

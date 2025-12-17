@@ -15,6 +15,21 @@ import {
   FiPlus
 } from 'react-icons/fi';
 
+const defaultTransitEvents = [
+  { id: 'traffic-delay',     name: 'Tráfico pesado / restricción de movilidad' },
+  { id: 'road-block',        name: 'Bloqueo de carretera por autoridades o protestas' },
+  { id: 'accident',          name: 'Accidente de tránsito con terceros involucrados' },
+  { id: 'vehicle-breakdown', name: 'Falla mecánica / avería del vehículo' },
+  { id: 'tire-damage',       name: 'Pinchazo o daño en la llanta' },
+  { id: 'weather-closure',   name: 'Ruta cerrada por condiciones climáticas' },
+  { id: 'security-check',    name: 'Retén de seguridad que causa retraso' },
+  { id: 'document-issue',    name: 'Problema de papeleo / documentación aduanera' },
+  { id: 'loading-delay',     name: 'Retraso en el muelle de carga / planta' },
+  { id: 'unloading-delay',   name: 'Retraso en el sitio de descarga' },
+  { id: 'driver-rest',       name: 'Extensión de parada obligatoria de descanso del conductor' },
+  { id: 'route-change',      name: 'Cambio de ruta solicitado por el cliente' },
+];
+
 export default function NotesPanel({ model, onClose }) {
   const [notes, setNotes]     = useState([]);
   const [noteType, setNoteType] = useState('alerta');
@@ -28,11 +43,19 @@ export default function NotesPanel({ model, onClose }) {
     allowed.includes(normalizeRole(r.name))
   );
 
-  /* ---- carga inicial ---- */
   useEffect(() => {
     if (model) {
       loadNotes();
-      eventsList().then(r => setEvents(r.data));
+
+      eventsList()
+        .then(r => {
+          const dbEvents = (r.data ?? []).map(ev => ({
+            id: `db-${ev.id}`,
+            name: ev.name,
+          }));
+          setEvents([...defaultTransitEvents, ...dbEvents]);
+        })
+        .catch(() => setEvents(defaultTransitEvents));
     }
   }, [model]);
 
@@ -49,7 +72,7 @@ export default function NotesPanel({ model, onClose }) {
   if (!model) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[10001]">
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-16 z-[99999] overflow-y-auto backdrop-blur-sm">
       {/* ---------- Panel ---------- */}
       <div className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 relative shadow-lg">
         {/* ---------- Cerrar ---------- */}

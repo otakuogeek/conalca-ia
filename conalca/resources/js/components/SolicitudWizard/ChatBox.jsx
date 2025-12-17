@@ -221,6 +221,17 @@ function normalizeValue(field, rawValue) {
       if (monedaUpper.includes('DOLAR') || monedaUpper.includes('USD') || monedaUpper.includes('DOLLAR')) return 'DOLARES';
       return monedaUpper;
 
+    case 'fuente_solicitud': {
+      const u = value.toUpperCase();
+      if (u.includes('DESPACH')) return 'TELEFONO DESPACHADOR';       // teléfono despachador
+      if (u.includes('ATENC')) return 'TELEFONO ATENCION CLIENTE';   // teléfono atención cliente
+      if (u.includes('MAIL') || u.includes('CORREO')) return 'MAIL';
+      if (u.includes('FAX')) return 'FAX';
+      if (u.includes('SIA')) return 'SIA';
+      if (u.includes('WEB') || u.includes('PAG')) return 'PAGINA WEB';
+      return u; // fallback uppercase
+    }
+
     case 'contenedor':
       const contenedorUpper = value.toUpperCase();
       if (contenedorUpper.includes('SI') || contenedorUpper.includes('SÍ') || contenedorUpper.includes('YES')) return 'SI';
@@ -246,7 +257,8 @@ function normalizeValue(field, rawValue) {
     case 'ciudad_facturacion':
     case 'origen':
     case 'destino':
-      return value.replace(/[^\d]/g, '');
+      return value;
+      // return value.replace(/[^\d]/g, '');
 
     case 'descripcion_mercancia':
       return value;

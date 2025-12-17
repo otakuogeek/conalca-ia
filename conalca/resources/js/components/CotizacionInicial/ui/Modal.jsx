@@ -51,12 +51,12 @@ const Modal = ({ children, onClose, size = 'default', showCloseButton = true }) 
   };
 
   const modalContent = (
-    <div className="relative z-20" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-      <div className="fixed inset-0 bg-gray-900 bg-opacity-60 transition-opacity backdrop-blur-sm"></div>
-      <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
-        <div className="flex min-h-full w-full items-center justify-center p-2 sm:p-4 lg:p-6">
+    <div className="relative z-[99999]" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+      <div className="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity backdrop-blur-sm z-[99998]"></div>
+      <div className="fixed inset-0 z-[99999] w-screen overflow-y-auto">
+        <div className="flex min-h-full w-full items-start justify-center p-2 sm:p-4 lg:p-6 pt-4 sm:pt-8">
           <div 
-            className={`relative w-full ${getSizeClasses()} transform overflow-hidden rounded-xl sm:rounded-2xl bg-white text-left shadow-2xl transition-all max-h-[95vh] overflow-y-auto`}
+            className={`relative w-full ${getSizeClasses()} transform overflow-hidden rounded-xl sm:rounded-2xl bg-white text-left shadow-2xl transition-all max-h-[90vh] overflow-y-auto`}
             onClick={(e) => e.stopPropagation()}
           >
             {showCloseButton && (

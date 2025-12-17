@@ -134,6 +134,10 @@ Route::post('/retry-calls',         [CallController::class,'handleCallRetries'])
 // Rutas para el estado de llamadas
 Route::get('/calls/{callId}/status', [CallController::class, 'getCallStatus'])->name('api.calls.status');
 
+// Ruta para obtener el estado de conductores aceptados por cotización
+Route::get('/calls/{cotizacionId}', [CallStatusController::class, 'show'])->name('api.calls.accepted');
+Route::post('/calls/{cotizacionId}/select-driver', [CallStatusController::class, 'selectDriver'])->name('api.calls.select-driver');
+
 // Client assignment routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/clients/assign', [ContactController::class, 'assignUserToClient']);
@@ -146,6 +150,7 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('analysis/data', [AnalysisController::class, 'getAnalysisDataApi'])->name('api.analysis.data');
 Route::get('analysis/map-data', [AnalysisController::class, 'getMapDataEndpoint'])->name('api.analysis.map-data');
 Route::get('analysis/debug-cities', [AnalysisController::class, 'debugCities'])->name('api.analysis.debug-cities');
+
 
 // Rutas para ElevenLabs TTS
 Route::prefix('elevenlabs')->middleware('elevenlabs.config')->group(function () {

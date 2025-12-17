@@ -1027,3 +1027,324 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                     
             except Exception:
                 return tipo_carroceria or 'No especificada'
+        # ========================================
+        # Herramientas para llamadas_conductores
+        # ========================================
+        
+        @self.server.tool(
+            name="get_conductores_filtrados",
+            description="Obtiene la lista de conductores filtrados para una cotización específica. Incluye datos del conductor, vehículo, ciudad y estado de llamada."
+        )
+        async def get_conductores_filtrados(cotizacion_id: int, estado_llamada: Optional[str] = None) -> List[TextContent]:
+            """Obtiene conductores filtrados por cotización"""
+            try:
+                # Construir query base
+                query = """
+                SELECT 
+                    id, identificador_unico, cotizacion_id, group_cotization_id,
+                    nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
+                    peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
+                    disponible, score, estado_llamada, call_id, fecha_llamada,
+                    mercancia, peso_carga, empaque,
+                    created_at, updated_at
+                FROM llamadas_conductores
+                WHERE cotizacion_id = %s
+                    AND deleted_at IS NULL
+                """
+                params = [cotizacion_id]
+                
+                # Filtrar por estado si se especifica
+                if estado_llamada:
+                    query += " AND estado_llamada = %s"
+                    params.append(estado_llamada)
+                
+                query += " ORDER BY score DESC, created_at DESC"
+                
+                results = await self.repository.db.execute_query(query, tuple(params))
+                
+                conductores = []
+                for row in results:
+                    conductores.append({
+                        "id": row['id'],
+                        "identificador_unico": row['identificador_unico'],
+                        "cotizacion_id": row['cotizacion_id'],
+                        "group_cotization_id": row['group_cotization_id'],
+                        "nombre_conductor": row['nombre_conductor'],
+                        "telefono": row['telefono'],
+                        "placa": row['placa'],
+                        "tipo_vehiculo": row['tipo_vehiculo'],
+                        "vehiculo_silogtran": row['vehiculo_silogtran'],
+                        "peso_maximo": float(row['peso_maximo']) if row['peso_maximo'] else None,
+                        "ciudad_actual": row['ciudad_actual'],
+                        "ciudad_origen": row['ciudad_origen'],
+                        "ciudad_destino": row['ciudad_destino'],
+                        "disponible": bool(row['disponible']),
+                        "score": float(row['score']) if row['score'] else 0.0,
+                        "estado_llamada": row['estado_llamada'],
+                        "call_id": row['call_id'],
+                        "fecha_llamada": str(row['fecha_llamada']) if row['fecha_llamada'] else None,
+                        "mercancia": row['mercancia'],
+                        "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
+                        "empaque": row['empaque'],
+                        "created_at": str(row['created_at']) if row['created_at'] else None,
+                        "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                    })
+                
+                return [TextContent(
+                    type="text",
+                    text=f"Encontrados {len(conductores)} conductores filtrados para cotización {cotizacion_id}:\n{json.dumps(conductores, indent=2, ensure_ascii=False)}"
+                )]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error al obtener conductores filtrados: {str(e)}")]
+        
+        @self.server.tool(
+            name="get_conductor_by_identificador",
+            description="Obtiene un conductor específico por su identificador único"
+        )
+        async def get_conductor_by_identificador(identificador_unico: str) -> List[TextContent]:
+            """Obtiene un conductor por su identificador único"""
+            try:
+                query = """
+                SELECT 
+                    id, identificador_unico, cotizacion_id, group_cotization_id,
+                    nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
+                    peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
+                    disponible, score, estado_llamada, call_id, fecha_llamada,
+                    respuesta_llamada, notas, mercancia, peso_carga, empaque,
+                    datos_adicionales, created_at, updated_at
+                FROM llamadas_conductores
+                WHERE identificador_unico = %s
+                    AND deleted_at IS NULL
+                LIMIT 1
+                """
+                
+                results = await self.repository.db.execute_query(query, (identificador_unico,))
+                
+                if not results:
+                    return [TextContent(type="text", text=f"No se encontró conductor con identificador {identificador_unico}")]
+                
+                row = results[0]
+                conductor = {
+                    "id": row['id'],
+                    "identificador_unico": row['identificador_unico'],
+                    "cotizacion_id": row['cotizacion_id'],
+                    "group_cotization_id": row['group_cotization_id'],
+                    "nombre_conductor": row['nombre_conductor'],
+                    "telefono": row['telefono'],
+                    "placa": row['placa'],
+                    "tipo_vehiculo": row['tipo_vehiculo'],
+                    "vehiculo_silogtran": row['vehiculo_silogtran'],
+                    "peso_maximo": float(row['peso_maximo']) if row['peso_maximo'] else None,
+                    "ciudad_actual": row['ciudad_actual'],
+                    "ciudad_origen": row['ciudad_origen'],
+                    "ciudad_destino": row['ciudad_destino'],
+                    "disponible": bool(row['disponible']),
+                    "score": float(row['score']) if row['score'] else 0.0,
+                    "estado_llamada": row['estado_llamada'],
+                    "call_id": row['call_id'],
+                    "fecha_llamada": str(row['fecha_llamada']) if row['fecha_llamada'] else None,
+                    "respuesta_llamada": row['respuesta_llamada'],
+                    "notas": row['notas'],
+                    "mercancia": row['mercancia'],
+                    "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
+                    "empaque": row['empaque'],
+                    "datos_adicionales": row['datos_adicionales'],
+                    "created_at": str(row['created_at']) if row['created_at'] else None,
+                    "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                }
+                
+                return [TextContent(
+                    type="text",
+                    text=f"Conductor encontrado:\n{json.dumps(conductor, indent=2, ensure_ascii=False)}"
+                )]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error al obtener conductor: {str(e)}")]
+        
+        @self.server.tool(
+            name="update_estado_llamada_conductor",
+            description="Actualiza el estado de una llamada de conductor (pendiente, en_progreso, completada, fallida, cancelada)"
+        )
+        async def update_estado_llamada_conductor(
+            identificador_unico: str,
+            estado_llamada: str,
+            call_id: Optional[str] = None,
+            respuesta_llamada: Optional[str] = None,
+            notas: Optional[str] = None
+        ) -> List[TextContent]:
+            """Actualiza el estado de una llamada de conductor"""
+            try:
+                # Validar estado
+                estados_validos = ['pendiente', 'en_progreso', 'completada', 'fallida', 'cancelada']
+                if estado_llamada not in estados_validos:
+                    return [TextContent(
+                        type="text",
+                        text=f"Estado inválido. Use uno de: {', '.join(estados_validos)}"
+                    )]
+                
+                # Construir query UPDATE
+                updates = ["estado_llamada = %s", "updated_at = NOW()"]
+                params = [estado_llamada]
+                
+                if call_id:
+                    updates.append("call_id = %s")
+                    params.append(call_id)
+                
+                if respuesta_llamada:
+                    updates.append("respuesta_llamada = %s")
+                    params.append(respuesta_llamada)
+                
+                if notas:
+                    updates.append("notas = %s")
+                    params.append(notas)
+                
+                if estado_llamada in ['en_progreso', 'completada']:
+                    updates.append("fecha_llamada = NOW()")
+                
+                params.append(identificador_unico)
+                
+                query = f"""
+                UPDATE llamadas_conductores
+                SET {', '.join(updates)}
+                WHERE identificador_unico = %s
+                    AND deleted_at IS NULL
+                """
+                
+                await self.repository.db.execute_update(query, tuple(params))
+                
+                return [TextContent(
+                    type="text",
+                    text=f"Estado de llamada actualizado exitosamente para conductor {identificador_unico} a '{estado_llamada}'"
+                )]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error al actualizar estado de llamada: {str(e)}")]
+        
+        @self.server.tool(
+            name="get_conductor_by_telefono",
+            description="Busca conductores en llamadas_conductores por número de teléfono. Devuelve información completa del conductor y su estado de llamada."
+        )
+        async def get_conductor_by_telefono(telefono: str) -> List[TextContent]:
+            """Busca conductor por teléfono en llamadas_conductores"""
+            try:
+                # Limpiar teléfono (remover espacios, guiones, etc.)
+                telefono_limpio = telefono.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                
+                query = """
+                SELECT 
+                    id, identificador_unico, cotizacion_id, group_cotization_id,
+                    nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
+                    peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
+                    disponible, score, estado_llamada, call_id, fecha_llamada,
+                    respuesta_llamada, notas, mercancia, peso_carga, empaque,
+                    datos_adicionales, created_at, updated_at
+                FROM llamadas_conductores
+                WHERE (telefono = %s OR REPLACE(REPLACE(REPLACE(telefono, ' ', ''), '-', ''), '+57', '') = %s)
+                    AND deleted_at IS NULL
+                ORDER BY score DESC, created_at DESC
+                """
+                
+                results = await self.repository.db.execute_query(query, (telefono, telefono_limpio))
+                
+                if not results:
+                    return [TextContent(
+                        type="text",
+                        text=f"No se encontraron conductores con teléfono {telefono}"
+                    )]
+                
+                conductores = []
+                for row in results:
+                    conductores.append({
+                        "id": row['id'],
+                        "identificador_unico": row['identificador_unico'],
+                        "cotizacion_id": row['cotizacion_id'],
+                        "group_cotization_id": row['group_cotization_id'],
+                        "nombre_conductor": row['nombre_conductor'],
+                        "telefono": row['telefono'],
+                        "placa": row['placa'],
+                        "tipo_vehiculo": row['tipo_vehiculo'],
+                        "vehiculo_silogtran": row['vehiculo_silogtran'],
+                        "peso_maximo": float(row['peso_maximo']) if row['peso_maximo'] else None,
+                        "ciudad_actual": row['ciudad_actual'],
+                        "ciudad_origen": row['ciudad_origen'],
+                        "ciudad_destino": row['ciudad_destino'],
+                        "disponible": bool(row['disponible']),
+                        "score": float(row['score']) if row['score'] else 0.0,
+                        "estado_llamada": row['estado_llamada'],
+                        "call_id": row['call_id'],
+                        "fecha_llamada": str(row['fecha_llamada']) if row['fecha_llamada'] else None,
+                        "respuesta_llamada": row['respuesta_llamada'],
+                        "notas": row['notas'],
+                        "mercancia": row['mercancia'],
+                        "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
+                        "empaque": row['empaque'],
+                        "datos_adicionales": row['datos_adicionales'],
+                        "created_at": str(row['created_at']) if row['created_at'] else None,
+                        "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                    })
+                
+                return [TextContent(
+                    type="text",
+                    text=f"Encontrados {len(conductores)} conductores con teléfono {telefono}:\n{json.dumps(conductores, indent=2, ensure_ascii=False)}"
+                )]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error al buscar conductor por teléfono: {str(e)}")]
+        
+        @self.server.tool(
+            name="update_conversation_id_conductor",
+            description="Actualiza el conversation_id (call_id) de ElevenLabs para un conductor específico cuando se inicia una llamada. También actualiza el estado a 'en_progreso'."
+        )
+        async def update_conversation_id_conductor(
+            identificador_unico: str,
+            conversation_id: str,
+            estado_llamada: str = "en_progreso",
+            notas: Optional[str] = None
+        ) -> List[TextContent]:
+            """Actualiza conversation_id y estado de llamada de conductor"""
+            try:
+                # Validar que conversation_id no esté vacío
+                if not conversation_id or conversation_id.strip() == "":
+                    return [TextContent(
+                        type="text",
+                        text="Error: conversation_id no puede estar vacío"
+                    )]
+                
+                # Construir query UPDATE
+                updates = [
+                    "call_id = %s",
+                    "estado_llamada = %s",
+                    "fecha_llamada = NOW()",
+                    "updated_at = NOW()"
+                ]
+                params = [conversation_id, estado_llamada]
+                
+                if notas:
+                    updates.append("notas = %s")
+                    params.append(notas)
+                
+                params.append(identificador_unico)
+                
+                query = f"""
+                UPDATE llamadas_conductores
+                SET {', '.join(updates)}
+                WHERE identificador_unico = %s
+                    AND deleted_at IS NULL
+                """
+                
+                affected_rows = await self.repository.db.execute_update(query, tuple(params))
+                
+                if affected_rows > 0:
+                    return [TextContent(
+                        type="text",
+                        text=f"Conversation ID actualizado exitosamente. Conductor: {identificador_unico}, Conversation ID: {conversation_id}, Estado: {estado_llamada}"
+                    )]
+                else:
+                    return [TextContent(
+                        type="text",
+                        text=f"No se pudo actualizar. Verifique que el identificador_unico {identificador_unico} sea correcto"
+                    )]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error al actualizar conversation_id: {str(e)}")]

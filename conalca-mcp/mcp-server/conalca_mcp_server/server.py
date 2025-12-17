@@ -460,27 +460,29 @@ class ConalcaMCPServer:
                                 },
                                 {
                                     "name": "save_driver_decision",
-                                    "description": "Guarda la decisión del chofer sobre la oferta de transporte. Registra si acepta (1) o rechaza (0) la propuesta junto con el ID del chofer y cotización.",
+                                    "description": "Guarda la decisión del chofer sobre la oferta de transporte. Registra si acepta (1) o rechaza (0) la propuesta usando el identificador_unico del conductor en llamadas_conductores.",
                                     "inputSchema": {
                                         "type": "object",
                                         "properties": {
-                                            "cotizacion_model_id": {
-                                                "type": "integer",
-                                                "description": "ID de la cotización/modelo asociado",
-                                                "minimum": 1
+                                            "identificador_unico": {
+                                                "type": "string",
+                                                "description": "Identificador único del conductor en llamadas_conductores (ej: LC-3-5e05b092-1764976542)"
                                             },
-                                            "driver_id": {
-                                                "type": "integer",
-                                                "description": "ID del chofer/conductor",
-                                                "minimum": 1
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs (opcional)"
                                             },
                                             "decision": {
                                                 "type": "integer",
                                                 "description": "Decisión del chofer: 1 para aceptar, 0 para rechazar",
                                                 "enum": [0, 1]
+                                            },
+                                            "notas": {
+                                                "type": "string",
+                                                "description": "Notas adicionales sobre la decisión (opcional)"
                                             }
                                         },
-                                        "required": ["cotizacion_model_id", "driver_id", "decision"]
+                                        "required": ["identificador_unico", "decision"]
                                     }
                                 },
                                 {
@@ -685,6 +687,48 @@ class ConalcaMCPServer:
                                             }
                                         },
                                         "required": ["orden_id"]
+                                    }
+                                },
+                                {
+                                    "name": "get_conductor_by_telefono",
+                                    "description": "Busca conductores en llamadas_conductores por número de teléfono. Devuelve información completa del conductor incluyendo placa, tipo de vehículo, ciudad actual, estado de llamada y conversation_id si existe.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "telefono": {
+                                                "type": "string",
+                                                "description": "Número de teléfono del conductor (ej: 3105672307, +573105672307)"
+                                            }
+                                        },
+                                        "required": ["telefono"]
+                                    }
+                                },
+                                {
+                                    "name": "update_conversation_id_conductor",
+                                    "description": "Actualiza el conversation_id (call_id) de ElevenLabs para un conductor específico cuando se inicia una llamada. También actualiza el estado a 'en_progreso' y registra la fecha/hora de la llamada.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "identificador_unico": {
+                                                "type": "string",
+                                                "description": "Identificador único del conductor en llamadas_conductores"
+                                            },
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs (conversation_id)"
+                                            },
+                                            "estado_llamada": {
+                                                "type": "string",
+                                                "description": "Nuevo estado de la llamada",
+                                                "enum": ["pendiente", "en_progreso", "completada", "fallida", "cancelada"],
+                                                "default": "en_progreso"
+                                            },
+                                            "notas": {
+                                                "type": "string",
+                                                "description": "Notas adicionales sobre la llamada (opcional)"
+                                            }
+                                        },
+                                        "required": ["identificador_unico", "conversation_id"]
                                     }
                                 }
                             ]
@@ -1644,72 +1688,63 @@ class ConalcaMCPServer:
                 if not conversation_id:
                     return json.dumps({"error": "conversation_id es requerido"}, ensure_ascii=False)
                 
-                # Buscar la llamada por conversation_id
-                llamada = await repository.get_llamada_by_conversation_id(conversation_id)
+                # Obtener información del conductor desde la nueva tabla llamadas_conductores
+                conductor_data = await repository.get_conductor_by_conversation_id(conversation_id)
                 
-                if not llamada:
+                if not conductor_data:
                     return json.dumps({
                         "success": False,
-                        "error": f"No se encontró ninguna llamada con conversation_id: {conversation_id}",
+                        "error": f"No se encontró conductor disponible para conversation_id: {conversation_id}",
                         "conversation_id": conversation_id
                     }, ensure_ascii=False)
                 
-                # Obtener información del chofer
-                nombre_chofer = "estimado cliente"  # Default si no se encuentra
-                if llamada.chofer_id and llamada.chofer_id > 0:
-                    chofer = await repository.get_chofer_by_id(llamada.chofer_id)
-                    if chofer and chofer.conductor:
-                        nombre_chofer = chofer.conductor
+                # Extraer datos del conductor
+                nombre_conductor = conductor_data.get('nombre_conductor', 'estimado conductor')
+                identificador_unico = conductor_data.get('identificador_unico')
+                cotizacion_id = conductor_data.get('cotizacion_id')
                 
-                # Obtener información de la cotización
-                cotizacion = None
-                if llamada.id_cotizacion and llamada.id_cotizacion > 0:
-                    cotizacion = await repository.get_cotizacion_by_id(llamada.id_cotizacion)
-                
-                if not cotizacion:
-                    return json.dumps({
-                        "success": False,
-                        "error": f"No se encontró cotización asociada a la llamada {llamada.id_llamada}",
-                        "conversation_id": conversation_id,
-                        "llamada_id": llamada.id_llamada
-                    }, ensure_ascii=False)
-                
-                # Obtener nombres de tipo_embalaje y tipo_producto
-                tipo_embalaje_nombre = cotizacion.tipo_embajale
-                tipo_producto_nombre = cotizacion.tipo_producto
+                # Obtener nombres legibles de tipo_embalaje y tipo_producto
+                tipo_embalaje_nombre = conductor_data.get('tipo_embajale', 'N/A')
+                tipo_producto_nombre = conductor_data.get('tipo_producto', 'N/A')
                 
                 # Si son IDs numéricos, consultar los nombres
-                if cotizacion.tipo_embajale and cotizacion.tipo_embajale.isdigit():
-                    nombre_embalaje = await repository.get_packing_name(int(cotizacion.tipo_embajale))
+                if conductor_data.get('tipo_embajale') and str(conductor_data.get('tipo_embajale')).isdigit():
+                    nombre_embalaje = await repository.get_packing_name(int(conductor_data.get('tipo_embajale')))
                     if nombre_embalaje:
                         tipo_embalaje_nombre = nombre_embalaje
                 
-                if cotizacion.tipo_producto and cotizacion.tipo_producto.isdigit():
-                    nombre_producto = await repository.get_product_name(int(cotizacion.tipo_producto))
+                if conductor_data.get('tipo_producto') and str(conductor_data.get('tipo_producto')).isdigit():
+                    nombre_producto = await repository.get_product_name(int(conductor_data.get('tipo_producto')))
                     if nombre_producto:
                         tipo_producto_nombre = nombre_producto
                 
+                # Construir respuesta en el mismo formato que antes
                 result = {
                     "success": True,
                     "conversation_id": conversation_id,
                     "llamada_info": {
-                        "id_llamada": llamada.id_llamada,
-                        "id_cotizacion": llamada.id_cotizacion,
-                        "chofer_id": llamada.chofer_id
+                        "identificador_unico": identificador_unico,  # Nuevo: identificador para save_driver_decision
+                        "id_cotizacion": cotizacion_id,
+                        "driver_id": identificador_unico  # Mantener compatibilidad con prompt antiguo
                     },
                     "chofer": {
-                        "nombre": nombre_chofer,
-                        "chofer_id": llamada.chofer_id
+                        "nombre": nombre_conductor,
+                        "chofer_id": identificador_unico,  # Usar identificador_unico en lugar de chofer_id
+                        "telefono": conductor_data.get('telefono'),
+                        "placa": conductor_data.get('placa'),
+                        "tipo_vehiculo": conductor_data.get('tipo_vehiculo'),
+                        "peso_maximo": float(conductor_data.get('peso_maximo', 0)) if conductor_data.get('peso_maximo') else None,
+                        "ciudad_actual": conductor_data.get('ciudad_actual')
                     },
                     "viaje": {
-                        "origen": cotizacion.ciudad_origen,
-                        "destino": cotizacion.ciudad_destino,
-                        "peso_kg": cotizacion.peso_mercancia,
+                        "origen": conductor_data.get('ciudad_origen'),
+                        "destino": conductor_data.get('ciudad_destino'),
+                        "peso_kg": float(conductor_data.get('peso_carga', 0)) if conductor_data.get('peso_carga') else None,
                         "tipo_embalaje": tipo_embalaje_nombre,
                         "tipo_producto": tipo_producto_nombre,
-                        "fecha_hora": cotizacion.fecha_hora_descargue_cargue,
-                        "cantidad": cotizacion.cantidad,
-                        "vehiculo_requerido": cotizacion.vehiculo_requerido
+                        "mercancia": conductor_data.get('mercancia', tipo_producto_nombre),
+                        "fecha_hora": conductor_data.get('fecha_hora_descargue_cargue'),
+                        "vehiculo_requerido": conductor_data.get('vehiculo_requerido')
                     }
                 }
                 
@@ -1816,14 +1851,17 @@ class ConalcaMCPServer:
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
             
             elif tool_name == "save_driver_decision":
-                cotizacion_model_id = arguments.get("cotizacion_model_id")
-                driver_id = arguments.get("driver_id")
+                # Obtener parámetros
+                identificador_unico = arguments.get("identificador_unico")
+                conversation_id = arguments.get("conversation_id")
                 decision = arguments.get("decision")
+                notas = arguments.get("notas")
                 
-                if cotizacion_model_id is None or driver_id is None or decision is None:
+                # Validación de parámetros requeridos
+                if not identificador_unico or decision is None:
                     return json.dumps({
                         "success": False,
-                        "error": "Se requieren los parámetros: cotizacion_model_id, driver_id y decision"
+                        "error": "Se requieren los parámetros: identificador_unico y decision"
                     }, ensure_ascii=False)
                 
                 # Validar que decision sea 0 o 1
@@ -1834,24 +1872,50 @@ class ConalcaMCPServer:
                     }, ensure_ascii=False)
                 
                 try:
-                    success = await repository.save_driver_decision(cotizacion_model_id, driver_id, decision)
+                    # Primero verificamos que el conductor exista en llamadas_conductores
+                    query_verify = "SELECT id, nombre_conductor, cotizacion_id FROM llamadas_conductores WHERE identificador_unico = %s AND deleted_at IS NULL"
+                    result_verify = await repository.db.execute_query(query_verify, (identificador_unico,))
+                    
+                    if not result_verify:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró conductor con identificador_unico: {identificador_unico}"
+                        }, ensure_ascii=False)
+                    
+                    conductor_data = result_verify[0]
+                    nombre_conductor = conductor_data.get('nombre_conductor', 'Conductor')
+                    cotizacion_id = conductor_data.get('cotizacion_id')
+                    
+                    # Usar el método que actualiza llamadas_conductores
+                    success = await repository.save_driver_decision_new(
+                        identificador_unico=identificador_unico,
+                        conversation_id=conversation_id or "N/A",
+                        decision=decision,
+                        notas=notas
+                    )
                     
                     if success:
                         decision_text = "acepta" if decision == 1 else "rechaza"
+                        estado_llamada = "completada" if decision == 1 else "fallida"
+                        
                         result = {
                             "success": True,
-                            "message": f"Decisión guardada correctamente: El conductor {decision_text} la cotización",
+                            "message": f"Decisión guardada correctamente: {nombre_conductor} {decision_text} la cotización",
                             "data": {
-                                "cotizacion_model_id": cotizacion_model_id,
-                                "driver_id": driver_id,
+                                "identificador_unico": identificador_unico,
+                                "nombre_conductor": nombre_conductor,
+                                "cotizacion_id": cotizacion_id,
                                 "decision": decision,
-                                "decision_text": decision_text
+                                "decision_text": decision_text,
+                                "estado_llamada": estado_llamada,
+                                "conversation_id": conversation_id,
+                                "notas": notas
                             }
                         }
                     else:
                         result = {
                             "success": False,
-                            "error": "No se pudo guardar la decisión del conductor"
+                            "error": "No se pudo guardar la decisión del conductor en la base de datos"
                         }
                     
                     return json.dumps(result, indent=2, ensure_ascii=False)
@@ -2286,6 +2350,143 @@ class ConalcaMCPServer:
                         "error": f"Error en llenar_formulario: {str(e)}"
                     }, ensure_ascii=False)
             
+            elif tool_name == "get_conductor_by_telefono":
+                telefono = arguments.get("telefono")
+                
+                if not telefono:
+                    return json.dumps({
+                        "error": "El parámetro 'telefono' es requerido"
+                    }, ensure_ascii=False)
+                
+                try:
+                    # Limpiar teléfono
+                    telefono_limpio = telefono.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                    
+                    query = """
+                    SELECT 
+                        id, identificador_unico, cotizacion_id, group_cotization_id,
+                        nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
+                        peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
+                        disponible, score, estado_llamada, call_id, fecha_llamada,
+                        respuesta_llamada, notas, mercancia, peso_carga, empaque,
+                        datos_adicionales, created_at, updated_at
+                    FROM llamadas_conductores
+                    WHERE (telefono = %s OR REPLACE(REPLACE(REPLACE(telefono, ' ', ''), '-', ''), '+57', '') = %s)
+                        AND deleted_at IS NULL
+                    ORDER BY score DESC, created_at DESC
+                    """
+                    
+                    results = await repository.db.execute_query(query, (telefono, telefono_limpio))
+                    
+                    if not results:
+                        return json.dumps({
+                            "success": True,
+                            "telefono_buscado": telefono,
+                            "total_encontrados": 0,
+                            "conductores": [],
+                            "mensaje": f"No se encontraron conductores con el teléfono {telefono}"
+                        }, ensure_ascii=False)
+                    
+                    conductores = []
+                    for row in results:
+                        conductores.append({
+                            "id": row['id'],
+                            "identificador_unico": row['identificador_unico'],
+                            "cotizacion_id": row['cotizacion_id'],
+                            "group_cotization_id": row['group_cotization_id'],
+                            "nombre_conductor": row['nombre_conductor'],
+                            "telefono": row['telefono'],
+                            "placa": row['placa'],
+                            "tipo_vehiculo": row['tipo_vehiculo'],
+                            "vehiculo_silogtran": row['vehiculo_silogtran'],
+                            "peso_maximo": float(row['peso_maximo']) if row['peso_maximo'] else None,
+                            "ciudad_actual": row['ciudad_actual'],
+                            "ciudad_origen": row['ciudad_origen'],
+                            "ciudad_destino": row['ciudad_destino'],
+                            "disponible": bool(row['disponible']),
+                            "score": float(row['score']) if row['score'] else 0.0,
+                            "estado_llamada": row['estado_llamada'],
+                            "call_id": row['call_id'],
+                            "fecha_llamada": str(row['fecha_llamada']) if row['fecha_llamada'] else None,
+                            "respuesta_llamada": row['respuesta_llamada'],
+                            "notas": row['notas'],
+                            "mercancia": row['mercancia'],
+                            "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
+                            "empaque": row['empaque'],
+                            "datos_adicionales": row['datos_adicionales'],
+                            "created_at": str(row['created_at']) if row['created_at'] else None,
+                            "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                        })
+                    
+                    return json.dumps({
+                        "success": True,
+                        "telefono_buscado": telefono,
+                        "total_encontrados": len(conductores),
+                        "conductores": conductores
+                    }, indent=2, ensure_ascii=False)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al buscar conductor por teléfono: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "update_conversation_id_conductor":
+                identificador_unico = arguments.get("identificador_unico")
+                conversation_id = arguments.get("conversation_id")
+                estado_llamada = arguments.get("estado_llamada", "en_progreso")
+                notas = arguments.get("notas")
+                
+                if not identificador_unico or not conversation_id:
+                    return json.dumps({
+                        "error": "Los parámetros 'identificador_unico' y 'conversation_id' son requeridos"
+                    }, ensure_ascii=False)
+                
+                try:
+                    # Construir query UPDATE
+                    updates = [
+                        "call_id = %s",
+                        "estado_llamada = %s",
+                        "fecha_llamada = NOW()",
+                        "updated_at = NOW()"
+                    ]
+                    params = [conversation_id, estado_llamada]
+                    
+                    if notas:
+                        updates.append("notas = %s")
+                        params.append(notas)
+                    
+                    params.append(identificador_unico)
+                    
+                    query = f"""
+                    UPDATE llamadas_conductores
+                    SET {', '.join(updates)}
+                    WHERE identificador_unico = %s
+                        AND deleted_at IS NULL
+                    """
+                    
+                    affected_rows = await repository.db.execute_update(query, tuple(params))
+                    
+                    if affected_rows > 0:
+                        return json.dumps({
+                            "success": True,
+                            "identificador_unico": identificador_unico,
+                            "conversation_id": conversation_id,
+                            "estado_llamada": estado_llamada,
+                            "mensaje": f"Conversation ID actualizado exitosamente para el conductor {identificador_unico}"
+                        }, ensure_ascii=False)
+                    else:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró conductor con identificador_unico: {identificador_unico}"
+                        }, ensure_ascii=False)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al actualizar conversation_id: {str(e)}"
+                    }, ensure_ascii=False)
+            
             else:
                 return json.dumps({"error": f"Herramienta '{tool_name}' no encontrada"}, ensure_ascii=False)
                 
@@ -2580,45 +2781,46 @@ Espero me pueda decir si le interesa realizar este transporte que se debe realiz
             # ... (puedes agregar todas las demás herramientas aquí, o mejor aún...)
         ]
     
-    async def _execute_tool(self, tool_name: str, arguments: dict):
-        """Ejecuta una herramienta específica con los argumentos dados"""
-        logger.info(f"Ejecutando herramienta: {tool_name} con args: {arguments}")
-        
-        # Mapeo de herramientas a métodos del repositorio
-        tool_methods = {
-            "get_llamadas": repository.get_llamadas,
-            "get_llamada_by_id": repository.get_llamada_by_id,
-            "create_llamada": repository.create_llamada,
-            "update_llamada_status": repository.update_llamada_status,
-            "get_cotizaciones": repository.get_cotizaciones,
-            "get_vehicle_by_telefono_conductor": repository.get_vehicle_by_telefono_conductor,
-            "process_elevenlabs_event": repository.process_elevenlabs_event,
-            "get_chofer_by_placa": repository.get_chofer_by_placa,
-            "get_llamadas_by_telefono": repository.get_llamadas_by_telefono,
-            "activate_conversation": repository.activate_conversation,
-            "generate_transport_offer": repository.generate_transport_offer,
-            "save_driver_decision": repository.save_driver_decision,
-            "get_group_cotizations": repository.get_group_cotizations,
-            "get_group_cotizations_by_user": repository.get_group_cotizations_by_user,
-            "get_cotizacion_with_group_info": repository.get_cotizacion_with_group_info,
-            "get_cotizations_by_group": repository.get_cotizations_by_group,
-            "get_pricings": repository.get_pricings,
-            "get_pricing_by_vehicle_type": repository.get_pricing_by_vehicle_type,
-            "search_pricings_by_route": repository.search_pricings_by_route,
-            "get_cotizacion_with_pricing_info": repository.get_cotizacion_with_pricing_info,
-            "precioviaje": repository.precioviaje,
-            "zinformacion": repository.zinformacion,
-            "llenar_formulario": repository.llenar_formulario,
-        }
-        
-        if tool_name not in tool_methods:
-            raise ValueError(f"Herramienta no encontrada: {tool_name}")
-        
-        # Ejecutar el método correspondiente
-        method = tool_methods[tool_name]
-        result = await method(**arguments)
-        
-        return result
+    # MÉTODO DUPLICADO - COMENTADO PORQUE YA EXISTE UNO FUNCIONAL EN LÍNEA 1449
+    # async def _execute_tool(self, tool_name: str, arguments: dict):
+    #     """Ejecuta una herramienta específica con los argumentos dados"""
+    #     logger.info(f"Ejecutando herramienta: {tool_name} con args: {arguments}")
+    #     
+    #     # Mapeo de herramientas a métodos del repositorio
+    #     tool_methods = {
+    #         "get_llamadas": repository.get_llamadas,
+    #         "get_llamada_by_id": repository.get_llamada_by_id,
+    #         "create_llamada": repository.create_llamada,
+    #         "update_llamada_status": repository.update_llamada_status,
+    #         "get_cotizaciones": repository.get_cotizaciones,
+    #         "get_vehicle_by_telefono_conductor": repository.get_vehicle_by_telefono_conductor,
+    #         "process_elevenlabs_event": repository.process_elevenlabs_event,
+    #         "get_chofer_by_placa": repository.get_chofer_by_placa,
+    #         "get_llamadas_by_telefono": repository.get_llamadas_by_telefono,
+    #         "activate_conversation": repository.activate_conversation,
+    #         "generate_transport_offer": repository.generate_transport_offer,
+    #         "save_driver_decision": repository.save_driver_decision,
+    #         "get_group_cotizations": repository.get_group_cotizations,
+    #         "get_group_cotizations_by_user": repository.get_group_cotizations_by_user,
+    #         "get_cotizacion_with_group_info": repository.get_cotizacion_with_group_info,
+    #         "get_cotizations_by_group": repository.get_cotizations_by_group,
+    #         "get_pricings": repository.get_pricings,
+    #         "get_pricing_by_vehicle_type": repository.get_pricing_by_vehicle_type,
+    #         "search_pricings_by_route": repository.search_pricings_by_route,
+    #         "get_cotizacion_with_pricing_info": repository.get_cotizacion_with_pricing_info,
+    #         "precioviaje": repository.precioviaje,
+    #         "zinformacion": repository.zinformacion,
+    #         "llenar_formulario": repository.llenar_formulario,
+    #     }
+    #     
+    #     if tool_name not in tool_methods:
+    #         raise ValueError(f"Herramienta no encontrada: {tool_name}")
+    #     
+    #     # Ejecutar el método correspondiente
+    #     method = tool_methods[tool_name]
+    #     result = await method(**arguments)
+    #     
+    #     return result
     
     async def close(self):
         """Cierra las conexiones del servidor"""

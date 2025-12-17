@@ -70,5 +70,9 @@ class Kernel extends HttpKernel
         'elevenlabs.config' => \App\Http\Middleware\ValidateElevenLabsConfig::class,
         'elevenlabs.webhook' => \App\Http\Middleware\ElevenLabsWebhookAuth::class,
         'api.throttle' => \App\Http\Middleware\ApiRateLimitMiddleware::class,
+        'role' => \Spatie\Permission\Middlewares\RoleMiddleware::class,
+        'permission' => \Spatie\Permission\Middlewares\PermissionMiddleware::class,
+        'role_or_permission' => \Spatie\Permission\Middlewares\RoleOrPermissionMiddleware::class,
+        'role' => \App\Http\Middleware\EnsureUserHasRole::class,
     ];
 }

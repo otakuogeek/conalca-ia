@@ -17,8 +17,9 @@ class SacCotizationController extends Controller
         }
 
         $q = GroupCotization::query()
-            ->with(['client:id,name',             // cliente del grupo
-                    'cotizaciones.client:id,name' // cliente de cada modelo
+            ->with([
+                'client:id,cliente',
+                'cotizaciones.client:id,cliente'
             ])
             ->whereIn('status',['en tránsito','en facturación','facturado']);
 

@@ -26,17 +26,17 @@ export default function TransitGroupModal({ open, onClose, group }) {
       aria-labelledby="modal-title"
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center overflow-y-auto backdrop-blur-sm"
+      className="fixed inset-0 z-[99990] flex items-start sm:items-start justify-center pt-4 overflow-y-auto backdrop-blur-sm"
     >
       {/* fondo oscurecido */}
       <div
-        className="fixed inset-0 bg-gray-900/80"
+        className="fixed inset-0 bg-gray-900/70"
         onClick={onClose}
       />
 
       {/* contenedor modal */}
       <article
-        className="relative z-[10000] w-full max-w-[95vw] sm:max-w-3xl lg:max-w-6xl 2xl:max-w-7xl
+        className="relative z-[99991] w-full max-w-[95vw] sm:max-w-3xl lg:max-w-6xl 2xl:max-w-7xl my-4
                    max-h-[92vh] rounded-2xl bg-white shadow-2xl border border-gray-100 flex flex-col"
       >
         {/* header fijo con botón cerrar */}

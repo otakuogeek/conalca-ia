@@ -17,19 +17,20 @@ class QuoteRoutesController extends Controller
     public function saveQuoteRoutes(Request $request)
     {
         // Log de datos recibidos para diagnosticar el error 422
-        Log::info('saveQuoteRoutes - Datos recibidos:', [
-            'body' => $request->all(),
-            'has_group_id' => $request->has('group_id'),
-            'has_routes' => $request->has('routes'),
-            'routes_type' => gettype($request->input('routes')),
-            'routes_count' => is_array($request->input('routes')) ? count($request->input('routes')) : 'no es array'
-        ]);
+        // Log::info('saveQuoteRoutes - Datos recibidos:', [
+        //     'body' => $request->all(),
+        //     'has_group_id' => $request->has('group_id'),
+        //     'has_routes' => $request->has('routes'),
+        //     'routes_type' => gettype($request->input('routes')),
+        //     'routes_count' => is_array($request->input('routes')) ? count($request->input('routes')) : 'no es array'
+        // ]);
 
         $request->validate([
             'group_id' => 'required|integer|exists:group_cotizations,id',
             'routes' => 'required|array|min:1',
             'routes.*.ciudad_origen' => 'required|string',
             'routes.*.ciudad_destino' => 'required|string',
+            'routes.*.id'             => 'nullable|integer',
         ]);
 
         try {
@@ -52,40 +53,72 @@ class QuoteRoutesController extends Controller
 
             foreach ($request->routes as $index => $routeData) {
                 Log::info('Procesando ruta', [
-                    'index' => $index,
-                    'origen' => $routeData['ciudad_origen'] ?? 'no definido',
+                    'index'   => $index,
+                    'id'      => $routeData['id'] ?? null,
+                    'origen'  => $routeData['ciudad_origen'] ?? 'no definido',
                     'destino' => $routeData['ciudad_destino'] ?? 'no definido'
                 ]);
 
-                // Crear registro de cotización individual
-                $cotization = CotizacionModel::create([
-                    'group_cotization_id' => $group->id,
-                    'user_id' => Auth::id(),
-                    'client_id' => $group->client_id,
-                    'ciudad_origen' => $routeData['ciudad_origen'],
-                    'ciudad_destino' => $routeData['ciudad_destino'],
-                    'peso_mercancia' => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
-                    'cantidad' => $this->parseNumericField($routeData['cantidad'] ?? '1'),
-                    'tipo_embajale' => $routeData['tipo_embajale'] ?? 'Caja',
-                    'tipo_producto' => $routeData['tipo_producto'] ?? 'Mercancía general',
-                    'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
-                    'valor_declarado' => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
-                    'pricing_id' => null, // Agregar pricing_id como nulo inicialmente
-                    'decision_cliente' => 'pendiente',
-                    'active' => 1,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                $cotization = null;
+
+                if (!empty($routeData['id'])) {
+                    $cotization = CotizacionModel::where('id', $routeData['id'])
+                        ->where('group_cotization_id', $group->id)
+                        ->first();
+                }
+
+                if ($cotization) {
+                    // UPDATE existing
+                    $cotization->update([
+                        'ciudad_origen'    => $routeData['ciudad_origen'],
+                        'ciudad_destino'   => $routeData['ciudad_destino'],
+                        'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
+                        'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
+                        'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
+                        'tipo_producto'    => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'valor_declarado'  => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
+                        'pricing_id'       => $routeData['pricing_id'] ?? null,
+                        'porcentaje'       => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
+                        'valor_cliente'    => $this->parseMoneyField($routeData['valor_cliente'] ?? '0'),
+                        // add any extra fields you need to persist (candado_satelital, etc.)
+                    ]);
+                } else {
+                    // CREATE new
+                    $cotization = CotizacionModel::create([
+                        'group_cotization_id' => $group->id,
+                        'user_id'             => Auth::id(),
+                        'client_id'           => $group->client_id,
+                        'ciudad_origen'       => $routeData['ciudad_origen'],
+                        'ciudad_destino'      => $routeData['ciudad_destino'],
+                        'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
+                        'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
+                        'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
+                        'tipo_producto'       => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'vehiculo_requerido'  => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'valor_declarado'     => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
+                        'pricing_id'          => $routeData['pricing_id'] ?? null,
+                        'porcentaje'          => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
+                        'valor_cliente'       => $this->parseMoneyField($routeData['valor_cliente'] ?? '0'),
+                        'decision_cliente'    => 'pendiente',
+                        'active'              => 1,
+                        'created_at'          => now(),
+                        'updated_at'          => now(),
+                    ]);
+                }
 
                 $savedRoutes[] = [
-                    'id' => $cotization->id,
-                    'ciudad_origen' => $cotization->ciudad_origen,
-                    'ciudad_destino' => $cotization->ciudad_destino,
-                    'peso_mercancia' => $cotization->peso_mercancia,
-                    'cantidad' => $cotization->cantidad,
-                    'tipo_producto' => $cotization->tipo_producto,
+                    'id'               => $cotization->id,
+                    'ciudad_origen'    => $cotization->ciudad_origen,
+                    'ciudad_destino'   => $cotization->ciudad_destino,
+                    'peso_mercancia'   => $cotization->peso_mercancia,
+                    'cantidad'         => $cotization->cantidad,
+                    'tipo_producto'    => $cotization->tipo_producto,
                     'vehiculo_requerido' => $cotization->vehiculo_requerido,
-                    'valor_declarado' => $cotization->valor_declarado,
+                    'valor_declarado'  => $cotization->valor_declarado,
+                    'pricing_id'       => $cotization->pricing_id,
+                    'porcentaje'       => $cotization->porcentaje,
+                    'valor_cliente'    => $cotization->valor_cliente,
                 ];
             }
 

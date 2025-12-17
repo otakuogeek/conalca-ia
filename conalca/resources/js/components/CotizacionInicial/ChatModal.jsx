@@ -1,5 +1,5 @@
 // resources/js/components/CotizacionInicial/ChatModal.jsx
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import SpeechRecognition from './ui/SpeechRecognition';
@@ -28,6 +28,24 @@ const ChatModal = ({
   const [processingProgress, setProcessingProgress] = useState(0); // Progreso 0-100
   const sendingRef = useRef(false); // Ref adicional para bloqueo
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+
+  const stripMarkdown = (text = '') => {
+    return text
+      // remove headings like ### Title
+      .replace(/^#{1,6}\s*/gm, '')
+      // bold / italic (**text**, __text__, *text*, _text_)
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      .replace(/(\*|_)(.*?)\1/g, '$2')
+      // inline code `code`
+      .replace(/`([^`]+)`/g, '$1')
+      // links [label](url)
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      // collapse multiple spaces (but keep newlines intact)
+      .replace(/[ \t]{2,}/g, ' ')
+      // optional: limit extra blank lines if needed
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
 
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
@@ -239,20 +257,6 @@ const ChatModal = ({
     }
   };
 
-  // Verificar mensajes huérfanos al cargar el componente
-  useEffect(() => {
-    // DESHABILITADO: Esta verificación automática causa conflictos 409
-    // Solo se debe verificar manualmente si el usuario reporta problemas
-    /*
-    if (clientData.threadId && clientData.clientId && !currentRunId) {
-      // Esperar un momento antes de verificar para permitir que el componente se inicialice
-      setTimeout(() => {
-        checkForOrphanMessages(clientData.threadId);
-      }, 2000);
-    }
-    */
-  }, [clientData.threadId, clientData.clientId]);
-
   const startPollingRun = (threadId, runId) => {
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
@@ -325,39 +329,6 @@ const ChatModal = ({
               setQuoteData(data.data.quote_data);
               
               // Guardar las rutas en la base de datos automáticamente
-              if (clientData.groupId) {
-                console.log('💾 Guardando rutas en la base de datos...');
-                try {
-                  const saveResponse = await fetch('/api/chat/quote/save-routes', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-                      'Accept': 'application/json',
-                      'X-Requested-With': 'XMLHttpRequest'
-                    },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
-                      group_id: clientData.groupId,
-                      routes: data.data.quote_data
-                    })
-                  });
-                  
-                  const saveResult = await saveResponse.json();
-                  if (saveResult.success) {
-                    console.log('✅ Rutas guardadas exitosamente:', saveResult.data);
-                  } else {
-                    console.error('❌ Error guardando rutas:', saveResult.error);
-                    // Mostrar error al usuario si es necesario
-                    if (saveResult.error && typeof saveResult.error === 'string' && saveResult.error.includes('permisos')) {
-                      console.warn('⚠️ Problema de permisos al guardar rutas');
-                    }
-                  }
-                } catch (saveError) {
-                  console.error('❌ Error de red guardando rutas:', saveError);
-                  // No bloquear el flujo si hay error guardando rutas
-                }
-              }
             }
             
             // Detener polling
@@ -559,7 +530,7 @@ const ChatModal = ({
 
       const thinkingMessage = {
         role: 'assistant',
-        text: 'Procesando tu solicitud...',
+        text: stripMarkdown('Procesando tu solicitud...'),
         created_at: new Date().toLocaleTimeString(),
         status: 'thinking',
         isTemporary: true
@@ -749,8 +720,66 @@ const ChatModal = ({
     setInputMessage(transcript);
   };
 
+    const handleCreateQuote = async () => {
+    if (!clientData.groupId) {
+      alert('You need a quote group before saving routes.');
+      return;
+    }
+    if (!quoteData || !quoteData.length) {
+      alert('No routes to save.');
+      return;
+    }
+
+    try {
+      const saveResponse = await fetch('/api/chat/quote/save-routes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          group_id: clientData.groupId,
+          routes: quoteData
+        })
+      });
+
+      const saveResult = await saveResponse.json();
+
+      if (saveResult.success) {
+        // Merge returned IDs into quoteData so later steps update instead of create
+        if (saveResult.data?.routes) {
+          setQuoteData(prev =>
+            prev.map((r, i) => ({
+              ...r,
+              id: saveResult.data.routes[i]?.id || r.id || null,
+            }))
+          );
+        }
+
+        // proceed to next step
+        onNext && onNext(saveResult.data);
+      } else {
+        console.error('Error saving routes:', saveResult.error);
+        alert('There was a problem saving routes. Please try again.');
+      }
+    } catch (err) {
+      console.error('Network error saving routes:', err);
+      alert('Network error while saving routes. Please retry.');
+    }
+  };
+
   const canProceed = quoteData && quoteData.length > 0 && 
                    quoteData.some(route => route.ciudad_origen && route.ciudad_destino);
+
+  const sanitizedMessages = useMemo(() => {
+    return messages.map(msg => ({
+      ...msg,
+      text: stripMarkdown(msg.text)
+    }));
+  }, [messages]);                
 
   return (
     <Modal onClose={onClose} size="extra-large">
@@ -989,7 +1018,7 @@ const ChatModal = ({
           >
             {messages.length > 0 || processingMessage ? (
               <>
-                {messages.map((message, index) => (
+                {sanitizedMessages.map((message, index) => (
                   <div 
                     key={index} 
                     className={`mb-4 ${message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} chat-message`}
@@ -1327,7 +1356,7 @@ const ChatModal = ({
           {canProceed && (
             <div className="border-t border-gray-200 p-6 bg-gray-50">
               <button 
-                onClick={onNext}
+                onClick={handleCreateQuote}
                 className="w-full py-4 px-6 bg-orange-400 hover:bg-orange-500 text-white font-600 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 hover:scale-105 product-sans group"
               >
                 <div className="flex items-center justify-center space-x-2">

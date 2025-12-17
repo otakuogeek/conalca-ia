@@ -8,6 +8,7 @@ import PricingModal from './PricingModal';
 import PreviewModal from './PreviewModal';
 import SuccessModal from './SuccessModal';
 import EventEmitter from 'eventemitter3';
+import EditRoutesModal from './EditRoutesModal';
 
 // Event bus global para comunicación entre componentes
 export const quoteBus = new EventEmitter();
@@ -35,6 +36,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   const [pricings, setPricings] = useState([]);
   const [selectedPricings, setSelectedPricings] = useState({});
   const [porcentajeGlobal, setPorcentajeGlobal] = useState(17);
+  const [showEditRoutesModal, setShowEditRoutesModal] = useState(false);
 
   // Datos del cliente y configuración
   const [clientData, setClientData] = useState({
@@ -214,6 +216,9 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         setShowChatModal(true);
         setStep(1);
         break;
+      case 'editRoutes':
+        setShowEditRoutesModal(true);
+        break;
       case 'pricing':
         setShowPricingModal(true);
         break;
@@ -237,6 +242,9 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         break;
       case 'chat':
         setShowChatModal(false);
+        break;
+      case 'editRoutes':
+        setShowEditRoutesModal(false);
         break;
       case 'pricing':
         setShowPricingModal(false);
@@ -483,20 +491,47 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     }
   };
 
+  // const handleNextStep = (stepNumber) => {
+  //   switch (stepNumber) {
+  //     case 1:
+  //       // De chat a pricing
+  //       handleCloseModal('chat');
+  //       handleOpenModal('pricing');
+  //       break;
+  //     case 2:
+  //       // De pricing a preview
+  //       handleCloseModal('pricing');
+  //       handleOpenModal('preview');
+  //       break;
+  //     case 3:
+  //       // De preview a success
+  //       handleCloseModal('preview');
+  //       handleOpenModal('success');
+  //       break;
+  //     default:
+  //       break;
+  //   }
+  // };
+
   const handleNextStep = (stepNumber) => {
     switch (stepNumber) {
       case 1:
-        // De chat a pricing
+        // From Chat to EditRoutes
         handleCloseModal('chat');
-        handleOpenModal('pricing');
+        handleOpenModal('editRoutes');
         break;
       case 2:
-        // De pricing a preview
+        // From EditRoutes to Pricing
+        handleCloseModal('editRoutes');
+        handleOpenModal('pricing');
+        break;
+      case 3:
+        // From Pricing to Preview
         handleCloseModal('pricing');
         handleOpenModal('preview');
         break;
-      case 3:
-        // De preview a success
+      case 4:
+        // From Preview to Success
         handleCloseModal('preview');
         handleOpenModal('success');
         break;
@@ -573,10 +608,21 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         />
       )}
 
+      {showEditRoutesModal && (
+        <EditRoutesModal
+          onClose={() => handleCloseModal('editRoutes')}
+          onNext={() => handleNextStep(2)} // go to Pricing
+          groupId={clientData.groupId}
+          quoteData={quoteData}
+          setQuoteData={setQuoteData}
+          clientData={clientData}
+        />
+      )}
+
       {showPricingModal && (
         <PricingModal
           onClose={() => handleCloseModal('pricing')}
-          onNext={() => handleNextStep(2)}
+          onNext={() => handleNextStep(3)}
           quoteData={quoteData}
           setQuoteData={setQuoteData}
           pricings={pricings}
@@ -592,7 +638,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       {showPreviewModal && (
         <PreviewModal
           onClose={() => handleCloseModal('preview')}
-          onNext={() => handleNextStep(3)}
+          onNext={() => handleNextStep(4)}
           quoteData={quoteData}
           clientData={clientData}
           selectedPricings={selectedPricings}

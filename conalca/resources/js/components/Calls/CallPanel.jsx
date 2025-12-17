@@ -6,7 +6,6 @@ import {
   FaTruckMoving,
   FaUserCheck,
   FaUserTimes,
-  FaList,
 } from 'react-icons/fa';
 import DriversModal from '../CotizacionInicial/DriversModal';
 
@@ -24,7 +23,6 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   const [selectingId, setSelectingId] = useState(null);
   const [showDriversModal, setShowDriversModal] = useState(false);
   const [driversSearchData, setDriversSearchData] = useState(null);
-  const [loadingDrivers, setLoadingDrivers] = useState(false);
 console.log(data)
   const load = async () => {
     try {
@@ -38,59 +36,41 @@ console.log(data)
   useInterval(load, 5000);
   useEffect(() => { load(); }, []);
 
-  // Función para buscar conductores disponibles en Arcángel
-  const handleSearchDrivers = async () => {
-    if (!cotizacion.id) {
-      console.error('No se encontró ID de cotización');
-      return;
-    }
-    
-    setLoadingDrivers(true);
-    try {
-      const response = await buscarConductores(cotizacion.id, 7, 50);
-      
-      if (response.data && response.data.success) {
-        setDriversSearchData(response.data.data);
-        setShowDriversModal(true);
-      } else {
-        throw new Error(response.data?.message || 'Error al buscar conductores');
-      }
-    } catch (e) {
-      console.error('Error buscando conductores:', e);
-      
-      const errorMessage = e.response?.data?.message || e.message || 'No se pudieron buscar conductores. Intente de nuevo.';
-      
-      if (window.Swal) {
-        window.Swal.fire({
-          title: 'Error',
-          text: errorMessage,
-          icon: 'error',
-          confirmButtonText: 'Aceptar',
-          confirmButtonColor: '#f97316'
-        });
-      } else {
-        alert(errorMessage);
-      }
-    } finally {
-      setLoadingDrivers(false);
-    }
-  };
-
-
   const handleCall = async () => {
     if (!cotizacion.group_cotization_id) {
       console.error('No se encontró group_cotization_id para esta cotización');
       return;
     }
     
+    if (!cotizacion.id) {
+      console.error('No se encontró ID de cotización');
+      return;
+    }
+    
     setLoadingBtn(true);
     try {
-      // Usar el nuevo sistema de registro de llamadas por grupo
+      // PASO 1: Buscar conductores disponibles en Arcángel
+      console.log('🔍 Buscando conductores disponibles...');
+      const searchResponse = await buscarConductores(cotizacion.id, 7, 50);
+      
+      if (!searchResponse.data || !searchResponse.data.success) {
+        throw new Error(searchResponse.data?.message || 'Error al buscar conductores');
+      }
+      
+      const conductoresData = searchResponse.data.data;
+      console.log(`✅ Encontrados ${conductoresData.total} conductores`);
+      
+      // PASO 2: Registrar las llamadas en el sistema
+      console.log('📞 Registrando llamadas en el sistema...');
       const response = await startCallingDriversGroup(cotizacion.group_cotization_id);
       
       if (response.data && response.data.success) {
         // Mostrar mensaje de éxito
         console.log('✅ Llamadas registradas exitosamente:', response.data);
+        
+        // PASO 3: Mostrar modal con los conductores encontrados
+        setDriversSearchData(conductoresData);
+        setShowDriversModal(true);
         
         // Cerrar el modal padre si existe la función
         if (onModalClose && typeof onModalClose === 'function') {
@@ -185,16 +165,28 @@ console.log(data)
       const response = await startElevenLabsCalls(cotizacion.id);
       
       if (response.data && response.data.success) {
-        console.log('✅ Llamadas ElevenLabs iniciadas exitosamente:', response.data);
+        console.log('✅ Llamadas ElevenLabs procesadas:', response.data);
         
         if (window.Swal) {
-          window.Swal.fire({
-            title: '¡Llamadas Iniciadas!',
-            text: `Se iniciaron ${response.data.calls_initiated} llamadas exitosamente. ${response.data.failed_calls > 0 ? `${response.data.failed_calls} llamadas fallaron.` : ''}`,
-            icon: 'success',
-            confirmButtonText: 'Entendido',
-            confirmButtonColor: '#f97316'
-          });
+          // Si no hay llamadas pendientes
+          if (response.data.llamadas_programadas === 0) {
+            window.Swal.fire({
+              title: 'Sin Llamadas Pendientes',
+              text: 'No hay llamadas pendientes para esta cotización. Verifica que hayas asignado conductores.',
+              icon: 'info',
+              confirmButtonText: 'Entendido',
+              confirmButtonColor: '#3b82f6'
+            });
+          } else {
+            // Llamadas iniciadas correctamente
+            window.Swal.fire({
+              title: '¡Llamadas Iniciadas!',
+              text: `Se iniciaron ${response.data.calls_initiated || response.data.llamadas_programadas} llamadas exitosamente. ${response.data.failed_calls > 0 ? `${response.data.failed_calls} llamadas fallaron.` : ''}`,
+              icon: 'success',
+              confirmButtonText: 'Entendido',
+              confirmButtonColor: '#f97316'
+            });
+          }
         }
         
         // Recargar datos para reflejar los cambios
@@ -262,19 +254,10 @@ console.log(data)
         <button
           onClick={handleCall}
           disabled={loadingBtn}
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
         >
           <FaPhoneAlt className={loadingBtn ? 'animate-ping' : ''}/>
-          {loadingBtn ? 'Registrando…' : 'Registrar Llamadas'}
-        </button>
-
-        <button
-          onClick={handleSearchDrivers}
-          disabled={loadingDrivers}
-          className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
-        >
-          <FaList className={loadingDrivers ? 'animate-spin' : ''}/>
-          {loadingDrivers ? 'Buscando…' : 'Ver Listado'}
+          {loadingBtn ? 'Procesando…' : 'Registrar Llamadas'}
         </button>
       </div>
 

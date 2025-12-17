@@ -320,10 +320,39 @@ class VehicleOwnerHolderDriver extends Model
     }
 
     /**
-     * Relación con las llamadas registradas
+     * Relación con las llamadas registradas (legacy)
      */
     public function llamadas()
     {
         return $this->hasMany(Llamada::class, 'chofer_id');
+    }
+
+    /**
+     * Relación con las decisiones de llamadas
+     */
+    public function callDecisions()
+    {
+        return $this->hasMany(CallDriverDecision::class, 'driver_id');
+    }
+
+    /**
+     * Relación con respuestas de llamadas de ElevenLabs
+     */
+    public function driverCallResponses()
+    {
+        return $this->hasMany(DriverCallResponse::class, 'driver_id');
+    }
+
+    /**
+     * Relación con cotizaciones a través de decisiones
+     */
+    public function cotizaciones()
+    {
+        return $this->belongsToMany(
+            CotizacionModel::class,
+            'call_driver_decisions',
+            'driver_id',
+            'cotizacion_model_id'
+        )->withPivot(['decision'])->withTimestamps();
     }
 }

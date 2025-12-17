@@ -1,4 +1,4 @@
-// services/pricingService.js
+// resource/js/components/services/pricingService.js
 import axios from 'axios';
 
 const API = '/pricings-solutions';
@@ -6,9 +6,9 @@ const API = '/pricings-solutions';
 const getCsrfToken = () =>
   document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-export const fetchLatestPricingsByRoute = ({ origin, destination }) =>
+export const fetchLatestPricingsByRoute = ({ origin, destination, cargo_weight }) =>
   axios.get(`${API}/latest-by-route`, {
-    params: { origin, destination },
+    params: { origin, destination, cargo_weight },
     headers: {
       'X-CSRF-TOKEN': getCsrfToken(),
     },
@@ -24,3 +24,17 @@ export const fetchRentabilityStats = ({ origin, destination }) =>
     params: { origin, destination },
     headers: { 'X-CSRF-TOKEN': getCsrfToken() },
   });
+
+export const fetchPercentageSettings = () =>
+  axios.get('/pricing-percentage-settings', {
+    headers: { 'X-CSRF-TOKEN': getCsrfToken() },
+  });
+
+export const fetchVehicleCapacityGuide = () =>
+  axios.get('/pricing/vehicle-guide', {
+    headers: {
+      'X-CSRF-TOKEN': getCsrfToken(),
+    },
+  });
+
+

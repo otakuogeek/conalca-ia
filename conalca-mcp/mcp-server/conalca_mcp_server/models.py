@@ -2,6 +2,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 from .database import db_connection
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LlamadaModel(BaseModel):
     """Modelo para la tabla llamadas"""
@@ -509,6 +512,169 @@ class DatabaseRepository:
         if results and len(results) > 0:
             return results[0].get('producto_nombre')
         return None
+
+    # ========================================================================
+    # Métodos para tabla llamadas_conductores (nuevo flujo con Arcangel)
+    # ========================================================================
+    
+    async def get_conductor_by_conversation_id(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtiene información completa del conductor y cotización mediante conversation_id.
+        Busca primero en la tabla llamadas y luego en llamadas_conductores.
+        """
+        # Primero buscar en llamadas para obtener cotizacion_id
+        query_llamada = """
+        SELECT id_llamada, id_cotizacion, chofer_id, elevenlabs_conversation_id, status
+        FROM llamadas 
+        WHERE elevenlabs_conversation_id = %s 
+        LIMIT 1
+        """
+        llamada_results = await self.db.execute_query(query_llamada, (conversation_id,))
+        
+        if not llamada_results or len(llamada_results) == 0:
+            return None
+            
+        llamada = llamada_results[0]
+        cotizacion_id = llamada.get('id_cotizacion')
+        
+        if not cotizacion_id:
+            return None
+        
+        # Ahora buscar el conductor en llamadas_conductores que esté pendiente
+        query_conductor = """
+        SELECT lc.*, cm.ciudad_origen, cm.ciudad_destino, cm.tipo_producto, cm.tipo_embajale,
+               cm.peso_carga, cm.vehiculo_requerido
+        FROM llamadas_conductores lc
+        LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
+        WHERE lc.cotizacion_id = %s 
+        AND lc.estado_llamada = 'pendiente'
+        AND lc.disponible = 1
+        ORDER BY lc.score DESC
+        LIMIT 1
+        """
+        conductor_results = await self.db.execute_query(query_conductor, (cotizacion_id,))
+        
+        if not conductor_results or len(conductor_results) == 0:
+            return None
+            
+        return conductor_results[0]
+    
+    async def update_estado_llamada_conductor(
+        self, 
+        identificador_unico: str, 
+        estado_llamada: str,
+        call_id: str = None,
+        respuesta_llamada: str = None,
+        notas: str = None
+    ) -> bool:
+        """
+        Actualiza el estado de una llamada a un conductor en la tabla llamadas_conductores.
+        Estados válidos: pendiente, en_progreso, completada, fallida, cancelada
+        """
+        estados_validos = ['pendiente', 'en_progreso', 'completada', 'fallida', 'cancelada']
+        
+        if estado_llamada not in estados_validos:
+            return False
+        
+        # Construir query dinámicamente según parámetros disponibles
+        update_fields = ["estado_llamada = %s", "fecha_llamada = NOW()", "updated_at = NOW()"]
+        params = [estado_llamada]
+        
+        if call_id:
+            update_fields.append("call_id = %s")
+            params.append(call_id)
+        
+        if respuesta_llamada:
+            update_fields.append("respuesta_llamada = %s")
+            params.append(respuesta_llamada)
+            
+        if notas:
+            update_fields.append("notas = %s")
+            params.append(notas)
+        
+        # Agregar identificador_unico al final
+        params.append(identificador_unico)
+        
+        query = f"""
+        UPDATE llamadas_conductores 
+        SET {', '.join(update_fields)}
+        WHERE identificador_unico = %s
+        """
+        
+        affected_rows = await self.db.execute_update(query, tuple(params))
+        return affected_rows > 0
+    
+    async def save_driver_decision_new(
+        self, 
+        identificador_unico: str,
+        conversation_id: str,
+        decision: int,
+        notas: str = None
+    ) -> bool:
+        """
+        Guarda la decisión del conductor en:
+        1. llamadas_conductores (actualiza estado y respuesta)
+        2. call_driver_decisions (registro histórico)
+        
+        decision: 1 = acepta, 0 = rechaza
+        
+        También actualiza el estado_llamada según la decisión:
+        - Si acepta (1): estado_llamada = 'completada'
+        - Si rechaza (0): estado_llamada = 'fallida'
+        """
+        try:
+            # Primero, obtener la información del conductor
+            query_conductor = """
+            SELECT id, cotizacion_id 
+            FROM llamadas_conductores 
+            WHERE identificador_unico = %s AND deleted_at IS NULL
+            """
+            result = await self.db.execute_query(query_conductor, (identificador_unico,))
+            
+            if not result:
+                logger.error(f"No se encontró conductor con identificador_unico: {identificador_unico}")
+                return False
+            
+            conductor_data = result[0]
+            conductor_id = conductor_data['id']
+            cotizacion_id = conductor_data.get('cotizacion_id')
+            
+            # 1. Actualizar llamadas_conductores
+            estado_nuevo = 'completada' if decision == 1 else 'fallida'
+            respuesta = 'Acepta el viaje' if decision == 1 else 'Rechaza el viaje'
+            
+            update_success = await self.update_estado_llamada_conductor(
+                identificador_unico=identificador_unico,
+                estado_llamada=estado_nuevo,
+                call_id=conversation_id,
+                respuesta_llamada=respuesta,
+                notas=notas
+            )
+            
+            if not update_success:
+                logger.error(f"Error actualizando llamadas_conductores para {identificador_unico}")
+                return False
+            
+            # 2. Guardar en call_driver_decisions (registro histórico)
+            if cotizacion_id:
+                query_decision = """
+                INSERT INTO call_driver_decisions 
+                (cotizacion_model_id, driver_id, decision, created_at, updated_at)
+                VALUES (%s, %s, %s, NOW(), NOW())
+                """
+                await self.db.execute_query(
+                    query_decision, 
+                    (cotizacion_id, conductor_id, decision)
+                )
+                logger.info(f"Decisión guardada en call_driver_decisions: cotizacion_id={cotizacion_id}, driver_id={conductor_id}, decision={decision}")
+            else:
+                logger.warning(f"No se guardó en call_driver_decisions: cotizacion_id es NULL para {identificador_unico}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error en save_driver_decision_new: {e}")
+            return False
 
 # Instancia global del repositorio
 repository = DatabaseRepository()

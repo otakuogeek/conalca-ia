@@ -236,6 +236,8 @@ Analiza la respuesta y usa el guión estructurado de CONALCA.
 
             // Guardar decisión del conductor si es clara
             if (in_array($parsedResponse['intent'], ['ACCEPT', 'REJECT'])) {
+                // Normalizar para saveDriverDecision (usa 'decision' no 'intent')
+                $parsedResponse['decision'] = $parsedResponse['intent'];
                 $this->saveDriverDecision($cotizacionId, $driverId, $parsedResponse);
             }
 
@@ -753,6 +755,7 @@ IMPORTANTE: Si detectas confusión o respuestas vagas, usa 'NEEDS_REPEAT' y repi
 
             $decision = $agentResponse['decision'] === 'ACCEPT' ? 1 : 0;
             
+            // Guardar en CallDriverDecision (legacy - compatibilidad)
             CallDriverDecision::updateOrCreate(
                 [
                     'cotizacion_model_id' => $cotizacionId,
@@ -763,16 +766,60 @@ IMPORTANTE: Si detectas confusión o respuestas vagas, usa 'NEEDS_REPEAT' y repi
                     'updated_at' => now()
                 ]
             );
-            
-            Log::info("Decisión del conductor guardada", [
-                'cotizacion_id' => $cotizacionId,
-                'driver_id' => $driverId,
-                'decision' => $decision ? 'ACCEPT' : 'REJECT',
-                'confidence' => $agentResponse['confidence'] ?? 'N/A'
-            ]);
+
+            // Obtener conductor desde llamadas_conductores
+            $llamadaConductor = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacionId)
+                ->where('id', $driverId)
+                ->first();
+
+            if ($llamadaConductor) {
+                // Crear o actualizar en DriverCallResponse (nuevo sistema)
+                $responseStatus = $agentResponse['decision'] === 'ACCEPT' ? 'accepted' : 'rejected';
+                
+                $driverCallResponse = \App\Models\DriverCallResponse::updateOrCreate(
+                    [
+                        'cotizacion_id' => $cotizacionId,
+                        'driver_id' => $driverId,
+                    ],
+                    [
+                        'driver_name' => $llamadaConductor->nombre_conductor,
+                        'driver_phone' => $llamadaConductor->telefono,
+                        'vehicle_plate' => $llamadaConductor->placa,
+                        'vehicle_type' => $llamadaConductor->tipo_vehiculo,
+                        'response_status' => $responseStatus,
+                        'response_time' => now(),
+                        'elevenlabs_conversation_id' => $llamadaConductor->elevenlabs_conversation_id,
+                        'notes' => $agentResponse['response_message'] ?? null,
+                        'updated_at' => now()
+                    ]
+                );
+
+                // Vincular driver_call_response_id en llamadas_conductores
+                $llamadaConductor->update([
+                    'driver_call_response_id' => $driverCallResponse->id,
+                    'respuesta_llamada' => $agentResponse['decision'] === 'ACCEPT' ? 'Acepta el viaje' : 'Rechaza el viaje',
+                    'estado_llamada' => 'completada'
+                ]);
+
+                Log::info("Decisión del conductor guardada en ambas tablas", [
+                    'cotizacion_id' => $cotizacionId,
+                    'driver_id' => $driverId,
+                    'decision' => $decision ? 'ACCEPT' : 'REJECT',
+                    'response_status' => $responseStatus,
+                    'driver_call_response_id' => $driverCallResponse->id,
+                    'confidence' => $agentResponse['confidence'] ?? 'N/A'
+                ]);
+            } else {
+                Log::warning("No se encontró LlamadaConductor para vincular DriverCallResponse", [
+                    'cotizacion_id' => $cotizacionId,
+                    'driver_id' => $driverId
+                ]);
+            }
             
         } catch (\Exception $e) {
-            Log::error("Error guardando decisión del conductor: " . $e->getMessage());
+            Log::error("Error guardando decisión del conductor: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 

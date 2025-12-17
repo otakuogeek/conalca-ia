@@ -394,7 +394,7 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
 
   return createPortal(
     (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="fixed inset-0 z-[99990] flex items-start justify-center pt-4 bg-black/50 overflow-y-auto backdrop-blur-sm">
         <div className="relative bg-white w-full max-w-6xl rounded-2xl
                         flex flex-col md:flex-row max-h-[90vh] my-8 mx-2">
 

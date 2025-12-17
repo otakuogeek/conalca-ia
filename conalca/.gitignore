@@ -32,3 +32,10 @@ public/test-*.html
 resources/views/test-*.blade.php
 
 ai_transport.sql
+# Ignorar todos los archivos de entorno en cualquier carpeta
+.env*
+*.env
+
+# Específicos que dieron error
+conalca/.env.development
+conalca/.env.old

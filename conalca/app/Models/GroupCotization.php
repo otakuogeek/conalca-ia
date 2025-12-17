@@ -39,6 +39,14 @@ class GroupCotization extends Model
         return $this->hasMany(CotizacionModel::class, 'group_cotization_id')->with('producto');
     }
 
+    /**
+     * Relación con conductores llamados del grupo
+     */
+    public function llamadasConductores()
+    {
+        return $this->hasMany(LlamadaConductor::class, 'group_cotization_id');
+    }
+
     public function user()
     {
         return $this->belongsTo(User::class);

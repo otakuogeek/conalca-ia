@@ -90,40 +90,60 @@ class CallStatusController extends Controller
         /* 1. Cotización */
         $cot = \App\Models\CotizacionModel::findOrFail($cotizacionId);
 
-        /* 2. Total de conductores con ese tipo de vehículo */
-        $totalToCall = \App\Models\VehicleOwnerHolderDriver::whereRaw(
-            'LOWER(clasevehiculo)=?',
-            [ strtolower($cot->vehiculo_requerido) ]
-        )->count();
+        /* 2. Total de conductores registrados para esta cotización en llamadas_conductores */
+        $totalToCall = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacionId)
+            ->count();
 
-        /* 3. Conductores que aceptaron
-            decision puede ser:
-            • 'aceptado'  (si la columna es VARCHAR)
-            • 1           (si la columna es TINYINT)          */
-        $acceptedIds = \App\Models\CallDriverDecision::where(
-                            'cotizacion_model_id', $cotizacionId)
-                        ->where(function ($q) {
-                            $q->where('decision', 'aceptado')
-                            ->orWhere('decision', 1);       // ← NUEVO
-                        })
-                        ->pluck('driver_id');
+        /* 3. Conductores que aceptaron desde driver_call_responses
+            Relacionando con llamadas_conductores para obtener sus datos */
+        $acceptedDrivers = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->whereHas('driverCallResponse', function ($query) {
+                $query->where('response_status', 'accepted');
+            })
+            ->with('driverCallResponse')
+            ->select([
+                'id',
+                'nombre_conductor',
+                'telefono',
+                'placa',
+                'tipo_vehiculo',
+                'ciudad_origen',
+                'ciudad_destino',
+                'cotizacion_id',
+                'driver_call_response_id'  // IMPORTANTE: necesario para cargar la relación
+            ])
+            ->get();
 
-        /* 4. Datos de esos conductores */
-        $acceptedDrivers = \App\Models\VehicleOwnerHolderDriver::whereIn('id', $acceptedIds)
-                            ->select(['id', 'Conductor', 'Telefonoconductor', 'Telefonopropietario', 'Telefonoposeedor'])
-                            ->get();
-
-        /* 5. Respuesta para el front */
+        /* 4. Respuesta para el front */
         return response()->json([
             'prompt'              => $this->buildPrompt($cot),
             'vehicle_type'        => $cot->vehiculo_requerido,
+            'ciudad_origen'       => $cot->ciudad_origen,
+            'ciudad_destino'      => $cot->ciudad_destino,
             'total_to_call'       => $totalToCall,
-            'accepted'            => $acceptedDrivers->map(fn ($d) => [
-                                        'id'    => $d->id,
-                                        'name'  => $d->Conductor ?: 'Sin nombre',
-                                        'phone' => $d->Telefonoconductor ?: $d->Telefonopropietario ?: $d->Telefonoposeedor ?: 'Sin teléfono',
-                                    ]),
-            'percentage'          => $totalToCall
+            'accepted'            => $acceptedDrivers->map(function ($d) {
+                                        $decisionDate = null;
+                                        if ($d->driverCallResponse) {
+                                            if ($d->driverCallResponse->response_time) {
+                                                $decisionDate = \Carbon\Carbon::parse($d->driverCallResponse->response_time)->format('Y-m-d H:i:s');
+                                            } elseif ($d->driverCallResponse->created_at) {
+                                                $decisionDate = $d->driverCallResponse->created_at->format('Y-m-d H:i:s');
+                                            }
+                                        }
+                                        
+                                        return [
+                                            'id'    => $d->id,
+                                            'name'  => $d->nombre_conductor ?: 'Sin nombre',
+                                            'phone' => $d->telefono ?: 'Sin teléfono',
+                                            'placa' => $d->placa ?: 'Sin placa',
+                                            'tipo_vehiculo' => $d->tipo_vehiculo,
+                                            'ciudad_origen' => $d->ciudad_origen,
+                                            'ciudad_destino' => $d->ciudad_destino,
+                                            'decision_date' => $decisionDate,
+                                        ];
+                                    }),
+            'percentage'          => $totalToCall > 0
                                     ? round(($acceptedDrivers->count() / $totalToCall) * 100, 2)
                                     : 0,
             'selected_driver_id'  => $cot->selected_driver_id,
@@ -133,18 +153,20 @@ class CallStatusController extends Controller
     public function selectDriver(Request $request, $cotizacionId)
     {
         $validated = $request->validate([
-            'driver_id' => ['required', 'integer', 'exists:vehicle_owner_holder_driver,id'],
+            'driver_id' => ['required', 'integer', 'exists:llamadas_conductores,id'],
         ]);
 
         $cot = CotizacionModel::findOrFail($cotizacionId);
 
-        // (Opcional pero recomendado) Validar que el conductor realmente aceptó esta cotización
-        $accepted = \App\Models\CallDriverDecision::where('cotizacion_model_id', $cotizacionId)
-            ->where('driver_id', $validated['driver_id'])
-            ->where('decision', 'aceptado')
-            ->exists();
+        // Validar que el conductor existe en llamadas_conductores y aceptó esta cotización
+        $conductor = \App\Models\LlamadaConductor::where('id', $validated['driver_id'])
+            ->where('cotizacion_id', $cotizacionId)
+            ->whereHas('driverCallResponse', function ($query) {
+                $query->where('response_status', 'accepted');
+            })
+            ->first();
 
-        if (!$accepted) {
+        if (!$conductor) {
             return response()->json([
                 'message' => 'El conductor no ha aceptado esta oferta para esta cotización.'
             ], 422);
@@ -155,7 +177,10 @@ class CallStatusController extends Controller
 
         return response()->json([
             'ok'                 => true,
-            'selected_driver_id' => $cot->selected_driver_id
+            'selected_driver_id' => $cot->selected_driver_id,
+            'conductor_nombre'   => $conductor->nombre_conductor,
+            'conductor_telefono' => $conductor->telefono,
+            'conductor_placa'    => $conductor->placa,
         ]);
     }
 

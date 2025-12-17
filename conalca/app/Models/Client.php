@@ -70,6 +70,7 @@ class Client extends Model
     ];
 
     protected $guarded = [];
+    protected $appends = ['name']; 
 
     /**
      * Get all of the cotizaciones for the Client
@@ -114,5 +115,11 @@ class Client extends Model
     public function files()
     {
         return $this->hasMany(ClientFile::class);
+    }
+
+    public function getNameAttribute($value)
+    {
+        if ($value) return $value;           // in case the column ever exists
+        return $this->cliente ?? null;       // fallback so frontend sees client.name
     }
 }

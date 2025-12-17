@@ -1005,15 +1005,33 @@ class ConversationalAgentController extends Controller
                         continue;
                     }
 
-                    // Crear o actualizar registro del conductor
-                    Log::info('Creando/actualizando conductor en BD...');
-                    $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
+                    // Preparar datos de cotización
+                    $cotizacionData = [
+                        'vehiculo_requerido' => $cotizacion->vehiculo_requerido ?? 'No especificado',
+                        'ciudad_origen' => $cotizacion->ciudad_origen ?? $ciudadOrigen,
+                        'ciudad_destino' => $cotizacion->ciudad_destino ?? 'No especificado',
+                        'tipo_mercancia' => $cotizacion->tipo_mercancia ?? 'Carga general',
+                        'peso_mercancia' => $cotizacion->peso_mercancia ?? '0',
+                        'tipo_embajale' => $cotizacion->tipo_embajale ?? null,
+                    ];
+
+                    // Crear o actualizar registro del conductor CON información de cotización
+                    Log::info('Creando/actualizando conductor en BD con datos de cotización...');
+                    $conductor = \App\Models\LlamadaConductor::createFromArcangel(
+                        $vehiculo,
+                        $ciudadOrigen,
+                        $cotizacion->id,
+                        $cotizacion->group_cotization_id,
+                        $cotizacionData
+                    );
                     
-                    Log::info('Conductor registrado', [
+                    Log::info('Conductor registrado con cotización', [
                         'conductor_id' => $conductor->id,
                         'nombre' => $conductor->nombre_conductor,
                         'telefono' => $conductor->telefono,
-                        'placa' => $conductor->placa
+                        'placa' => $conductor->placa,
+                        'cotizacion_id' => $conductor->cotizacion_id,
+                        'group_cotization_id' => $conductor->group_cotization_id
                     ]);
 
                     Log::info('Preparando llamada a conductor', [
@@ -1505,35 +1523,70 @@ class ConversationalAgentController extends Controller
                         continue;
                     }
 
-                    // Buscar conductores usando ArcangelService (igual que en registerCallsForCotization)
-                    $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
-                    $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
-                    
-                    Log::info('Buscando conductores en Arcángel para grupo', [
-                        'cotizacion_id' => $cotizacion->id,
-                        'ciudad' => $ciudadOrigen,
-                        'variantes' => $variantesVehiculo
+                    // Buscar conductores desde la base de datos (ya fueron filtrados y guardados)
+                    Log::info('Buscando conductores en BD para llamadas', [
+                        'cotizacion_id' => $cotizacion->id
                     ]);
                     
-                    // Buscar en Arcángel API
-                    $resultado = $this->arcangelService->getVehiculosFiltrados(
-                        ciudad: $ciudadOrigen,
-                        clases: $variantesVehiculo,
-                        minScore: 0,
-                        limit: 10, // Máximo 10 conductores por cotización
-                        useCache: true,
-                        cacheTTL: 15
-                    );
+                    $conductoresDB = LlamadaConductor::where('cotizacion_id', $cotizacion->id)
+                        ->where('estado_llamada', 'pendiente')
+                        ->where('disponible', true)
+                        ->orderBy('score', 'desc')
+                        ->limit(10)
+                        ->get();
                     
-                    $vehiculos = $resultado['vehiculos'] ?? [];
-
-                    if (empty($vehiculos)) {
-                        Log::warning('No se encontraron conductores en Arcángel para cotización', [
-                            'cotizacion_id' => $cotizacion->id,
-                            'ciudad' => $ciudadOrigen,
-                            'variantes' => $variantesVehiculo
+                    // Si no hay conductores en BD, intentar buscar en Arcángel como respaldo
+                    if ($conductoresDB->isEmpty()) {
+                        Log::warning('No hay conductores en BD, buscando en Arcángel como respaldo', [
+                            'cotizacion_id' => $cotizacion->id
                         ]);
-                        continue;
+                        
+                        $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+                        $pesoCarga = 0;
+                        if ($cotizacion->peso_mercancia) {
+                            $pesoCarga = floatval(str_replace([',', ' kg', ' KG'], '', $cotizacion->peso_mercancia));
+                        }
+                        
+                        $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido, $pesoCarga);
+                        
+                        $resultado = $this->arcangelService->getVehiculosFiltrados(
+                            ciudad: $ciudadOrigen,
+                            clases: $variantesVehiculo,
+                            minScore: 0,
+                            limit: 10,
+                            useCache: true,
+                            cacheTTL: 15
+                        );
+                        
+                        $vehiculos = $resultado['vehiculos'] ?? [];
+                        
+                        if (empty($vehiculos)) {
+                            Log::warning('No se encontraron conductores ni en BD ni en Arcángel', [
+                                'cotizacion_id' => $cotizacion->id
+                            ]);
+                            continue;
+                        }
+                    } else {
+                        // Convertir los conductores de BD a formato compatible
+                        $vehiculos = $conductoresDB->map(function($conductor) {
+                            return [
+                                'placa' => $conductor->placa,
+                                'conductor' => $conductor->nombre_conductor,
+                                'telefono' => $conductor->telefono,
+                                'clase' => $conductor->tipo_vehiculo ?? $conductor->clase_vehiculo,
+                                'carroceria' => $conductor->carroceria,
+                                'capacidad' => $conductor->capacidad,
+                                'score' => $conductor->score,
+                                'disponible' => $conductor->disponible,
+                                'id_bd' => $conductor->id,
+                                'identificador' => $conductor->identificador_unico
+                            ];
+                        })->toArray();
+                        
+                        Log::info('Conductores obtenidos desde BD', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'total' => count($vehiculos)
+                        ]);
                     }
 
                     // Sistema de lotes: máximo 3 llamadas concurrentes
@@ -1562,8 +1615,24 @@ class ConversationalAgentController extends Controller
                             continue;
                         }
 
-                        // Crear o actualizar registro del conductor
-                        $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
+                        // Preparar datos de cotización
+                        $cotizacionData = [
+                            'vehiculo_requerido' => $cotizacion->vehiculo_requerido ?? 'No especificado',
+                            'ciudad_origen' => $cotizacion->ciudad_origen ?? $ciudadOrigen,
+                            'ciudad_destino' => $cotizacion->ciudad_destino ?? 'No especificado',
+                            'tipo_mercancia' => $cotizacion->tipo_mercancia ?? 'Carga general',
+                            'peso_mercancia' => $cotizacion->peso_mercancia ?? '0',
+                            'tipo_embajale' => $cotizacion->tipo_embajale ?? null,
+                        ];
+
+                        // Crear o actualizar registro del conductor CON información de cotización
+                        $conductor = \App\Models\LlamadaConductor::createFromArcangel(
+                            $vehiculo,
+                            $ciudadOrigen,
+                            $cotizacion->id,
+                            $cotizacion->group_cotization_id,
+                            $cotizacionData
+                        );
 
                         // Calcular número de lote (1, 2, 3, etc.)
                         $batchNumber = floor($index / $maxConcurrentCalls) + 1;
@@ -1719,8 +1788,20 @@ class ConversationalAgentController extends Controller
 
             $registeredCalls = [];
             
+            // Sistema de lotes: máximo 3 llamadas concurrentes
+            $maxConcurrentCalls = 3;
+            $totalVehiculos = count($vehiculos);
+            $batchCount = ceil($totalVehiculos / $maxConcurrentCalls);
+            
+            Log::info('Configurando sistema de lotes para registro y llamadas', [
+                'cotizacion_id' => $cotizacion->id,
+                'total_vehiculos' => $totalVehiculos,
+                'max_concurrent' => $maxConcurrentCalls,
+                'total_batches' => $batchCount
+            ]);
+            
             // Registrar llamadas para cada conductor de Arcángel
-            foreach ($vehiculos as $vehiculo) {
+            foreach ($vehiculos as $index => $vehiculo) {
                 try {
                     // Obtener y formatear el teléfono
                     $phoneNumber = $vehiculo['telefono'] ?? 'N/A';
@@ -1735,23 +1816,69 @@ class ConversationalAgentController extends Controller
                         continue; // Saltar a siguiente conductor
                     }
 
-                    // Crear o actualizar registro del conductor
-                    $conductor = \App\Models\LlamadaConductor::createFromArcangel($vehiculo, $ciudadOrigen);
+                    // Preparar datos de cotización con valores por defecto para campos NULL
+                    $cotizacionData = [
+                        'vehiculo_requerido' => $cotizacion->vehiculo_requerido ?? 'No especificado',
+                        'ciudad_origen' => $cotizacion->ciudad_origen ?? $ciudadOrigen,
+                        'ciudad_destino' => $cotizacion->ciudad_destino ?? 'No especificado',
+                        'tipo_mercancia' => $cotizacion->tipo_mercancia ?? 'Carga general',
+                        'peso_mercancia' => $cotizacion->peso_mercancia ?? '0',
+                        'tipo_embajale' => $cotizacion->tipo_embajale ?? null,
+                    ];
+
+                    // LOG: Datos de cotización antes de crear conductor
+                    Log::info('🔍 Datos de cotización para createFromArcangel', array_merge(
+                        ['cotizacion_id' => $cotizacion->id, 'group_cotization_id' => $cotizacion->group_cotization_id],
+                        $cotizacionData
+                    ));
+
+                    // Crear o actualizar registro del conductor CON información completa de la orden
+                    $conductor = \App\Models\LlamadaConductor::createFromArcangel(
+                        $vehiculo, 
+                        $ciudadOrigen,
+                        $cotizacion->id,
+                        $cotizacion->group_cotization_id,
+                        $cotizacionData
+                    );
+
+                    // LOG: Verificar que los datos se guardaron
+                    Log::info('✅ Conductor creado con datos', [
+                        'conductor_id' => $conductor->id,
+                        'cotizacion_id_guardado' => $conductor->cotizacion_id,
+                        'group_cotization_id_guardado' => $conductor->group_cotization_id,
+                        'ciudad_origen_guardado' => $conductor->ciudad_origen,
+                        'ciudad_destino_guardado' => $conductor->ciudad_destino,
+                        'mercancia_guardado' => $conductor->mercancia,
+                        'peso_carga_guardado' => $conductor->peso_carga,
+                        'empaque_guardado' => $conductor->empaque,
+                    ]);
+
+                    // Calcular número de lote (1, 2, 3, etc.)
+                    $batchNumber = floor($index / $maxConcurrentCalls) + 1;
+                    $batchPosition = ($index % $maxConcurrentCalls) + 1;
 
                     Log::info('Registrando llamada para conductor', [
                         'conductor_id' => $conductor->id,
                         'driver_name' => $conductor->nombre_conductor,
                         'phone' => $formattedPhone,
                         'placa' => $conductor->placa,
-                        'cotizacion_id' => $cotizacion->id
+                        'cotizacion_id' => $cotizacion->id,
+                        'group_cotization_id' => $cotizacion->group_cotization_id ?? null,
+                        'batch_number' => $batchNumber,
+                        'batch_position' => $batchPosition
                     ]);
 
-                    // Crear registro en la tabla llamadas
+                    // Crear registro en la tabla llamadas CON información de lote
                     $llamada = \App\Models\Llamada::create([
                         'id_cotizacion' => $cotizacion->id,
                         'conductor_id' => $conductor->id,
                         'numero_destino' => $formattedPhone,
-                        'status' => \App\Models\Llamada::STATUS_PENDIENTE
+                        'status' => \App\Models\Llamada::STATUS_PENDIENTE,
+                        'queue_status' => 'pending',
+                        'batch_number' => $batchNumber,
+                        'batch_position' => $batchPosition,
+                        'queued_at' => now(),
+                        'call_notes' => "Llamada en lote {$batchNumber}, posición {$batchPosition}"
                     ]);
 
                     $registeredCalls[] = [
@@ -1761,7 +1888,9 @@ class ConversationalAgentController extends Controller
                         'phone' => $formattedPhone,
                         'status' => 'registrado',
                         'vehicle_type' => $conductor->clase_vehiculo,
-                        'vehicle_plate' => $conductor->placa
+                        'vehicle_plate' => $conductor->placa,
+                        'batch_number' => $batchNumber,
+                        'batch_position' => $batchPosition
                     ];
                     
                 } catch (\Exception $e) {
@@ -1786,6 +1915,35 @@ class ConversationalAgentController extends Controller
                 'calls_registered' => count($registeredCalls)
             ]);
 
+            // ======================================
+            // EJECUTAR LAS LLAMADAS DESPUÉS DEL REGISTRO
+            // ======================================
+            
+            if (!empty($registeredCalls)) {
+                Log::info('Iniciando ejecución de llamadas para cotización', [
+                    'cotizacion_id' => $cotizacion->id,
+                    'total_calls_to_execute' => count($registeredCalls),
+                    'batch_count' => $batchCount
+                ]);
+
+                // Programar las llamadas comenzando por el primer lote
+                // El job se auto-encadenará para procesar los siguientes lotes
+                \App\Jobs\ProcessBatchElevenLabsCalls::dispatch(
+                    $cotizacion->id,
+                    1, // Comenzar con batch número 1
+                    $maxConcurrentCalls,
+                    150 // Delay de 150 segundos entre lotes (2.5 minutos)
+                )->onQueue('calls');
+
+                Log::info('Job de llamadas despachado', [
+                    'cotizacion_id' => $cotizacion->id,
+                    'job' => 'ProcessBatchElevenLabsCalls',
+                    'queue' => 'calls',
+                    'starting_batch' => 1,
+                    'total_batches' => $batchCount
+                ]);
+            }
+
             return [
                 'success' => true,
                 'cotizacion_id' => $cotizacion->id,
@@ -1796,7 +1954,13 @@ class ConversationalAgentController extends Controller
                     'valor' => $cotizacion->valor_declarado
                 ],
                 'drivers_registered' => $registeredCalls,
-                'total_calls' => count($registeredCalls)
+                'total_calls' => count($registeredCalls),
+                'calls_dispatched' => !empty($registeredCalls),
+                'batch_system' => [
+                    'enabled' => true,
+                    'total_batches' => $batchCount ?? 0,
+                    'max_concurrent' => $maxConcurrentCalls
+                ]
             ];
 
         } catch (\Exception $e) {
@@ -2124,10 +2288,17 @@ class ConversationalAgentController extends Controller
                 ->get();
 
             if ($llamadas->isEmpty()) {
-                return response()->json([
-                    'error' => 'No hay llamadas pendientes para esta cotización',
+                Log::info('No hay llamadas pendientes para esta cotización', [
                     'cotizacion_id' => $cotizacionId
-                ], 404);
+                ]);
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'No hay llamadas pendientes para esta cotización',
+                    'cotizacion_id' => $cotizacionId,
+                    'llamadas_programadas' => 0,
+                    'conductores' => []
+                ], 200);
             }
 
             // Procesar llamadas de forma asíncrona para evitar timeouts
@@ -2689,24 +2860,71 @@ class ConversationalAgentController extends Controller
     }
 
     /**
-     * Convertir tipos de vehículos de nuestra nomenclatura a variantes de búsqueda
-     * Retorna array de posibles variantes para buscar en vehicle_class
+     * Convertir tipos de vehículos de nuestra nomenclatura a la de Arcángel
+     * Retorna array de posibles variantes en Arcángel usando tabla vehiculos_relaciones
+     * Solo incluye vehículos que soporten el peso de la carga
+     * 
+     * @param string $tipoLocal Tipo de vehículo en nomenclatura local
+     * @param float $pesoCarga Peso de la carga en kg (0 si no se filtra por peso)
+     * @return array Variantes de vehículos en Arcángel que cumplen con peso máximo
      */
-    private function convertirTipoVehiculo(string $tipoLocal): array
+    private function convertirTipoVehiculo(string $tipoLocal, float $pesoCarga = 0): array
     {
-        $tipoNormalizado = strtoupper(trim($tipoLocal));
+        $tipoNormalizado = $this->normalizarTexto($tipoLocal);
         
-        // Mapeo de nuestros tipos a variantes de vehicle_class
+        Log::info('🔍 Convirtiendo tipo de vehículo con filtro de peso', [
+            'vehiculo_local' => $tipoLocal,
+            'peso_carga' => $pesoCarga . ' kg'
+        ]);
+        
+        try {
+            // ESTRATEGIA 2: Buscar coincidencia en tabla_pricing (la más común)
+            $query2 = \DB::table('vehiculos_relaciones')
+                ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                ->join('vehiculos_arcangel', 'vehiculos_relaciones.vehiculo_arcangel_id', '=', 'vehiculos_arcangel.id')
+                ->where(\DB::raw('UPPER(vehiculos_pricing.tabla_pricing)'), 'LIKE', '%' . $tipoNormalizado . '%');
+            
+            // Filtrar por peso máximo si se especifica
+            if ($pesoCarga > 0) {
+                $query2->where('vehiculos_pricing.peso_maximo', '>=', $pesoCarga);
+            }
+            
+            $vehiculosArcangel = $query2->pluck('vehiculos_arcangel.nombre')
+                ->unique()
+                ->toArray();
+            
+            if (!empty($vehiculosArcangel)) {
+                Log::info('✅ Vehículos Arcangel encontrados (tabla_pricing)', [
+                    'vehiculo_local' => $tipoLocal,
+                    'peso_carga' => $pesoCarga,
+                    'vehiculos_arcangel' => $vehiculosArcangel
+                ]);
+                return $vehiculosArcangel;
+            }
+            
+            Log::warning('⚠️ No se encontró relación en BD, usando mapeo de respaldo');
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error consultando tabla vehiculos_relaciones', [
+                'error' => $e->getMessage(),
+                'vehiculo' => $tipoLocal
+            ]);
+        }
+        
+        // MAPEO DE RESPALDO (fallback) si no hay relación en BD
         $mapeo = [
             // Tractomulas
             'TRACTO MULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3', 'TRACTOMULA 4'],
             'TRACTO MULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
             'TRACTOMULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
             'TRACTOMULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
+            'ARTICULADO' => ['TRACTOMULA3', 'TRACTOMULA 3'],
+            'TRACTOCAMION' => ['TRACTOMULA3', 'TRACTOMULA 3'],
             
             // Sencillos
             'SENCILLO' => ['SENCILLO'],
             'CAMION SENCILLO' => ['SENCILLO'],
+            'RIGIDO' => ['SENCILLO'],
             
             // Doble troque
             'DOBLE TROQUE' => ['DOBLE TROQUE', 'DOBLETROQUE'],

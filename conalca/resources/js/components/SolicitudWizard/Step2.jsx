@@ -225,6 +225,45 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
   /* ¿el campo tiene error? (solo después de enviar) */
   const hasError = name => submitted && isEmpty(form[name]);
 
+  // useEffect(() => {
+  //   const labelReset = {
+  //     origen: 'origen_label',
+  //     destino: 'destino_label',
+  //     lugar_recogida_contenedor: 'lugar_recogida_contenedor_label',
+  //     producto: 'producto_label',
+  //     empaque: 'empaque_label',
+  //     clase_vehiculo: 'clase_vehiculo_label',
+  //     carroceria: 'carroceria_label'
+  //   };
+
+  //   const fill = (field, value) => {
+  //     setForm(prev => {
+  //       // Ignore null/undefined/""
+  //       if (value === null || value === undefined || value === '' || value === 'null') {
+  //         return prev;
+  //       }
+
+  //       const next = { ...prev };
+
+  //       if (['origen', 'destino', 'lugar_recogida_contenedor'].includes(field)) {
+  //         const normalized = normalizeCityCode(String(value));
+  //         if (!normalized) return prev;         // don’t wipe the city if the AI sends garbage
+
+  //         next[field] = normalized;
+  //         next[`${field}_label`] = '';          // force AsyncSelect to refresh label
+  //       } else {
+  //         next[field] = value;
+  //         if (labelReset[field]) next[labelReset[field]] = '';
+  //       }
+
+  //       return next;
+  //     });
+  //   };
+
+  //   chatBus.on('fill-field', fill);
+  //   return () => chatBus.off('fill-field', fill);
+  // }, []);
+
   useEffect(() => {
     const labelReset = {
       origen: 'origen_label',
@@ -236,32 +275,60 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
       carroceria: 'carroceria_label'
     };
 
-    const fill = (field, value) => {
-      setForm(prev => {
-        // Ignore null/undefined/""
-        if (value === null || value === undefined || value === '' || value === 'null') {
-          return prev;
+    const resolveCity = async (raw) => {
+      const val = String(raw || '').trim();
+      if (!val) return null;
+
+      // If already numeric, return as code
+      if (/^\d+$/.test(val)) {
+        return { code: val, label: '' };
+      }
+
+      // Otherwise search by name
+      try {
+        const { data } = await searchCiudades(val);
+        if (data && data.length) {
+          const hit = data[0];
+          const code = String(hit.ciudad_codigodane);
+          const label = `${hit.ciudad_codigodane} – ${hit.ciudad_nombre}${
+            hit.municipio_nombre ? ` – ${hit.municipio_nombre}` : ''
+          }`;
+          return { code, label };
         }
-
-        const next = { ...prev };
-
-        if (['origen', 'destino', 'lugar_recogida_contenedor'].includes(field)) {
-          const normalized = normalizeCityCode(String(value));
-          if (!normalized) return prev;         // don’t wipe the city if the AI sends garbage
-
-          next[field] = normalized;
-          next[`${field}_label`] = '';          // force AsyncSelect to refresh label
-        } else {
-          next[field] = value;
-          if (labelReset[field]) next[labelReset[field]] = '';
-        }
-
-        return next;
-      });
+      } catch (err) {
+        console.error('City resolution error:', err);
+      }
+      return null;
     };
 
-    chatBus.on('fill-field', fill);
-    return () => chatBus.off('fill-field', fill);
+    const handleFill = (field, value) => {
+      (async () => {
+        // Skip empty/null
+        if (value === null || value === undefined || value === '' || value === 'null') return;
+
+        // City fields: try to resolve name -> code
+        if (['origen', 'destino', 'lugar_recogida_contenedor'].includes(field)) {
+          const resolved = await resolveCity(value);
+          if (!resolved) return;
+          setForm((prev) => ({
+            ...prev,
+            [field]: resolved.code,
+            [`${field}_label`]: resolved.label
+          }));
+          return;
+        }
+
+        // Default behavior for other fields
+        setForm((prev) => {
+          const next = { ...prev, [field]: value };
+          if (labelReset[field]) next[labelReset[field]] = '';
+          return next;
+        });
+      })();
+    };
+
+    chatBus.on('fill-field', handleFill);
+    return () => chatBus.off('fill-field', handleFill);
   }, []);
 
   /* helpers asincrónicos  ─────────────────────────── */

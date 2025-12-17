@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\CotizacionModel;
+use App\Models\LlamadaConductor;
+use App\Models\GroupCotization;
 use App\Services\ArcangelService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -71,8 +73,16 @@ class ArcangelDriversController extends Controller
             // Normalizar datos
             $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
             
+            // Obtener el peso de la mercancía (convertir de string a float, en kg)
+            $pesoCarga = 0;
+            if ($cotizacion->peso_mercancia) {
+                // Limpiar el string y convertir a float (puede venir como "18400" o "18,400" o "18400 kg")
+                $pesoCarga = floatval(str_replace([',', ' kg', ' KG'], '', $cotizacion->peso_mercancia));
+            }
+            
             // Convertir tipo de vehículo al formato de Arcángel (puede ser múltiples variantes)
-            $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido);
+            // Filtra solo vehículos que soporten el peso de la carga
+            $variantesVehiculo = $this->convertirTipoVehiculo($cotizacion->vehiculo_requerido, $pesoCarga);
             
             Log::info('ArcangelDriversController: Buscando conductores', [
                 'cotizacion_id' => $cotizacionId,
@@ -95,6 +105,43 @@ class ArcangelDriversController extends Controller
             
             $vehiculos = $resultado['vehiculos'] ?? [];
             
+            // Obtener el grupo de cotización desde la cotización (la relación correcta)
+            $groupCotization = $cotizacion->group_cotization_id 
+                ? GroupCotization::find($cotizacion->group_cotization_id) 
+                : null;
+            
+            // Guardar conductores filtrados en la base de datos
+            $conductoresGuardados = [];
+            foreach ($vehiculos as $vehiculo) {
+                try {
+                    $conductorGuardado = LlamadaConductor::createFromArcangel(
+                        $vehiculo,
+                        $ciudadOrigen,
+                        $cotizacionId,
+                        $groupCotization ? $groupCotization->id : null,
+                        [
+                            'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
+                            'ciudad_origen' => $cotizacion->ciudad_origen,
+                            'ciudad_destino' => $cotizacion->ciudad_destino,
+                            'tipo_mercancia' => $cotizacion->tipo_mercancia,
+                            'peso_mercancia' => $cotizacion->peso_mercancia,
+                            'empaque' => $cotizacion->empaque,
+                        ]
+                    );
+                    $conductoresGuardados[] = $conductorGuardado;
+                } catch (\Exception $e) {
+                    Log::warning('⚠️ No se pudo guardar conductor en DB', [
+                        'vehiculo' => $vehiculo,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
+            Log::info('✅ Conductores guardados en BD', [
+                'total_buscados' => count($vehiculos),
+                'total_guardados' => count($conductoresGuardados)
+            ]);
+            
             // Formatear datos para el frontend
             $conductores = array_map(function ($vehiculo) {
                 return [
@@ -105,7 +152,9 @@ class ArcangelDriversController extends Controller
                     'carroceria' => $vehiculo['carroceria'] ?? 'N/A',
                     'capacidad' => $vehiculo['capacidad'] ?? null,
                     'score' => $vehiculo['score'] ?? 0,
-                    'disponible' => $vehiculo['disponible'] ?? false,
+                    // La API de Arcángel solo retorna vehículos disponibles, por lo que siempre es true
+                    'disponible' => true,
+                    'ultima_actualizacion' => $vehiculo['ultimaActualizacion'] ?? null,
                     'ultima_actualizacion' => $vehiculo['ultimaActualizacion'] ?? null,
                 ];
             }, $vehiculos);
@@ -243,23 +292,125 @@ class ArcangelDriversController extends Controller
     
     /**
      * Convertir tipos de vehículos de nuestra nomenclatura a la de Arcángel
-     * Retorna array de posibles variantes en Arcángel
+     * Retorna array de posibles variantes en Arcángel usando tabla vehiculos_relaciones
+     * Solo incluye vehículos que soporten el peso de la carga
+     * 
+     * @param string $tipoLocal Tipo de vehículo en nomenclatura local
+     * @param float $pesoCarga Peso de la carga en kg (0 si no se filtra por peso)
+     * @return array Variantes de vehículos en Arcángel que cumplen con peso máximo
      */
-    private function convertirTipoVehiculo(string $tipoLocal): array
+    private function convertirTipoVehiculo(string $tipoLocal, float $pesoCarga = 0): array
     {
         $tipoNormalizado = $this->normalizarTexto($tipoLocal);
         
-        // Mapeo de nuestros tipos a los de Arcángel
-        $mapeo = [
+        Log::info('🔍 Convirtiendo tipo de vehículo con filtro de peso', [
+            'vehiculo_local' => $tipoLocal,
+            'peso_carga' => $pesoCarga . ' kg'
+        ]);
+        
+        try {
+            // ESTRATEGIA 1: Buscar coincidencia exacta en vehiculo_silogtran
+            $query1 = \DB::table('vehiculos_relaciones')
+                ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                ->join('vehiculos_arcangel', 'vehiculos_relaciones.vehiculo_arcangel_id', '=', 'vehiculos_arcangel.id')
+                ->where(\DB::raw('UPPER(vehiculos_pricing.vehiculo_silogtran)'), '=', $tipoNormalizado);
+            
+            // Filtrar por peso máximo si se especifica
+            if ($pesoCarga > 0) {
+                $query1->where('vehiculos_pricing.peso_maximo', '>=', $pesoCarga);
+            }
+            
+            $vehiculosArcangel = $query1->pluck('vehiculos_arcangel.nombre')
+                ->unique()
+                ->toArray();
+            
+            if (!empty($vehiculosArcangel)) {
+                Log::info('✅ Vehículos Arcangel encontrados (coincidencia exacta vehiculo_silogtran)', [
+                    'vehiculo_local' => $tipoLocal,
+                    'vehiculo_normalizado' => $tipoNormalizado,
+                    'vehiculos_arcangel' => $vehiculosArcangel
+                ]);
+                return $vehiculosArcangel;
+            }
+            
+            // ESTRATEGIA 2: Buscar coincidencia en tabla_pricing
+            $query2 = \DB::table('vehiculos_relaciones')
+                ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                ->join('vehiculos_arcangel', 'vehiculos_relaciones.vehiculo_arcangel_id', '=', 'vehiculos_arcangel.id')
+                ->where(\DB::raw('UPPER(vehiculos_pricing.tabla_pricing)'), 'LIKE', '%' . $tipoNormalizado . '%');
+            
+            // Filtrar por peso máximo si se especifica
+            if ($pesoCarga > 0) {
+                $query2->where('vehiculos_pricing.peso_maximo', '>=', $pesoCarga);
+            }
+            
+            $vehiculosArcangel = $query2->pluck('vehiculos_arcangel.nombre')
+                ->unique()
+                ->toArray();
+            
+            if (!empty($vehiculosArcangel)) {
+                Log::info('✅ Vehículos Arcangel encontrados (coincidencia tabla_pricing)', [
+                    'vehiculo_local' => $tipoLocal,
+                    'vehiculo_normalizado' => $tipoNormalizado,
+                    'vehiculos_arcangel' => $vehiculosArcangel
+                ]);
+                return $vehiculosArcangel;
+            }
+            
+            // ESTRATEGIA 3: Buscar coincidencia parcial en vehiculo_silogtran o tabla_pricing
+            $query3 = \DB::table('vehiculos_relaciones')
+                ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                ->join('vehiculos_arcangel', 'vehiculos_relaciones.vehiculo_arcangel_id', '=', 'vehiculos_arcangel.id')
+                ->where(function($query) use ($tipoNormalizado) {
+                    $query->where(\DB::raw('UPPER(vehiculos_pricing.vehiculo_silogtran)'), 'LIKE', '%' . $tipoNormalizado . '%')
+                          ->orWhere(\DB::raw('UPPER(vehiculos_pricing.tabla_pricing)'), 'LIKE', '%' . $tipoNormalizado . '%');
+                });
+            
+            // Filtrar por peso máximo si se especifica
+            if ($pesoCarga > 0) {
+                $query3->where('vehiculos_pricing.peso_maximo', '>=', $pesoCarga);
+            }
+            
+            $vehiculosArcangel = $query3->pluck('vehiculos_arcangel.nombre')
+                ->unique()
+                ->toArray();
+            
+            if (!empty($vehiculosArcangel)) {
+                Log::info('✅ Vehículos Arcangel encontrados (coincidencia parcial)', [
+                    'vehiculo_local' => $tipoLocal,
+                    'vehiculo_normalizado' => $tipoNormalizado,
+                    'vehiculos_arcangel' => $vehiculosArcangel
+                ]);
+                return $vehiculosArcangel;
+            }
+            
+            Log::warning('⚠️ No se encontró relación en BD, usando mapeo de respaldo', [
+                'vehiculo_local' => $tipoLocal,
+                'vehiculo_normalizado' => $tipoNormalizado
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error consultando tabla vehiculos_relaciones', [
+                'error' => $e->getMessage(),
+                'vehiculo' => $tipoLocal,
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+        
+        // MAPEO DE RESPALDO (fallback) si no hay relación en BD
+        $mapeoRespaldo = [
             // Tractomulas
             'TRACTO MULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
             'TRACTO MULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
             'TRACTOMULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
             'TRACTOMULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
+            'ARTICULADO' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
+            'TRACTOCAMION' => ['TRACTOMULA3', 'TRACTOMULA 3'],
             
             // Sencillos
             'SENCILLO' => ['SENCILLO'],
             'CAMION SENCILLO' => ['SENCILLO'],
+            'RIGIDO' => ['SENCILLO', 'CAMIONETA', 'TURBO'],
             
             // Doble troque
             'DOBLE TROQUE' => ['DOBLE TROQUE', 'DOBLETROQUE'],
@@ -272,16 +423,27 @@ class ArcangelDriversController extends Controller
             'PATINETA' => ['PATINETA', 'PATINETA2', 'PATINETA3'],
             'PATINETA 2' => ['PATINETA2', 'PATINETA 2'],
             'PATINETA 3' => ['PATINETA3', 'PATINETA 3'],
+            
+            // Contenedores
+            'CONTENEDOR 20' => ['TRACTOMULA 3', 'TRACTOMULA3', 'SENCILLO', 'PATINETA2', 'PATINETA3'],
+            'CONTENEDOR 40' => ['TRACTOMULA 3', 'TRACTOMULA3', 'PATINETA2', 'PATINETA3'],
         ];
         
-        // Buscar coincidencia en el mapeo
-        foreach ($mapeo as $clave => $variantes) {
+        // Buscar coincidencia en el mapeo de respaldo
+        foreach ($mapeoRespaldo as $clave => $variantes) {
             if (str_contains($tipoNormalizado, $clave) || $tipoNormalizado === $clave) {
+                Log::info('✅ Usando mapeo de respaldo', [
+                    'clave' => $clave,
+                    'variantes' => $variantes
+                ]);
                 return $variantes;
             }
         }
         
         // Si no hay mapeo, devolver el tipo normalizado
+        Log::warning('⚠️ No se encontró mapeo, usando tipo original normalizado', [
+            'tipo_normalizado' => $tipoNormalizado
+        ]);
         return [$tipoNormalizado];
     }
     

@@ -81,4 +81,12 @@ class DriverCallResponse extends Model
     {
         return $query->where('is_selected', true);
     }
+
+    /**
+     * Relación inversa con llamadas de conductores
+     */
+    public function llamadaConductor()
+    {
+        return $this->hasOne(LlamadaConductor::class, 'driver_call_response_id');
+    }
 }

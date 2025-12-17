@@ -72,7 +72,7 @@ export default function SolicitationDetail({ id, onClose, onUpdated }) {
 
   /* ───────── UI ───────── */
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" style={{ fontFamily: 'Product Sans, sans-serif' }}>
+    <div className="fixed inset-0 z-[99990] flex items-start justify-center pt-8 bg-black/50 px-4 overflow-y-auto backdrop-blur-sm" style={{ fontFamily: 'Product Sans, sans-serif' }}>
       <div className="relative w-full max-w-5xl bg-white rounded-xl shadow-2xl p-6 flex flex-col gap-6 max-h-[92vh] overflow-y-auto border border-gray-200">
 
         {/* botón cerrar */}

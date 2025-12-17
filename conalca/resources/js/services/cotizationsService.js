@@ -4,6 +4,8 @@ axios.defaults.withCredentials = true;
 
 const CSRF = () => document.querySelector('meta[name="csrf-token"]').content;
 const API  = '/cotizations';
+const getCsrfToken = () =>
+  document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
 export const fetchSacCotizations = params =>
   axios.get(`${API}/sac`, { params, headers:{'X-CSRF-TOKEN':CSRF()} });
@@ -27,3 +29,21 @@ export const fetchGroups = params =>
 
 export const eventsList = () => axios.get('/cotizations/transit-events',
                                 {headers:{'X-CSRF-TOKEN':CSRF()}});
+
+export const saveQuoteFromChat = (payload) =>
+  axios.post('/api/chat/save-quote-from-chat', payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-CSRF-TOKEN': getCsrfToken(),
+    },
+  });
+
+export const sendQuoteEmail = (payload) =>
+  axios.post('/api/send-quote-email', payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-CSRF-TOKEN': getCsrfToken(),
+    },
+  });

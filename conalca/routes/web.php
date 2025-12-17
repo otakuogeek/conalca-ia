@@ -32,12 +32,16 @@ use App\Http\Controllers\Api\PendingController;
 use App\Http\Controllers\Api\SolicitationController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\PercentageSettingController;
 use App\Http\Controllers\Api\GoalController;
 use App\Http\Controllers\Api\CotizationNoteController;
 use App\Http\Controllers\Api\SacCotizationController;
 use App\Http\Controllers\Api\CallStatusController;
 use App\Http\Controllers\Api\CotizacionClienteController;
 use App\Http\Controllers\Api\CatalogController;
+use App\Http\Controllers\Api\CityController;
+use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\PackingController;
 
 use App\Http\Controllers\Api\SilogController;
 
@@ -710,14 +714,32 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
                     ->where('channel', 'PRICING_COM|PRICING_SA');
             });
         });
-    });
-    
+    });    
+
+    Route::get('/cities', [CityController::class, 'index']);
+    Route::get('/packings', [PackingController::class, 'index']);
+    Route::get('/products', [ProductController::class, 'index']);
 
     Route::post('/pricings-solutions',  [PricingController::class,'store']);
     Route::put ('/pricings-solutions/{id}', [PricingController::class,'update']);
     Route::get('/pricings-solutions/latest-by-route', [PricingController::class, 'latestByRoute']);
     Route::post('/pricing-suggestions', [PricingController::class, 'suggestVehicles']);
     Route::get('/pricing-rentability-stats', [PricingController::class, 'rentabilityStats']);
+    Route::get('/pricing/vehicle-guide', [PricingController::class, 'vehicleCapacityGuide']);
+    
+    Route::get('/pricing-percentage-settings', [PricingController::class, 'percentageSettings']);
+    // Panel Percentage
+    // Route::middleware(['auth', 'role:SUPER ADMIN|JEFE COMERCIAL'])->group(function () {
+    //     Route::get('/percentage-settings', [PercentageSettingController::class, 'index'])->name('percentage-settings.index');
+    //     Route::put('/percentage-settings/{percentageSetting}', [PercentageSettingController::class, 'update'])->name('percentage-settings.update');
+    // });
+    Route::middleware(['auth', 'role:SUPER ADMIN|JEFE COMERCIAL'])
+    ->group(function () {
+        Route::get('/percentage-settings', [PercentageSettingController::class, 'index'])
+            ->name('percentage-settings.index');
+        Route::put('/percentage-settings/{percentageSetting}', [PercentageSettingController::class, 'update'])
+            ->name('percentage-settings.update');
+    });
 
     // GOALS
 
@@ -734,11 +756,11 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     });
 
     
-    Route::middleware('auth')->group(function () {
-        Route::get('/quotes-news-alerts', function () {
-            return view('cotizations.index');
-        })->name('alertsnews.index');
-    });
+    // Route::middleware('auth')->group(function () {
+    // });
+    Route::get('/quotes-news-alerts', function () {
+        return view('cotizations.index');
+    })->name('alertsnews.index');
 
     Route::prefix('cotizations')->group(function () {
         Route::get('/sac-groups', [SacCotizationController::class,'groups']);   // <—
@@ -815,6 +837,19 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::middleware(['auth'])->group(function () {
         Route::get('/vehiculos', [App\Http\Controllers\VehiculoController::class, 'index'])->name('vehiculos.index');
         Route::get('/vehiculos/sincronizar', [App\Http\Controllers\VehiculoController::class, 'sincronizar'])->name('vehiculos.sincronizar');
+        
+        // Rutas para relaciones de vehículos
+        Route::post('/vehiculos/relaciones', [App\Http\Controllers\VehiculoController::class, 'agregarRelacion'])->name('vehiculos.agregar-relacion');
+        Route::delete('/vehiculos/relaciones/{id}', [App\Http\Controllers\VehiculoController::class, 'eliminarRelacion'])->name('vehiculos.eliminar-relacion');
+        Route::get('/vehiculos/{id}/relaciones', [App\Http\Controllers\VehiculoController::class, 'obtenerRelaciones'])->name('vehiculos.obtener-relaciones');
+        
+        // Búsqueda de vehículos por ciudad (tiempo real)
+        Route::get('/vehiculos/ciudades', [App\Http\Controllers\VehiculoController::class, 'getCiudades'])->name('vehiculos.ciudades');
+        Route::post('/vehiculos/buscar-ciudad', [App\Http\Controllers\VehiculoController::class, 'buscarVehiculosCiudad'])->name('vehiculos.buscar-ciudad');
+        
+        // Cambiar modo Arcángel (producción/desarrollo)
+        Route::post('/vehiculos/cambiar-modo-arcangel', [App\Http\Controllers\VehiculoController::class, 'cambiarModoArcangel'])->name('vehiculos.cambiar-modo-arcangel');
+        Route::get('/vehiculos/modo-arcangel-actual', [App\Http\Controllers\VehiculoController::class, 'obtenerModoActual'])->name('vehiculos.modo-arcangel-actual');
     });
 
 // ═══════════════════════════════════════════════════════════════

@@ -85,11 +85,11 @@ const SpeechRecognitionButton = ({ onResult, isRecording, setIsRecording }) => {
   if (!isSupported) return null;
 
   return (
-    <>
+    <div className="relative inline-flex items-center">
       {isRecording && (
-        <div className="absolute top-2 left-2 flex items-center space-x-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs z-10">
+        <div className="absolute -top-10 right-0 flex items-center space-x-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs z-10 pointer-events-none shadow-md">
           <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-          <span>...</span>
+          <span>Grabando…</span>
         </div>
       )}
 
@@ -116,7 +116,7 @@ const SpeechRecognitionButton = ({ onResult, isRecording, setIsRecording }) => {
           </svg>
         )}
       </button>
-    </>
+    </div>
   );
 };
 

@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
+import { saveQuoteFromChat, sendQuoteEmail } from '../../services/cotizationsService';
+
 
 const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings }) => {
   const [emailData, setEmailData] = useState({
@@ -127,172 +129,151 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     return total;
   };
 
+    const buildQuotesPayload = (quoteData, clientData, selectedPricings, getAutomaticParameters) => {
+    return quoteData.map((route, index) => {
+      const pricing = selectedPricings[index];
+      const basePrice = Number(pricing?.price) || 0;
+      const porcentaje = Number(route.porcentaje) || 0;
+      const acompanamiento = Number(route.itesoltra_acompanamientovalor) || 0;
+
+      let parametersTotal = 0;
+      getAutomaticParameters(clientData).forEach(param => {
+        parametersTotal += Number(route[param.name]) || 0;
+      });
+
+      const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
+      const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+
+      return {
+        id: route.id || null, // <-- send existing cotización id to update
+        ciudad_origen: String(route.ciudad_origen || ''),
+        ciudad_destino: String(route.ciudad_destino || ''),
+        peso_mercancia: String(route.peso_mercancia || ''),
+        tipo_producto: String(route.tipo_producto || ''),
+        vehiculo_requerido: String(route.vehiculo_requerido || ''),
+        valor_declarado: String(route.valor_declarado || ''),
+        porcentaje,
+        precio_base: basePrice,
+        valor_parametros: parametersTotal,
+        valor_acompanamiento: acompanamiento,
+        finalValue,
+        valor: finalValue,
+        valor_final: finalValue,
+        precio_pricing_id: pricing?.id ?? null, // <-- pricing id for upsert
+        cantidad: String(route.cantidad || '1'),
+        tipo_embajale: String(route.tipo_embajale || 'Bultos'),
+        dimensiones_exactas: String(route.dimensiones_exactas || 'No especificado'),
+        registro_fotografico: String(route.registro_fotografico || 'No requerido'),
+        candado_satelital: Number(route.candado_satelital) || 0,
+        jen_set: Number(route.jen_set) || 0,
+        combustible: Number(route.combustible) || 0,
+        kit_derrames: Number(route.kit_derrames) || 0,
+        pictogramas: Number(route.pictogramas) || 0,
+        itesoltra_acompanamientovalor: acompanamiento,
+      };
+    });
+  };
+
+  const buildSavePayload = (clientData, quotesToSave) => ({
+    client_id: clientData.clientId,
+    quote_data: quotesToSave,
+    thread_id: clientData.threadId || null,
+    type_business: clientData.typeBusiness || 'Terrestre',
+    operation_type: clientData.operationType || null,
+  });
+
+
+
+  
   const handleSendQuote = async () => {
     if (!emailData.clientEmail) {
       alert('El correo electrónico es obligatorio para enviar la cotización');
       return;
     }
 
-    if (!emailData.clientEmail.includes('@')) {
+    if (!isValidEmail(emailData.clientEmail)) {
       alert('Por favor, ingrese un correo electrónico válido');
       return;
     }
 
-    setSaving(true);
-    
-    // Validar datos requeridos antes de enviar
     if (!clientData.clientId) {
       alert('Error: No se ha seleccionado un cliente válido.');
-      setSaving(false);
       return;
     }
 
     if (!quoteData || quoteData.length === 0) {
       alert('Error: No hay rutas de cotización para guardar.');
-      setSaving(false);
       return;
     }
-    
+
+    setSaving(true);
+
     try {
-      console.log('Guardando cotización en backend...', {
-        clientData,
+      const quotesToSave = buildQuotesPayload(
         quoteData,
-        selectedPricings
-      });
-      console.log('QuoteData estructura:', JSON.stringify(quoteData, null, 2));
+        clientData,
+        selectedPricings,
+        getAutomaticParameters
+      );
 
-      // Preparar los datos para el nuevo sistema de guardado
-      const quotesToSave = quoteData.map((route, index) => {
-        const {
-          pricing,
-          basePrice,
-          porcentaje,
-          parametersTotal,
-          acompanamiento,
-          finalValue,
-        } = buildRouteFinancials(route, index);
+      const savePayload = buildSavePayload(clientData, quotesToSave);
+      const { data: saveResult } = await saveQuoteFromChat(savePayload);
 
-        return {
-          ciudad_origen: String(route.ciudad_origen || ''),
-          ciudad_destino: String(route.ciudad_destino || ''),
-          peso_mercancia: String(route.peso_mercancia || ''),
-          tipo_producto: String(route.tipo_producto || ''),
-          vehiculo_requerido: String(route.vehiculo_requerido || ''),
-          valor_declarado: String(route.valor_declarado || ''),
-          porcentaje,
-          precio_base: basePrice,
-          valor_parametros: parametersTotal,
-          valor_acompanamiento: acompanamiento,
-          finalValue,
-          valor: finalValue,
-          valor_final: finalValue,
-          precio_pricing_id: pricing?.id ?? null,
-          cantidad: String(route.cantidad || '1'),
-          tipo_embajale: String(route.tipo_embajale || 'Bultos'),
-          dimensiones_exactas: String(route.dimensiones_exactas || 'No especificado'),
-          registro_fotografico: String(route.registro_fotografico || 'No requerido'),
-          candado_satelital: Number(route.candado_satelital) || 0,
-          jen_set: Number(route.jen_set) || 0,
-          combustible: Number(route.combustible) || 0,
-          kit_derrames: Number(route.kit_derrames) || 0,
-          pictogramas: Number(route.pictogramas) || 0,
-          itesoltra_acompanamientovalor: acompanamiento,
-        };
-      });
-
-      console.log('Datos a enviar:', {
-        client_id: clientData.clientId,
-        quote_data: quotesToSave,
-        thread_id: clientData.threadId || null,
-        type_business: clientData.typeBusiness || 'Terrestre'
-      });
-
-      // Llamar a nuestro nuevo endpoint para guardar la cotización
-      const response = await fetch('/api/chat/save-quote-from-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-        },
-        body: JSON.stringify({
-          client_id: clientData.clientId,
-          quote_data: quotesToSave,
-          thread_id: clientData.threadId || null,
-          type_business: clientData.typeBusiness || 'Terrestre'
-        })
-      });
-
-      const result = await response.json();
-      
-      console.log('Respuesta del servidor:', result);
-      
-      if (!response.ok) {
-        console.error('Error del servidor:', response.status, result);
-        throw new Error(result.message || result.error || 'Error al guardar la cotización');
-      }
-
-      console.log('Cotización guardada exitosamente:', result);
-      
-      // Verificar el group_id antes de enviar el email
-      const groupId = result.data?.group_id || result.group_id;
-      console.log('Group ID para email:', groupId);
-      console.log('Estructura del result:', result);
-      
+      const groupId = saveResult?.data?.group_id || saveResult?.group_id;
       if (!groupId) {
         throw new Error('No se pudo obtener el group_id de la respuesta del servidor');
       }
-      
-      // Ahora enviar el email real de la cotización
-      console.log('Enviando email de cotización...');
-      
-      try {
-        const emailResponse = await fetch('/api/send-quote-email', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-          },
-          body: JSON.stringify({
-            group_id: groupId,
-            client_email: emailData.clientEmail,
-            email_data: {
-              title: emailData.titleEmail,
-              text: emailData.promptResponse,
-              greeting: emailData.greeting,
-              client_name: emailData.clientName,
-              client_document: emailData.clientDocument,
-              client_location: emailData.clientLocation,
-              client_phone_numbers: emailData.clientPhoneNumbers,
-              asesor_name: emailData.advisorName,
-              asesor_phone: emailData.advisorPhone,
-              asesor_email: emailData.advisorEmail,
-              routes: quotesToSave,
-              total_price: calculateTotal()
-            }
-          })
-        });
 
-        const emailResult = await emailResponse.json();
-        
-        if (!emailResponse.ok) {
-          console.error('Error al enviar email:', emailResult);
-          throw new Error(emailResult.message || 'Error al enviar el email');
-        }
-        
-        console.log('Email enviado exitosamente:', emailResult);
-        
-      } catch (emailError) {
-        console.error('Error específico del email:', emailError);
-        // Mostrar warning pero no impedir continuar ya que la cotización se guardó
-        alert(`Cotización guardada exitosamente, pero hubo un error al enviar el email: ${emailError.message}. Puede reenviar desde el panel de gestión.`);
-      }
-      
-      onNext(); // Ir al modal de éxito con los datos guardados
+      await sendQuoteEmail({
+        group_id: groupId,
+        client_email: emailData.clientEmail,
+        email_data: {
+          title: emailData.titleEmail,
+          text: emailData.promptResponse,
+          greeting: emailData.greeting,
+          client_name: emailData.clientName,
+          client_document: emailData.clientDocument,
+          client_location: emailData.clientLocation,
+          client_phone_numbers: emailData.clientPhoneNumbers,
+          asesor_name: emailData.advisorName,
+          asesor_phone: emailData.advisorPhone,
+          asesor_email: emailData.advisorEmail,
+          routes: quotesToSave,
+          total_price: calculateTotal(),
+        },
+      });
+
+      onNext(); // modal éxito
     } catch (error) {
       console.error('Error sending quote:', error);
       alert(`Error al enviar la cotización: ${error.message}. Por favor, intente nuevamente.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!clientData.clientId) {
+      alert('Error: No se ha seleccionado un cliente válido.');
+      return;
+    }
+    if (!quoteData.length) {
+      alert('Error: No hay rutas para guardar.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const quotesToSave = buildQuotesPayload(quoteData, clientData, selectedPricings, getAutomaticParameters);
+      const payload = buildSavePayload(clientData, quotesToSave);
+
+      const { data } = await saveQuoteFromChat(payload);
+      console.log('[PreviewModal] Draft saved', data);
+      alert('Cotización guardada como borrador / Pre-solicitud.');
+      window.location.reload();
+    } catch (error) {
+      console.error('[PreviewModal] Error saving draft', error);
+      alert(error.response?.data?.error || 'Error al guardar la cotización.');
     } finally {
       setSaving(false);
     }
@@ -338,6 +319,9 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           </div>
           <div className="flex items-center space-x-2">
             <button 
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={saving}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-orange-600 bg-white hover:bg-gray-50 transition-colors duration-200 shadow-sm"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

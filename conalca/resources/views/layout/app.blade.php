@@ -220,51 +220,43 @@
     <title>@yield('title') - CONALCA AI</title>
 
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("DOMContentLoaded", function() {
+        const buttons = document.querySelectorAll('[data-button]');
+        const currentPath = window.location.pathname.replace(/\/$/, '');
 
+        const resetAll = () => {
+            buttons.forEach(btn => {
+                btn.classList.remove("bg-[#FBEBE2]", "dark:bg-[#FBEBE2]", "text-[#ff7c32]", "dark:text-[#ff7c32]");
+                const svg = btn.querySelector('span svg');
+                if (svg) svg.style.fill = '';
+            });
+        };
 
-            const buttons = document.querySelectorAll('[data-button]');
-
-            buttons.forEach(function(button) {
-                button.addEventListener("click", function(event) {
-                    // Reset the style for all buttons
-                    buttons.forEach(function(resetButton) {
-                        resetButton.classList.remove("bg-[#FBEBE2]");
-                        resetButton.classList.remove("dark:bg-[#FBEBE2]");
-                        resetButton.classList.remove("text-[#ff7c32]");
-                        resetButton.classList.remove("dark:text-[#ff7c32]");
-                    });
-
-                    // Add style only to the button that was clicked
-                    button.classList.add("bg-[#FBEBE2]");
-                    button.classList.add("dark:bg-[#FBEBE2]");
-                    button.classList.add("text-[#ff7c32]");
-                    button.classList.add("dark:text-[#ff7c32]");
-                    const span = button.querySelector('span');
-                    const svg = span.querySelector('svg');
-                    if (svg) {
-                        svg.style.fill = '#ff7c32';
-                    }
-
-                    // Saves state to local storage
-                    localStorage.setItem('selectedButton', button.getAttribute('data-button'));
-                });
-
-                // Check if the button has been previously clicked
-                if (localStorage.getItem('selectedButton') === button.getAttribute('data-button')) {
-                    // Add style to button if previously clicked
-                    button.classList.add("bg-[#FBEBE2]");
-                    button.classList.add("dark:bg-[#FBEBE2]");
-                    button.classList.add("text-[#ff7c32]");
-                    button.classList.add("dark:text-[#ff7c32]");
-                    const span = button.querySelector('span');
-                    const svg = span.querySelector('svg');
-                    if (svg) {
-                        svg.style.fill = '#ff7c32';
-                    }
+        const highlightCurrent = () => {
+            resetAll();
+            buttons.forEach(btn => {
+                const href = btn.getAttribute('href');
+                if (!href) return;
+                // Normalize href to compare only the path
+                const normalizedHref = href.replace(window.location.origin, '').replace(/\/$/, '');
+                if (currentPath === normalizedHref || currentPath.startsWith(normalizedHref)) {
+                    btn.classList.add("bg-[#FBEBE2]", "dark:bg-[#FBEBE2]", "text-[#ff7c32]", "dark:text-[#ff7c32]");
+                    const svg = btn.querySelector('span svg');
+                    if (svg) svg.style.fill = '#ff7c32';
                 }
             });
+        };
+
+        // Initial highlight based on URL
+        highlightCurrent();
+
+        // Optional: keep click style for the current tab only (no persistence)
+        buttons.forEach(btn => {
+            btn.addEventListener("click", () => {
+                highlightCurrent();
+            });
         });
+    });
     </script>
     @stack('styles')
     @stack('scripts')
@@ -322,7 +314,7 @@
                             </a>
                         </div>
                         {{-- Solicitudes --}}
-                        <div>
+                        <!-- <div>
                             <a href="{{ route('requests.show') }}"
                                 class="nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                 text-base font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
@@ -340,7 +332,7 @@
                                       :class="sidebarCollapsed ? 'sidebar-text-hidden' : 'sidebar-text'"
                                       x-show="!sidebarCollapsed"> Solicitudes </span>
                             </a>
-                        </div>
+                        </div> -->
                         {{-- cotizaciones --}}
                         <div>
                             <a href="{{ route('quotes.react-test') }}"
@@ -597,6 +589,21 @@
                                                 </svg>
                                             </span>
                                             <span class="ml-2 text-sm"> Conductores </span>
+                                        </a>
+                                    @endif
+                                    {{-- Panel de porcentajes --}}
+                                    @if (auth()->user()->hasRole('SUPER ADMIN') || auth()->user()->hasRole('PRICING')) 
+                                        <a href="{{ route('percentage-settings.index') }}"
+                                        class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                        role="button" aria-haspopup="true">
+                                            <span aria-hidden="true">
+                                                {{-- Icono porcentaje --}}
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M18.5 5.5l-13 13M7 7a2 2 0 11-4 0 2 2 0 014 0zm14 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Panel de Porcentajes </span>
                                         </a>
                                     @endif
 
@@ -979,7 +986,7 @@
                             </div>
 
                             <!-- solicitudes -->
-                            <div x-data="{ isActive: false, open: false }">
+                            <!-- <div x-data="{ isActive: false, open: false }">
                                 <a href="{{ route('requests.show') }}"
                                     class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md dark:text-light hover:bg-[#FBEBE2]  dark:hover:bg-[#FBEBE2] "
                                     :class="{ 'bg-[#FBEBE2]  dark:bg-[#FBEBE2] ': isActive || open }" role="button"
@@ -994,7 +1001,7 @@
                                     </span>
                                     <span class="ml-2 text-sm"> Solicitudes </span>
                                 </a>
-                            </div>
+                            </div> -->
 
                             <!-- cotizaciones -->
                             <div x-data="{ isActive: false, open: false }">
@@ -1111,6 +1118,22 @@
                                                     </svg>
                                                 </span>
                                                 <span class="ml-2 text-sm"> Conductores </span>
+                                            </a>
+                                        @endif
+                                        {{-- Panel de porcentajes --}}
+                                        @if (auth()->user()->hasRole('SUPER ADMIN') || auth()->user()->hasRole('PRICING')) 
+
+                                            <a href="{{ route('percentage-settings.index') }}"
+                                            class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                            role="button" aria-haspopup="true">
+                                                <span aria-hidden="true">
+                                                    {{-- Icono porcentaje --}}
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                            d="M18.5 5.5l-13 13M7 7a2 2 0 11-4 0 2 2 0 014 0zm14 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                    </svg>
+                                                </span>
+                                                <span class="ml-2 text-sm"> Panel de Porcentajes </span>
                                             </a>
                                         @endif
                                     </div>

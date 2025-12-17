@@ -28,7 +28,7 @@ export default function CreateColumnModal({ open, onClose, onCreate }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[99990] flex items-start justify-center pt-20 bg-black bg-opacity-50 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-white p-8 rounded-2xl shadow-2xl min-w-[400px] max-w-md w-full transform transition-all">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 bg-gradient-to-br from-[#FF7C32] to-[#FF6B1A] rounded-xl flex items-center justify-center">

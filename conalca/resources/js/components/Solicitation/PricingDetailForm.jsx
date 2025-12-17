@@ -232,7 +232,7 @@ export default function PricingDetailForm({
 
   /* ─── UI ─── */
   return (
-    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 bg-black/50 z-[99990] flex items-start justify-center pt-8 overflow-y-auto backdrop-blur-sm">
       <div className="bg-white w-full max-w-3xl rounded-lg shadow-xl p-6 overflow-y-auto max-h-[90vh] relative">
         <button
           onClick={onClose}

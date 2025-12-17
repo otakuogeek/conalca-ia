@@ -5,9 +5,11 @@ import Modal from './ui/Modal';
 import { 
   fetchLatestPricingsByRoute,
   fetchVehicleSuggestions,
-  fetchRentabilityStats
+  fetchRentabilityStats,
+  fetchPercentageSettings,
+  fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
-import { FaSpinner } from 'react-icons/fa';
+import { FaSpinner, FaInfoCircle } from 'react-icons/fa';
 
 const PricingModal = ({ 
   onClose, 
@@ -22,19 +24,36 @@ const PricingModal = ({
   setPorcentajeGlobal,
   clientData 
 }) => {
-  // const [loading, setLoading] = useState(false);
   const [loadingPricings, setLoadingPricings] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [suggestionsKey, setSuggestionsKey] = useState(null);
   const [errors, setErrors] = useState({});
   const [vehicleSuggestions, setVehicleSuggestions] = useState({});
   const [initialPorcentajeApplied, setInitialPorcentajeApplied] = useState(false);
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [vehicleGuide, setVehicleGuide] = useState([]);
+  const [loadingGuide, setLoadingGuide] = useState(false);
+  const [guideError, setGuideError] = useState(null);
   const [rentabilityDefaults, setRentabilityDefaults] = useState({
     min: 17,
     avg: 24,
     max: 32,
     scope: 'fallback',
   });
+  const [percentageSettings, setPercentageSettings] = useState({
+    use_custom: false,
+    min: null,
+    avg: null,
+    max: null,
+  });
+  const [percentageSettingsLoaded, setPercentageSettingsLoaded] = useState(false);
+  const minPercentageAllowed = useMemo(() => {
+    if (percentageSettings.min !== null) {
+      return Number(percentageSettings.min);
+    }
+    return rentabilityDefaults.min ?? 0;
+  }, [percentageSettings.min, rentabilityDefaults.min]);
+    
   const showBlockingSpinner = loadingPricings || loadingSuggestions;
 
   const routesSignature = useMemo(() => (
@@ -47,12 +66,27 @@ const PricingModal = ({
     )
   ), [quoteData]);
 
+
   useEffect(() => {
     if (!routesSignature) return;
     loadPricingsForRoutes();
-    loadRentabilityStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routesSignature]);
+
+  useEffect(() => {
+    if (!routesSignature || !percentageSettingsLoaded) return;
+    loadRentabilityStats();
+  }, [
+    routesSignature,
+    percentageSettingsLoaded,
+    percentageSettings.use_custom,
+    percentageSettings.min,
+    percentageSettings.avg,
+    percentageSettings.max,
+  ]);
+
+  useEffect(() => {
+    loadPercentageSettings();
+  }, []);
 
   useEffect(() => {
     if (
@@ -63,11 +97,58 @@ const PricingModal = ({
       applyGlobalPorcentaje(rentabilityDefaults.min);
       setInitialPorcentajeApplied(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rentabilityDefaults]);
 
+ 
+  const loadPercentageSettings = async () => {
+    try {
+      const { data } = await fetchPercentageSettings();
+      setPercentageSettings({
+        use_custom: Boolean(data.use_custom),
+        min: data.min !== null ? Number(data.min) : null,
+        avg: data.avg !== null ? Number(data.avg) : null,
+        max: data.max !== null ? Number(data.max) : null,
+      });
+    } catch (error) {
+      console.error('[PricingModal] Error loading percentage settings', error);
+    } finally {
+      setPercentageSettingsLoaded(true);
+    }
+  };
+
+  const openGuideModal = async () => {
+    setShowGuideModal(true);
+    if (vehicleGuide.length) return; // already loaded
+
+    setLoadingGuide(true);
+    setGuideError(null);
+
+    try {
+      const { data } = await fetchVehicleCapacityGuide();
+      setVehicleGuide(data.data || []);
+    } catch (error) {
+      console.error('[PricingModal] Error loading vehicle guide', error);
+      setGuideError('Unable to load vehicle guide. Please try again.');
+    } finally {
+      setLoadingGuide(false);
+    }
+  };
+
   const loadRentabilityStats = async () => {
-    // pick the first valid route as reference for the global cards
+    const adminMin = percentageSettings.min !== null ? Number(percentageSettings.min) : null;
+    const adminAvg = percentageSettings.avg !== null ? Number(percentageSettings.avg) : null;
+    const adminMax = percentageSettings.max !== null ? Number(percentageSettings.max) : null;
+
+    if (percentageSettings.use_custom && adminMin !== null) {
+      setRentabilityDefaults({
+        min: adminMin,
+        avg: adminAvg ?? adminMin,
+        max: adminMax ?? adminMin,
+        scope: 'custom',
+      });
+      return;
+    }
+
     const referenceRoute = quoteData.find(route => route.ciudad_origen && route.ciudad_destino);
 
     try {
@@ -77,16 +158,19 @@ const PricingModal = ({
       });
 
       setRentabilityDefaults({
-        min: data.min || 0,
+        min: adminMin ?? (data.min || 0),    // ALWAYS keep admin min if it exists
         avg: data.avg || 0,
         max: data.max || 0,
         scope: data.scope,
       });
     } catch (error) {
       console.error('[PricingModal] Error loading rentability stats', error);
+      setRentabilityDefaults(prev => ({
+        ...prev,
+        min: adminMin ?? prev.min,
+      }));
     }
   };
-
 const loadPricingsForRoutes = async () => {
   setLoadingPricings(true);
   try {
@@ -96,6 +180,7 @@ const loadPricingsForRoutes = async () => {
         return fetchLatestPricingsByRoute({
           origin: route.ciudad_origen,
           destination: route.ciudad_destino,
+          cargo_weight: route.peso_mercancia || 0,
         })
           .then(({ data }) => data)
           .catch(error => {
@@ -153,24 +238,40 @@ const requestAISuggestions = async (currentKey) => {
   }
 };
 
+  const autoSelectFromSuggestions = (suggestions) => {
+    console.log('[PricingModal] Auto-select suggestions:', suggestions);
 
+    Object.entries(suggestions).forEach(([routeIndex, suggestion]) => {
+      const routePricings = pricings[routeIndex] || [];
+      let pricingForRoute = null;
 
-const autoSelectFromSuggestions = (suggestions) => {
-  console.log('[PricingModal] Auto-select suggestions:', suggestions);
-  Object.entries(suggestions).forEach(([routeIndex, suggestion]) => {
-    const pricingForRoute = (pricings[routeIndex] || []).find(
-      p => p.vehicle_type === suggestion.vehicle_type
-    );
+      // Prefer matching by pricing_id (guarantees exact row)
+      if (suggestion.pricing_id) {
+        pricingForRoute = routePricings.find(
+          p => Number(p.id) === Number(suggestion.pricing_id)
+        );
+      }
 
-    if (!pricingForRoute) {
-      console.warn(`[PricingModal] No pricing option matches AI suggestion for route ${routeIndex}`, suggestion, pricings[routeIndex]);
-      return;
-    }
+      // Fallback: match by vehicle type (and optionally the price) if no ID
+      if (!pricingForRoute) {
+        pricingForRoute = routePricings.find(p =>
+          p.vehicle_type === suggestion.vehicle_type &&
+          (
+            suggestion.price === undefined ||
+            Number(p.price) === Number(suggestion.price)
+          )
+        );
+      }
 
-    console.log(`[PricingModal] Auto-selecting route ${routeIndex}`, pricingForRoute);
-    handleVehicleSelect(Number(routeIndex), pricingForRoute.id);
-  });
-};
+      if (!pricingForRoute) {
+        console.warn(`[PricingModal] No pricing option matches AI suggestion for route ${routeIndex}`, suggestion, routePricings);
+        return;
+      }
+
+      console.log(`[PricingModal] Auto-selecting route ${routeIndex}`, pricingForRoute);
+      handleVehicleSelect(Number(routeIndex), pricingForRoute.id);
+    });
+  };
 
   const handleVehicleSelect = (routeIndex, pricingId) => {
     console.log('[PricingModal] handleVehicleSelect called', { routeIndex, pricingId });
@@ -260,22 +361,22 @@ const autoSelectFromSuggestions = (suggestions) => {
 
   const handlePorcentajeChange = (routeIndex, value) => {
     const porcentaje = parseFloat(value) || 0;
-    
-    if (porcentaje < 17 && porcentaje > 0) {
+
+    if (porcentaje < minPercentageAllowed && porcentaje > 0) {
       setErrors(prev => ({
         ...prev,
-        [`porcentaje_${routeIndex}`]: 'No se puede ingresar una rentabilidad menor al 17%'
+        [`porcentaje_${routeIndex}`]: `No se puede ingresar una rentabilidad menor al ${minPercentageAllowed}%`
       }));
       return;
     }
-    
+
     setErrors(prev => ({
       ...prev,
       [`porcentaje_${routeIndex}`]: null
     }));
-    
-    setQuoteData(prev => prev.map((route, index) => 
-      index === routeIndex ? { ...route, porcentaje: porcentaje } : route
+
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex ? { ...route, porcentaje } : route
     ));
   };
 
@@ -309,44 +410,114 @@ const autoSelectFromSuggestions = (suggestions) => {
   };
 
   const canContinue = () => {
-    // Verificar que todas las rutas tengan vehículo seleccionado
     const hasAllVehicles = quoteData.every(route => route.select_value);
-    
-    // Verificar que todos los porcentajes sean >= 17
-    const hasValidPercentages = quoteData.every(route => 
-      (route.porcentaje || 0) >= 17
+    const hasValidPercentages = quoteData.every(route =>
+      (route.porcentaje || 0) >= minPercentageAllowed
     );
-    
     return hasAllVehicles && hasValidPercentages;
   };
 
-  const handleContinue = () => {
-    if (canContinue()) {
-      // Calcular y guardar los valores finales antes de continuar
+  // const handleContinue = () => {
+  //   if (canContinue()) {
+  //     // Calcular y guardar los valores finales antes de continuar
+  //     const updatedQuoteData = quoteData.map((route, index) => {
+  //       const finalValue = calculateFinalValue(index);
+  //       console.log(`PricingModal - Ruta ${index + 1}:`, {
+  //         basePrice: selectedPricings[index]?.price,
+  //         porcentaje: route.porcentaje,
+  //         finalValue: finalValue
+  //       });
+  //       return {
+  //         ...route,
+  //         finalValue: finalValue
+  //       };
+  //     });
+      
+  //     // Actualizar el estado con los valores finales
+  //     setQuoteData(updatedQuoteData);
+      
+  //     // Pequeño delay para asegurar que el estado se actualice antes de continuar
+  //     setTimeout(() => {
+  //       onNext();
+  //     }, 100);
+  //   } else {
+  //     alert('Completa todos los campos requeridos antes de continuar.');
+  //   }
+  // };
+
+    const handleContinue = async () => {
+      if (!canContinue()) {
+        alert('Completa todos los campos requeridos antes de continuar.');
+        return;
+      }
+
+      // 1) Compute final values locally
       const updatedQuoteData = quoteData.map((route, index) => {
         const finalValue = calculateFinalValue(index);
-        console.log(`PricingModal - Ruta ${index + 1}:`, {
-          basePrice: selectedPricings[index]?.price,
-          porcentaje: route.porcentaje,
-          finalValue: finalValue
-        });
         return {
           ...route,
-          finalValue: finalValue
+          finalValue,
         };
       });
-      
-      // Actualizar el estado con los valores finales
       setQuoteData(updatedQuoteData);
-      
-      // Pequeño delay para asegurar que el estado se actualice antes de continuar
-      setTimeout(() => {
+
+      // 2) Persist updates (upsert) to backend
+      try {
+        const payloadRoutes = updatedQuoteData.map((route, index) => ({
+          id: route.id || null, // IMPORTANT: send existing id to update
+          ciudad_origen: route.ciudad_origen,
+          ciudad_destino: route.ciudad_destino,
+          peso_mercancia: route.peso_mercancia,
+          cantidad: route.cantidad,
+          tipo_embajale: route.tipo_embajale,
+          tipo_producto: route.tipo_producto,
+          vehiculo_requerido: route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
+          valor_declarado: route.valor_declarado,
+          pricing_id: selectedPricings[index]?.id ?? null,
+          porcentaje: route.porcentaje,
+          valor_cliente: route.finalValue,
+          // add any extra fields you expect to persist (candado_satelital, etc.)
+        }));
+
+        const resp = await fetch('/api/chat/quote/save-routes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            group_id: clientData.groupId,
+            routes: payloadRoutes,
+          }),
+        });
+
+        const data = await resp.json();
+
+        if (data.success && data.data?.routes) {
+          const updatedQuoteDataWithIds = updatedQuoteData.map((route, idx) => ({
+            ...route,
+            id: data.data.routes[idx]?.id ?? route.id ?? null,
+          }));
+          setQuoteData(updatedQuoteDataWithIds);
+        }
+
+        if (!resp.ok || !data.success) {
+          console.error('Error saving/updating routes:', data);
+          alert('Ocurrió un problema guardando el pricing. Intenta de nuevo.');
+          return;
+        }
+
+        // Optional: refresh local IDs from server response if needed
+        // setQuoteData(prev => prev.map((r, i) => ({ ...r, id: data.data.routes[i]?.id || r.id })));
+
+        // 3) Proceed to next step
         onNext();
-      }, 100);
-    } else {
-      alert('Completa todos los campos requeridos antes de continuar.');
-    }
-  };
+      } catch (err) {
+        console.error('Network error saving/updating routes:', err);
+        alert('Error de red al guardar el pricing. Intenta nuevamente.');
+      }
+    };
 
   return (
     <Modal onClose={onClose} size="full-screen">
@@ -364,6 +535,74 @@ const autoSelectFromSuggestions = (suggestions) => {
           </div>
         </div>
       </div>
+      <button
+        type="button"
+        onClick={openGuideModal}
+        className="inline-flex items-center px-3 py-2 text-sm font-semibold text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50"
+      >
+        <FaInfoCircle className="mr-2" />
+        Guía de capacidad del vehículo
+      </button>
+      {showGuideModal && (
+        <Modal onClose={() => setShowGuideModal(false)} size="md">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center space-x-2 text-orange-600">
+              <FaInfoCircle />
+              <h3 className="text-lg font-semibold">Referencia de capacidad del vehículo</h3>
+            </div>
+
+            {loadingGuide && (
+              <div className="text-sm text-gray-500">Cargando...</div>
+            )}
+
+            {guideError && (
+              <div className="text-sm text-red-500">{guideError}</div>
+            )}
+
+            {!loadingGuide && !guideError && (
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr className="text-left text-gray-600 uppercase text-xs tracking-wider">
+                      <th className="px-4 py-2">Vehículo (Silogtran)</th>
+                      <th className="px-4 py-2">Categoría logística</th>
+                      <th className="px-4 py-2 text-right">Peso máximo (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vehicleGuide.map((row, idx) => (
+                      <tr
+                        key={`${row.vehiculo_silogtran}-${row.tabla_pricing}-${idx}`}
+                        className="odd:bg-white even:bg-gray-50"
+                      >
+                        <td className="px-4 py-2 font-medium text-gray-800">
+                          {row.vehiculo_silogtran}
+                        </td>
+                        <td className="px-4 py-2 text-gray-600">
+                          {row.tabla_pricing}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-900">
+                          {Number(row.peso_maximo).toLocaleString()} kg
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowGuideModal(false)}
+                className="px-4 py-2 text-sm font-semibold text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
      
       <div className="relative p-8 bg-gray-50">
         {showBlockingSpinner && (
@@ -485,19 +724,6 @@ const autoSelectFromSuggestions = (suggestions) => {
                             </div>
                           )}
                           
-                          {/* Selector de vehículo */}
-                          {/* <select 
-                            value={route.select_value || ''}
-                            onChange={(e) => handleVehicleSelect(index, e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                          >
-                            <option value="">Selecciona vehículo</option>
-                            {(pricings[index] || []).map(pricing => (
-                              <option key={pricing.id} value={pricing.id}>
-                                {pricing.vehicle_type}
-                              </option>
-                            ))}
-                          </select> */}
                           <select
                             value={route.select_value || ''}
                             onChange={(e) => handleVehicleSelect(index, e.target.value)}
@@ -549,13 +775,12 @@ const autoSelectFromSuggestions = (suggestions) => {
                               className={`w-24 px-3 py-2 text-sm text-center border rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent product-sans bg-white font-medium h-10 ${
                                 errors[`porcentaje_${index}`] ? 'border-red-500 bg-red-50' : 'border-gray-300'
                               }`}
-                              placeholder="%" 
-                              min="17" 
+                              min={minPercentageAllowed || 0}
                               max="100" 
                             />
                             {errors[`porcentaje_${index}`] && (
                               <span className="text-red-500 text-xs text-center product-sans">
-                                Min 17%
+                                Min {minPercentageAllowed}%
                               </span>
                             )}
                           </div>

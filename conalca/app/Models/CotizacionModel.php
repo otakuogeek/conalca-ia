@@ -127,11 +127,27 @@ class CotizacionModel extends Model
     }
 
     /**
-     * Relación con las llamadas registradas
+     * Relación con las llamadas registradas (tabla legacy)
      */
     public function llamadas()
     {
         return $this->hasMany(Llamada::class, 'id_cotizacion');
+    }
+
+    /**
+     * Relación con conductores llamados (nueva tabla)
+     */
+    public function llamadasConductores()
+    {
+        return $this->hasMany(LlamadaConductor::class, 'cotizacion_id');
+    }
+
+    /**
+     * Relación con respuestas de llamadas de ElevenLabs
+     */
+    public function driverCallResponses()
+    {
+        return $this->hasMany(DriverCallResponse::class, 'cotizacion_id');
     }
 
     /**

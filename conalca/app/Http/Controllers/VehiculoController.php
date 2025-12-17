@@ -23,13 +23,29 @@ class VehiculoController extends Controller
     public function index()
     {
         try {
-            // Obtener tipos de vehículos de la base de datos
+            // Obtener tipos de vehículos con sus relaciones
             $tiposVehiculos = DB::table('vehiculos_arcangel')
                 ->orderBy('nombre')
                 ->get();
             
+            // Agregar relaciones a cada vehículo
+            foreach ($tiposVehiculos as $vehiculo) {
+                $vehiculo->relaciones = DB::table('vehiculos_relaciones')
+                    ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                    ->where('vehiculos_relaciones.vehiculo_arcangel_id', $vehiculo->id)
+                    ->select('vehiculos_pricing.*', 'vehiculos_relaciones.id as relacion_id')
+                    ->get();
+            }
+            
+            // Obtener todos los vehículos pricing para el modal
+            $vehiculosPricing = DB::table('vehiculos_pricing')
+                ->orderBy('vehiculo_silogtran')
+                ->orderBy('peso_maximo')
+                ->get();
+            
             return view('vehiculos.index', [
                 'tiposVehiculos' => $tiposVehiculos,
+                'vehiculosPricing' => $vehiculosPricing,
                 'error' => null
             ]);
         } catch (\Exception $e) {
@@ -39,47 +55,281 @@ class VehiculoController extends Controller
             
             return view('vehiculos.index', [
                 'tiposVehiculos' => collect([]),
+                'vehiculosPricing' => collect([]),
                 'error' => 'Error al obtener tipos de vehículos: ' . $e->getMessage()
             ]);
         }
     }
 
     /**
+     * Obtener lista de ciudades disponibles en Arcangel
+     */
+    public function getCiudades()
+    {
+        try {
+            $ciudades = $this->arcangelService->getCiudades(false);
+            
+            // Ordenar alfabéticamente
+            sort($ciudades);
+            
+            return response()->json([
+                'success' => true,
+                'ciudades' => $ciudades,
+                'total' => count($ciudades)
+            ]);
+        } catch (\Exception $e) {
+            Log::error('VehiculoController: Error obteniendo ciudades', [
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener ciudades: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Buscar vehículos disponibles en una ciudad específica (sin almacenar)
+     */
+    public function buscarVehiculosCiudad(Request $request)
+    {
+        try {
+            $ciudad = $request->input('ciudad');
+            
+            if (!$ciudad) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Debe especificar una ciudad'
+                ], 400);
+            }
+            
+            $response = $this->arcangelService->getVehiculosCercanos($ciudad, false);
+            $vehiculos = $response['vehiculos'] ?? [];
+            
+            // Agrupar por tipo de vehículo y contar
+            $vehiculosPorTipo = [];
+            foreach ($vehiculos as $vehiculo) {
+                if (is_array($vehiculo) && isset($vehiculo['clase'])) {
+                    $clase = $vehiculo['clase'];
+                    if (!isset($vehiculosPorTipo[$clase])) {
+                        $vehiculosPorTipo[$clase] = [
+                            'tipo' => $clase,
+                            'cantidad' => 0,
+                            'vehiculos' => []
+                        ];
+                    }
+                    $vehiculosPorTipo[$clase]['cantidad']++;
+                    $vehiculosPorTipo[$clase]['vehiculos'][] = [
+                        'placa' => $vehiculo['placa'] ?? 'N/A',
+                        'conductor' => $vehiculo['conductor'] ?? 'N/A',
+                        'telefono' => $vehiculo['celular'] ?? $vehiculo['telefono'] ?? 'N/A',
+                        'empresa' => $vehiculo['empresa'] ?? 'N/A',
+                        'disponibilidad' => $vehiculo['disponibilidad'] ?? 'Disponible',
+                        'ubicacion' => $vehiculo['ubicacion'] ?? $ciudad,
+                        'latitud' => $vehiculo['latitud'] ?? null,
+                        'longitud' => $vehiculo['longitud'] ?? null,
+                    ];
+                }
+            }
+            
+            // Ordenar por cantidad descendente
+            usort($vehiculosPorTipo, function($a, $b) {
+                return $b['cantidad'] - $a['cantidad'];
+            });
+            
+            return response()->json([
+                'success' => true,
+                'ciudad' => $ciudad,
+                'totalVehiculos' => count($vehiculos),
+                'tiposUnicos' => count($vehiculosPorTipo),
+                'vehiculosPorTipo' => array_values($vehiculosPorTipo),
+                'timestamp' => now()->format('Y-m-d H:i:s')
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('VehiculoController: Error buscando vehículos en ciudad', [
+                'ciudad' => $request->input('ciudad'),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al buscar vehículos: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Agregar relación entre vehículo Arcangel y vehículo Pricing
+     */
+    public function agregarRelacion(Request $request)
+    {
+        try {
+            $vehiculoArcangelId = $request->input('vehiculo_arcangel_id');
+            $vehiculoPricingId = $request->input('vehiculo_pricing_id');
+            
+            // Verificar que no exista la relación
+            $existe = DB::table('vehiculos_relaciones')
+                ->where('vehiculo_arcangel_id', $vehiculoArcangelId)
+                ->where('vehiculo_pricing_id', $vehiculoPricingId)
+                ->exists();
+            
+            if ($existe) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Esta relación ya existe'
+                ], 400);
+            }
+            
+            DB::table('vehiculos_relaciones')->insert([
+                'vehiculo_arcangel_id' => $vehiculoArcangelId,
+                'vehiculo_pricing_id' => $vehiculoPricingId,
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+            
+            // Obtener el vehículo pricing agregado
+            $vehiculoPricing = DB::table('vehiculos_pricing')
+                ->where('id', $vehiculoPricingId)
+                ->first();
+            
+            $relacion = DB::table('vehiculos_relaciones')
+                ->where('vehiculo_arcangel_id', $vehiculoArcangelId)
+                ->where('vehiculo_pricing_id', $vehiculoPricingId)
+                ->first();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Relación agregada exitosamente',
+                'relacion' => [
+                    'id' => $relacion->id,
+                    'vehiculo_silogtran' => $vehiculoPricing->vehiculo_silogtran,
+                    'tabla_pricing' => $vehiculoPricing->tabla_pricing,
+                    'peso_maximo' => $vehiculoPricing->peso_maximo
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('VehiculoController: Error agregando relación', [
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al agregar relación: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Eliminar relación
+     */
+    public function eliminarRelacion(Request $request, $id)
+    {
+        try {
+            $deleted = DB::table('vehiculos_relaciones')
+                ->where('id', $id)
+                ->delete();
+            
+            if ($deleted) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Relación eliminada exitosamente'
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Relación no encontrada'
+                ], 404);
+            }
+        } catch (\Exception $e) {
+            Log::error('VehiculoController: Error eliminando relación', [
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar relación: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Obtener relaciones de un vehículo Arcangel
+     */
+    public function obtenerRelaciones($id)
+    {
+        try {
+            $relaciones = DB::table('vehiculos_relaciones')
+                ->join('vehiculos_pricing', 'vehiculos_relaciones.vehiculo_pricing_id', '=', 'vehiculos_pricing.id')
+                ->where('vehiculos_relaciones.vehiculo_arcangel_id', $id)
+                ->select('vehiculos_pricing.*', 'vehiculos_relaciones.id as relacion_id')
+                ->get();
+            
+            return response()->json([
+                'success' => true,
+                'relaciones' => $relaciones
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener relaciones: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Sincronizar tipos de vehículos desde Arcangel con progreso en tiempo real (SSE)
+     * OPTIMIZADO: Omite tipos ya existentes y detiene si no encuentra nuevos
      */
     public function sincronizar(Request $request)
     {
-        // Aumentar tiempo de ejecución para procesar todas las ciudades
-        set_time_limit(600); // 10 minutos
+        // Aumentar tiempo de ejecución
+        set_time_limit(600);
         ini_set('memory_limit', '256M');
         
         return new StreamedResponse(function () {
             // Desactivar buffer de salida
             if (ob_get_level()) ob_end_clean();
             
+            // 1. OPTIMIZACIÓN: Cargar tipos existentes al inicio
+            $tiposExistentesDB = DB::table('vehiculos_arcangel')
+                ->pluck('nombre')
+                ->toArray();
+            $tiposExistentesMap = array_flip($tiposExistentesDB);
+            $cantidadExistentes = count($tiposExistentesDB);
+            
             $this->sendSSE('init', [
-                'message' => 'Iniciando sincronización...',
-                'step' => 'Obteniendo lista de ciudades'
+                'message' => 'Iniciando sincronización optimizada...',
+                'step' => 'Analizando tipos existentes',
+                'tiposExistentes' => $cantidadExistentes
             ]);
 
             try {
-                // 1. Obtener todas las ciudades de Arcangel
+                // 2. Obtener todas las ciudades de Arcangel
                 $ciudades = $this->arcangelService->getCiudades(false);
                 $totalCiudades = count($ciudades);
                 
+                // Mezclar ciudades para mayor diversidad en el escaneo
+                shuffle($ciudades);
+                
                 $this->sendSSE('ciudades', [
                     'total' => $totalCiudades,
-                    'message' => "Se encontraron {$totalCiudades} ciudades para escanear",
-                    'estimatedTime' => $this->estimateTime($totalCiudades)
+                    'message' => "Se encontraron {$totalCiudades} ciudades. Ya tienes {$cantidadExistentes} tipos registrados.",
+                    'estimatedTime' => $this->estimateTime($totalCiudades),
+                    'tiposExistentes' => $cantidadExistentes
                 ]);
 
-                $tiposUnicos = [];
+                $tiposNuevosEncontrados = [];
                 $vehiculosTotal = 0;
                 $procesadas = 0;
                 $errores = 0;
+                $omitidos = 0;
                 $startTime = microtime(true);
+                $ciudadesSinNuevosTipos = 0;
+                $maxCiudadesSinNuevos = 50; // Detener si 50 ciudades seguidas no tienen tipos nuevos
 
-                // 2. Consultar vehículos de cada ciudad
+                // 3. Consultar vehículos de cada ciudad
                 foreach ($ciudades as $index => $ciudad) {
                     $procesadas++;
                     $porcentaje = round(($procesadas / $totalCiudades) * 100, 1);
@@ -90,6 +340,8 @@ class VehiculoController extends Controller
                     $remaining = ($totalCiudades - $procesadas) * $avgTimePerCity;
                     $remainingFormatted = $this->formatTime($remaining);
                     
+                    $nuevosEnEstaCiudad = 0;
+                    
                     try {
                         $response = $this->arcangelService->getVehiculosCercanos($ciudad, false);
                         $vehiculos = $response['vehiculos'] ?? [];
@@ -99,13 +351,50 @@ class VehiculoController extends Controller
                         foreach ($vehiculos as $vehiculo) {
                             if (is_array($vehiculo) && isset($vehiculo['clase'])) {
                                 $clase = trim($vehiculo['clase']);
-                                if ($clase && !isset($tiposUnicos[$clase])) {
-                                    $tiposUnicos[$clase] = true;
+                                
+                                if (!$clase) continue;
+                                
+                                // OPTIMIZACIÓN: Verificar si ya existe en DB o ya lo encontramos
+                                if (isset($tiposExistentesMap[$clase])) {
+                                    $omitidos++;
+                                    continue; // Ya existe en DB, omitir
+                                }
+                                
+                                if (isset($tiposNuevosEncontrados[$clase])) {
+                                    continue; // Ya lo encontramos en otra ciudad
+                                }
+                                
+                                // ¡Nuevo tipo encontrado!
+                                $tiposNuevosEncontrados[$clase] = true;
+                                $nuevosEnEstaCiudad++;
+                                
+                                // OPTIMIZACIÓN: Guardar inmediatamente en DB
+                                try {
+                                    DB::table('vehiculos_arcangel')->insert([
+                                        'nombre' => $clase,
+                                        'created_at' => now(),
+                                        'updated_at' => now()
+                                    ]);
+                                    
+                                    $this->sendSSE('nuevo_tipo', [
+                                        'tipo' => $clase,
+                                        'ciudad' => $ciudad,
+                                        'total_nuevos' => count($tiposNuevosEncontrados)
+                                    ]);
+                                } catch (\Exception $e) {
+                                    // Posible duplicado por race condition, ignorar
                                 }
                             }
                         }
                         
-                        // Enviar progreso cada ciudad
+                        // Verificar si encontramos tipos nuevos en esta ciudad
+                        if ($nuevosEnEstaCiudad > 0) {
+                            $ciudadesSinNuevosTipos = 0; // Resetear contador
+                        } else {
+                            $ciudadesSinNuevosTipos++;
+                        }
+                        
+                        // Enviar progreso
                         $this->sendSSE('progress', [
                             'current' => $procesadas,
                             'total' => $totalCiudades,
@@ -113,10 +402,23 @@ class VehiculoController extends Controller
                             'ciudad' => $ciudad,
                             'vehiculosEnCiudad' => $cantidadVehiculos,
                             'vehiculosTotal' => $vehiculosTotal,
-                            'tiposEncontrados' => count($tiposUnicos),
+                            'tiposNuevos' => count($tiposNuevosEncontrados),
+                            'tiposExistentes' => $cantidadExistentes,
+                            'omitidos' => $omitidos,
                             'tiempoRestante' => $remainingFormatted,
-                            'errores' => $errores
+                            'errores' => $errores,
+                            'ciudadesSinNuevos' => $ciudadesSinNuevosTipos
                         ]);
+                        
+                        // OPTIMIZACIÓN: Detener temprano si no hay tipos nuevos
+                        if ($ciudadesSinNuevosTipos >= $maxCiudadesSinNuevos && $procesadas > 100) {
+                            $this->sendSSE('early_stop', [
+                                'message' => "Deteniendo: {$maxCiudadesSinNuevos} ciudades sin tipos nuevos",
+                                'ciudadesProcesadas' => $procesadas,
+                                'tiposNuevos' => count($tiposNuevosEncontrados)
+                            ]);
+                            break;
+                        }
                         
                     } catch (\Exception $e) {
                         $errores++;
@@ -127,66 +429,44 @@ class VehiculoController extends Controller
                             'ciudad' => $ciudad,
                             'vehiculosEnCiudad' => 0,
                             'vehiculosTotal' => $vehiculosTotal,
-                            'tiposEncontrados' => count($tiposUnicos),
+                            'tiposNuevos' => count($tiposNuevosEncontrados),
+                            'tiposExistentes' => $cantidadExistentes,
+                            'omitidos' => $omitidos,
                             'tiempoRestante' => $remainingFormatted,
                             'errores' => $errores,
                             'error' => "Error en {$ciudad}"
                         ]);
                     }
                     
-                    // Pequeña pausa para no saturar la API
-                    usleep(100000); // 0.1 segundos
-                }
-
-                // 3. Insertar tipos únicos en la base de datos
-                $this->sendSSE('saving', [
-                    'message' => 'Guardando tipos de vehículos en base de datos...',
-                    'tiposUnicos' => count($tiposUnicos)
-                ]);
-
-                $tiposNuevos = 0;
-                $tiposExistentes = 0;
-                $tiposAgregados = [];
-
-                foreach (array_keys($tiposUnicos) as $tipo) {
-                    $existe = DB::table('vehiculos_arcangel')
-                        ->where('nombre', $tipo)
-                        ->exists();
-                    
-                    if (!$existe) {
-                        DB::table('vehiculos_arcangel')->insert([
-                            'nombre' => $tipo,
-                            'created_at' => now(),
-                            'updated_at' => now()
-                        ]);
-                        $tiposNuevos++;
-                        $tiposAgregados[] = $tipo;
-                    } else {
-                        $tiposExistentes++;
-                    }
+                    // Pausa más corta ya que el proceso es más eficiente
+                    usleep(50000); // 0.05 segundos
                 }
 
                 $tiempoTotal = round(microtime(true) - $startTime, 1);
+                $totalTiposEnDB = $cantidadExistentes + count($tiposNuevosEncontrados);
 
                 // 4. Enviar resultado final
                 $this->sendSSE('complete', [
                     'success' => true,
                     'message' => 'Sincronización completada exitosamente',
-                    'ciudadesConsultadas' => $totalCiudades,
+                    'ciudadesConsultadas' => $procesadas,
+                    'ciudadesTotal' => $totalCiudades,
                     'vehiculosEncontrados' => $vehiculosTotal,
-                    'tiposUnicos' => count($tiposUnicos),
-                    'tiposNuevos' => $tiposNuevos,
-                    'tiposExistentes' => $tiposExistentes,
-                    'tiposAgregados' => $tiposAgregados,
+                    'tiposNuevos' => count($tiposNuevosEncontrados),
+                    'tiposExistentes' => $cantidadExistentes,
+                    'totalTiposEnDB' => $totalTiposEnDB,
+                    'tiposAgregados' => array_keys($tiposNuevosEncontrados),
+                    'omitidos' => $omitidos,
                     'errores' => $errores,
-                    'tiempoTotal' => $tiempoTotal . ' segundos'
+                    'tiempoTotal' => $tiempoTotal . ' segundos',
+                    'detencionTemprana' => $ciudadesSinNuevosTipos >= $maxCiudadesSinNuevos
                 ]);
 
                 Log::info('VehiculoController: Sincronización completada', [
-                    'ciudades' => $totalCiudades,
+                    'ciudades' => $procesadas,
                     'vehiculos' => $vehiculosTotal,
-                    'tipos' => count($tiposUnicos),
-                    'nuevos' => $tiposNuevos,
+                    'nuevos' => count($tiposNuevosEncontrados),
+                    'existentes' => $cantidadExistentes,
                     'tiempo' => $tiempoTotal
                 ]);
 
@@ -205,7 +485,7 @@ class VehiculoController extends Controller
             'Content-Type' => 'text/event-stream',
             'Cache-Control' => 'no-cache',
             'Connection' => 'keep-alive',
-            'X-Accel-Buffering' => 'no', // Desactiva buffering en nginx
+            'X-Accel-Buffering' => 'no',
         ]);
     }
 
@@ -248,4 +528,111 @@ class VehiculoController extends Controller
             return "{$horas}h {$minutos}m";
         }
     }
+
+    /**
+     * Cambiar modo de Arcángel (production/development)
+     */
+    public function cambiarModoArcangel(Request $request)
+    {
+        try {
+            $nuevoModo = $request->input('modo'); // 'production' o 'development'
+            
+            if (!in_array($nuevoModo, ['production', 'development'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Modo inválido. Use "production" o "development"'
+                ], 400);
+            }
+
+            $envPath = base_path('.env');
+            $envContent = file_get_contents($envPath);
+
+            // Actualizar ARCANGEL_MODE
+            if ($nuevoModo === 'production') {
+                $envContent = preg_replace(
+                    '/^#?ARCANGEL_MODE=.*/m',
+                    'ARCANGEL_MODE=production',
+                    $envContent
+                );
+            } else {
+                $envContent = preg_replace(
+                    '/^#?ARCANGEL_MODE=.*/m',
+                    'ARCANGEL_MODE=development',
+                    $envContent
+                );
+            }
+
+            file_put_contents($envPath, $envContent);
+
+            // Limpiar caché de configuración
+            \Artisan::call('config:clear');
+            \Artisan::call('cache:clear');
+
+            // Eliminar archivo hot para detener hot reload de Vite
+            $hotFile = public_path('hot');
+            if (file_exists($hotFile)) {
+                @unlink($hotFile);
+                Log::info('Archivo hot eliminado para detener hot reload');
+            }
+
+            Log::info('Modo Arcángel cambiado', [
+                'modo_anterior' => config('arcangel.mode'),
+                'modo_nuevo' => $nuevoModo,
+                'usuario' => auth()->user()->email ?? 'desconocido'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Modo cambiado exitosamente a ' . strtoupper($nuevoModo),
+                'modo' => $nuevoModo,
+                'url' => $nuevoModo === 'production' 
+                    ? config('arcangel.base_url') 
+                    : config('arcangel.base_url_dev'),
+                'api_key' => $nuevoModo === 'production' 
+                    ? substr(config('arcangel.api_key'), 0, 10) . '...'
+                    : substr(config('arcangel.api_key_dev'), 0, 10) . '...'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error cambiando modo Arcángel', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cambiar modo: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Obtener modo actual de Arcángel
+     */
+    public function obtenerModoActual()
+    {
+        try {
+            $modo = env('ARCANGEL_MODE', 'production');
+            $baseUrl = $modo === 'production' 
+                ? env('ARCANGEL_BASE_URL') 
+                : env('ARCANGEL_BASE_URL_DEV');
+            $apiKey = $modo === 'production' 
+                ? env('ARCANGEL_API_KEY') 
+                : env('ARCANGEL_API_KEY_DEV');
+
+            return response()->json([
+                'success' => true,
+                'modo' => $modo,
+                'url' => $baseUrl,
+                'api_key_preview' => substr($apiKey, 0, 10) . '...'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener modo actual: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
+

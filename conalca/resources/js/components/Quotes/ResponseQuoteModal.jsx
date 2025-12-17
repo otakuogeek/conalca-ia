@@ -114,10 +114,10 @@ export default function ResponseQuoteModal({ open, onClose, groupId }) {
 
   return createPortal(
     <div 
-      className="fixed inset-0 z-[9999] bg-black bg-opacity-50 backdrop-blur-sm"
+      className="fixed inset-0 z-[99990] bg-black bg-opacity-50 backdrop-blur-sm overflow-y-auto"
       onClick={handleBackdropClick}
     >
-      <div className="flex items-center justify-center min-h-screen p-4">
+      <div className="flex items-start justify-center min-h-screen p-4 pt-8">
         <div 
           className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden transform transition-all scale-100"
           onClick={(e) => e.stopPropagation()}
