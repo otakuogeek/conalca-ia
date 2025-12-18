@@ -284,8 +284,11 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
         ...fields
       });
 
+      console.log('📥 Respuesta del servidor (saveStep):', resp);
+
       /* ─── ONLY on step 6 do we show the Silogtran result ─── */
       if (stepKey === 'step_6') {
+        console.log('🔍 Verificando respuesta Silogtran...');
         await showSilogtranMsg(resp);
       }
 
@@ -298,7 +301,15 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
       }
     } catch (err) {
       console.error('Error saving step', err);
-      alert('⚠️ Error saving the request. Please try again.');
+      // Mejorar feedback de error usando el chat en lugar de alert
+      const msg = err.response?.data?.message || err.message || 'Error guardando la solicitud.';
+      chatBus.emit('assistant-message', `❌ No se pudo guardar el paso: ${msg}`);
+      
+      // Si hay errores de validación específicos (Laravel standard)
+      if (err.response?.data?.errors) {
+          const errors = Object.values(err.response.data.errors).flat().join('\n');
+          chatBus.emit('assistant-message', `Detalles del error:\n${errors}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -369,24 +380,21 @@ export default function Wizard({ open, cotizacionId, groupId, onClose }) {
   /*  Muestra al usuario la respuesta de Silogtran (éxito o error)  */
   /* -------------------------------------------------------------- */
   const showSilogtranMsg = async (apiResp) => {
+    console.log('🔔 showSilogtranMsg analizando:', apiResp);
     if (!apiResp) return;
 
     /* 1) error devuelto por el WS → viene en advertencia           */
     if (apiResp.advertencia) {
-      await new Promise(r => {
-        alert(`⚠️  ${apiResp.advertencia}`);   // ⇒ modal nativo; cámbialo por SweetAlert si lo usas
-        r();
-      });
+      chatBus.emit('assistant-message', `⚠️ Advertencia del sistema: ${apiResp.advertencia}`);
+      alert(`⚠️ Advertencia del sistema: ${apiResp.advertencia}`);
       return;
     }
 
     /* 2) éxito: mensaje en apiResp.silogtran o apiResp.message     */
     const okMsg = apiResp.silogtran || apiResp.message;
     if (okMsg) {
-      await new Promise(r => {
-        alert(`✅  ${okMsg}`);
-        r();
-      });
+      chatBus.emit('assistant-message', `✅ Respuesta del sistema: ${okMsg}`);
+      alert(`✅ Respuesta del sistema: ${okMsg}`);
     }
   };
 

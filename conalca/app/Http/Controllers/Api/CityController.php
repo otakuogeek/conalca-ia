@@ -10,14 +10,14 @@ class CityController extends Controller
 {
     public function index(Request $request)
     {
-        // You can add filters or pagination if needed
-        $cities = City::orderBy('ciudad_nombre')->get([
-            'ciudad_codigo',
-            'ciudad_nombre',
-            'ciudad_codigodane',
-            'departamento_nombre',
-            'pais_nombre',
-        ]);
+        $cities = City::where('estado_nombre', 'ACTIVO')
+            ->orderBy('municipio_nombre')
+            ->get([
+                'ciudad_codigodane',
+                'municipio_nombre',
+                'departamento_nombre',
+                'ciudad_nombre',
+            ]);
 
         return response()->json([
             'success' => true,

@@ -29,6 +29,46 @@ const ChatModal = ({
   const sendingRef = useRef(false); // Ref adicional para bloqueo
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
+  // Valores permitidos para campos desplegables
+  const ALLOWED_VALUES = {
+    tipo_viaje: ['NACIONAL', 'URBANO', 'INTERNACIONAL'],
+    tipo_operacion: ['DISTRIBUCION', 'DISTRIBUCIÓN', 'EXPORTACION', 'EXPORTACIÓN', 'IMPORTACION', 'IMPORTACIÓN'],
+    tipo_modalidad: ['dta', 'otm', 'nacionalizado', 'DTA', 'OTM', 'NACIONALIZADO'],
+    tipo_carga: ['refrigerado', 'general', 'extradimensional', 'dangerous', 'otro'],
+    // Agregar más campos según sea necesario
+  };
+
+  // Función para validar y normalizar valores de campos desplegables
+  const validateAndNormalizeField = (fieldName, value) => {
+    if (!value) return { valid: true, normalizedValue: value, error: null };
+    
+    const normalizedInput = value.toString().toUpperCase().trim();
+    const allowedValues = ALLOWED_VALUES[fieldName];
+    
+    if (!allowedValues) {
+      // Campo sin validación específica, permitir cualquier valor
+      return { valid: true, normalizedValue: value, error: null };
+    }
+    
+    // Buscar coincidencia exacta o parcial
+    const matchedValue = allowedValues.find(allowed => 
+      allowed.toUpperCase() === normalizedInput ||
+      allowed.toUpperCase().includes(normalizedInput) ||
+      normalizedInput.includes(allowed.toUpperCase())
+    );
+    
+    if (matchedValue) {
+      return { valid: true, normalizedValue: matchedValue, error: null };
+    }
+    
+    // No se encontró coincidencia
+    return {
+      valid: false,
+      normalizedValue: value,
+      error: `El valor "${value}" no está registrado para ${fieldName}. Valores permitidos: ${allowedValues.join(', ')}`
+    };
+  };
+
   const stripMarkdown = (text = '') => {
     return text
       // remove headings like ### Title
@@ -43,6 +83,29 @@ const ChatModal = ({
       // collapse multiple spaces (but keep newlines intact)
       .replace(/[ \t]{2,}/g, ' ')
       // optional: limit extra blank lines if needed
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
+  // Función para limpiar comandos técnicos del texto del asistente
+  const cleanTechnicalCommands = (text = '') => {
+    if (!text) return '';
+    
+    // Dividir en líneas y filtrar agresivamente
+    const lines = text.split('\n');
+    const cleanedLines = lines.filter(line => {
+      const lineLower = line.toLowerCase();
+      // Eliminar líneas que contengan comandos o sintaxis técnica
+      if (lineLower.includes('rellenar')) return false;
+      if (lineLower.includes('update(')) return false;
+      if (lineLower.includes('set(')) return false;
+      if (line.match(/\w+\(['"]/)) return false; // función con string
+      if (line.match(/["'][\w_]+["']\s*,\s*["']/)) return false; // patrón "campo", "valor"
+      return true;
+    });
+    
+    return cleanedLines
+      .join('\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   };
@@ -582,7 +645,144 @@ const ChatModal = ({
           setThreadId(data.data.thread_id); // <-- store new thread locally
         }
 
-        if (data.data.run_id) {
+        // Si es modo fallback o ya está completado, mostrar mensajes directamente sin polling
+        if (data.data.fallback_mode || data.data.status === 'completed') {
+          console.log('✅ Respuesta en modo fallback, mostrando directamente');
+          setProcessingMessage(null);
+          setIsSending(false);
+          
+          // Agregar los mensajes del fallback al chat
+          if (data.data.messages && data.data.messages.length > 0) {
+            const assistantMsg = data.data.messages.find(m => m.role === 'assistant');
+            if (assistantMsg && onUpdateMessages) {
+              console.log('🔍 Mensaje original del AI:', assistantMsg.content);
+              
+              // Intentar parsear como JSON primero
+              let cleanedContent = '';
+              try {
+                const parsedContent = JSON.parse(assistantMsg.content);
+                // Si es JSON con estructura de respuesta, SOLO usar el campo "respuesta"
+                if (parsedContent && parsedContent.respuesta) {
+                  cleanedContent = parsedContent.respuesta;
+                  console.log('✅ Extraído campo respuesta del JSON');
+                } else {
+                  // Si no tiene campo respuesta, aplicar filtro
+                  cleanedContent = cleanTechnicalCommands(assistantMsg.content);
+                }
+              } catch (e) {
+                // No es JSON válido, aplicar filtro de limpieza
+                cleanedContent = cleanTechnicalCommands(assistantMsg.content);
+              }
+              
+              console.log('✨ Mensaje limpio final:', cleanedContent);
+              
+              // Solo agregar mensaje si tiene contenido después de limpiar
+              if (cleanedContent.trim()) {
+                onUpdateMessages(prev => [
+                  ...prev,
+                  { role: 'assistant', content: cleanedContent }
+                ]);
+              } else {
+                console.warn('⚠️ El mensaje quedó vacío después de limpiar, no se mostrará');
+              }
+            }
+          }
+          
+          // Procesar datos de cotización extraídos (modo fallback)
+          if (data.data.quote_data && setQuoteData) {
+            console.log('📋 Datos de cotización extraídos:', data.data.quote_data);
+            const extractedData = data.data.quote_data;
+            
+            // Validar campos desplegables
+            const validationErrors = [];
+            const validatedData = {};
+            
+            // Validar tipo_viaje si existe
+            if (extractedData.tipo_viaje) {
+              const validation = validateAndNormalizeField('tipo_viaje', extractedData.tipo_viaje);
+              if (validation.valid) {
+                validatedData.tipo_viaje = validation.normalizedValue;
+              } else {
+                validationErrors.push(validation.error);
+              }
+            }
+            
+            // Validar tipo_operacion si existe
+            if (extractedData.tipo_operacion) {
+              const validation = validateAndNormalizeField('tipo_operacion', extractedData.tipo_operacion);
+              if (validation.valid) {
+                validatedData.tipo_operacion = validation.normalizedValue;
+              } else {
+                validationErrors.push(validation.error);
+              }
+            }
+            
+            // Validar tipo_modalidad si existe
+            if (extractedData.tipo_modalidad) {
+              const validation = validateAndNormalizeField('tipo_modalidad', extractedData.tipo_modalidad);
+              if (validation.valid) {
+                validatedData.tipo_modalidad = validation.normalizedValue;
+              } else {
+                validationErrors.push(validation.error);
+              }
+            }
+            
+            // Validar tipo_carga si existe
+            if (extractedData.tipo_carga) {
+              const validation = validateAndNormalizeField('tipo_carga', extractedData.tipo_carga);
+              if (validation.valid) {
+                validatedData.tipo_carga = validation.normalizedValue;
+              } else {
+                validationErrors.push(validation.error);
+              }
+            }
+            
+            // Mostrar errores de validación si existen
+            if (validationErrors.length > 0) {
+              const errorMessage = validationErrors.join('\n');
+              console.error('❌ Errores de validación:', errorMessage);
+              
+              // Agregar mensaje del asistente informando del error
+              if (onUpdateMessages) {
+                onUpdateMessages(prev => [
+                  ...prev,
+                  { 
+                    role: 'assistant', 
+                    content: `⚠️ He detectado algunos valores que no coinciden con las opciones registradas:\n\n${errorMessage}\n\nPor favor, proporciona valores válidos para estos campos.`
+                  }
+                ]);
+              }
+            }
+            
+            // Crear objeto de ruta con los datos extraídos (solo valores válidos)
+            const routeData = {
+              ciudad_origen: extractedData.ciudad_origen || '',
+              ciudad_destino: extractedData.ciudad_destino || '',
+              peso_mercancia: extractedData.peso_mercancia || '',
+              cantidad: extractedData.cantidad || '',
+              tipo_embajale: extractedData.tipo_embalaje || '',
+              tipo_producto: extractedData.tipo_producto || '',
+              vehiculo_requerido: extractedData.vehiculo_requerido || '',
+              valor_declarado: extractedData.valor_declarado || '',
+              ...validatedData // Agregar solo datos validados
+            };
+            
+            // Actualizar quoteData con los datos extraídos
+            setQuoteData(prev => {
+              if (prev && prev.length > 0) {
+                // Actualizar primera ruta
+                return [{ ...prev[0], ...routeData }, ...prev.slice(1)];
+              }
+              return [routeData];
+            });
+            
+            if (validationErrors.length === 0) {
+              console.log('✅ Datos de cotización actualizados en el formulario');
+            } else {
+              console.log('⚠️ Datos de cotización actualizados parcialmente (algunos valores no válidos)');
+            }
+          }
+        } else if (data.data.run_id) {
           startPollingRun(data.data.thread_id || activeThreadId, data.data.run_id);
         } else {
           setProcessingMessage(null);

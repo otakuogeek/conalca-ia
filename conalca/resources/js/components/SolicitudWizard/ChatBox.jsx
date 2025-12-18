@@ -1,17 +1,19 @@
 import React, { useRef, useState, useEffect } from 'react';
-import OpenAI from 'openai';
 import EventEmitter from 'eventemitter3';
-import { searchVendedores, searchCiudades, searchClientes } from '../../api/solicitud';
+import { 
+  searchVendedores, 
+  searchCiudades, 
+  searchClientes,
+  searchProductos,
+  searchEmpaques,
+  searchClases,
+  searchCarrocerias 
+} from '../../api/solicitud';
 
 export const chatBus = new EventEmitter();
 
-/* ---------- instancia OpenAI ---------- */
-// IMPORTANTE: La clave API se lee desde variable de entorno
-// Configurar en .env como: VITE_OPENAI_API_KEY=sk-proj-...
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
-  dangerouslyAllowBrowser: true
-});
+/* ---------- Backend API en lugar de OpenAI directo (evita CORS) ---------- */
+const API_BASE_URL = '/api/chat';
 
 /* ---------- Voz a texto (Web Speech API) ---------- */
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -191,8 +193,36 @@ const ALIAS = {
   'valor acompañamiento'     : 'valor_acompanante_acom',
   'acompanamiento_valor'     : 'valor_acompanante_acom',      
   'acompañamiento_valor'     : 'valor_acompanante_acom',      
-  'acompanamiento valor'     : 'valor_acompanante_acom',      
-  'acompañamiento valor'     : 'valor_acompanante_acom'       
+  'acompanamiento valor'     : 'valor_acompanante_acom',
+  'acompañamiento valor'     : 'valor_acompanante_acom',
+
+  // Alias adicionales para correcciones comunes
+  'cambiar peso'             : 'peso',
+  'cambiar valor'            : 'valor_mercancia',
+  'corregir peso'            : 'peso',
+  'corregir valor'           : 'valor_mercancia',
+  'nuevo peso'               : 'peso',
+  'nuevo valor'              : 'valor_mercancia',
+  
+  'cambiar cliente'          : 'cliente_codigo',
+  'corregir cliente'         : 'cliente_codigo',
+  'otro cliente'             : 'cliente_codigo',
+  
+  'cambiar vendedor'         : 'vendedor',
+  'corregir vendedor'        : 'vendedor',
+  'otro vendedor'            : 'vendedor',
+  
+  'cambiar ciudad'           : 'ciudad_facturacion',
+  'corregir ciudad'          : 'ciudad_facturacion',
+  'otra ciudad'              : 'ciudad_facturacion',
+  
+  'cambiar origen'           : 'origen',
+  'corregir origen'          : 'origen',
+  'nuevo origen'             : 'origen',
+  
+  'cambiar destino'          : 'destino',
+  'corregir destino'         : 'destino',
+  'nuevo destino'            : 'destino'
 };
 
 /* ---------- normalizar campos ---------- */
@@ -208,6 +238,23 @@ function normalizeValue(field, rawValue) {
   let value = String(rawValue).trim();
 
   switch (field) {
+    case 'centro_costo_despacho':
+      // Eliminar prefijos comunes como "de despacho a", "a", "en", comillas y puntos finales
+      return value.toUpperCase()
+        .replace(/^(?:DE\s+)?(?:DESPACHO\s+)?(?:A|EN)\s+/i, '')
+        .replace(/^["']+|["']+$/g, '')
+        .replace(/\.$/, '')
+        .trim();
+    case 'condicion_despacho': {
+      let v = value.toUpperCase()
+        .replace(/["'.,]/g, '')
+        .trim()
+        .replace(/^(A|EN)\s+/, '');
+      if (v.includes('NUEVO')) return 'NUEVO';
+      if (v.includes('USADO')) return 'USADO';
+      if (v.includes('TRAILER')) return 'TRAILER';
+      return v;
+    }
     case 'tipo_viaje':
       const tipoUpper = value.toUpperCase();
       if (tipoUpper.includes('NACIONAL')) return 'NACIONAL';
@@ -300,6 +347,320 @@ function normalizeValue(field, rawValue) {
     default:
       return value;
   }
+}
+
+/* ---------- Resolver lógica de búsqueda ---------- */
+const FieldResolver = {
+  vendedor: {
+    search: searchVendedores,
+    label: v => `${v.Nombre} (${v.Documento})`,
+    id: v => String(v.Documento),
+    codeField: 'Documento',
+    notFound: val => `Vendedor "${val}" no existe.`,
+    found: (v) => `Asignado vendedor: ${v.Nombre} (${v.Documento})`,
+    ambiguous: (val, list) => `Hay varios vendedores para "${val}". Por favor sé más específico o elige uno:\n` + list.slice(0, 8).map(v => `- ${v.Nombre} (${v.Documento})`).join('\n')
+  },
+  cliente_codigo: {
+    search: searchClientes,
+    label: c => `${c.cliente} (${c.codigo})`,
+    id: c => String(c.codigo),
+    codeField: 'codigo',
+    extraFill: (c) => ({ cliente_nombre: c.cliente }),
+    notFound: val => `Cliente "${val}" no existe.`,
+    found: (c) => `Asignado cliente: ${c.cliente} (${c.codigo})`,
+    ambiguous: (val, list) => {
+      const opciones = list.slice(0, 8).map(c => `- ${c.cliente} (${c.codigo})`).join('\n');
+      return `Hay varios clientes para "${val}". Elige uno escribiendo por código, por ejemplo "cliente 1644". Opciones:\n${opciones}`;
+    }
+  },
+  ciudad_facturacion: {
+    search: searchCiudades,
+    label: c => `${c.ciudad_codigodane} ${c.municipio_nombre} ${c.departamento_nombre}`,
+    id: c => String(c.ciudad_codigodane),
+    codeField: 'ciudad_codigodane',
+    notFound: val => `Ciudad "${val}" no existe en facturación.`,
+    found: (c) => `Asignada ciudad facturación: ${c.ciudad_codigodane} ${c.municipio_nombre} ${c.departamento_nombre}`,
+    ambiguous: (val, list) => `⚠️ Hay varias ciudades de facturación para "${val}". Te recomiendo usar el código DANE o ser más específico:\n` + list.slice(0, 8).map(c => `- ${c.ciudad_codigodane} ${c.municipio_nombre} ${c.departamento_nombre}`).join('\n')
+  },
+  // Nuevos resolvers para campos del Paso 2
+  producto: {
+    search: searchProductos,
+    label: p => p.name,
+    id: p => p.id,
+    codeField: 'id',
+    notFound: val => `Producto "${val}" no encontrado en catálogo.`,
+    found: (p) => `Asignado producto: ${p.name}`,
+    ambiguous: (val, list) => `Hay varios productos para "${val}":\n` + list.slice(0, 8).map(p => `- ${p.name}`).join('\n')
+  },
+  empaque: {
+    search: searchEmpaques,
+    label: e => e.name,
+    id: e => e.id,
+    codeField: 'id',
+    notFound: val => `Empaque "${val}" no encontrado.`,
+    found: (e) => `Asignado empaque: ${e.name}`,
+    ambiguous: (val, list) => `Hay varios empaques para "${val}":\n` + list.slice(0, 8).map(e => `- ${e.name}`).join('\n')
+  },
+  clase_vehiculo: {
+    search: searchClases,
+    label: c => c.name,
+    id: c => c.id,
+    codeField: 'id',
+    notFound: val => `Clase de vehículo "${val}" no encontrada.`,
+    found: (c) => `Asignada clase vehículo: ${c.name}`,
+    ambiguous: (val, list) => `Hay varias clases para "${val}":\n` + list.slice(0, 8).map(c => `- ${c.name}`).join('\n')
+  },
+  carroceria: {
+    search: searchCarrocerias,
+    label: c => c.name,
+    id: c => c.id,
+    codeField: 'id',
+    notFound: val => `Carrocería "${val}" no encontrada.`,
+    found: (c) => `Asignada carrocería: ${c.name}`,
+    ambiguous: (val, list) => `Hay varias carrocerías para "${val}":\n` + list.slice(0, 8).map(c => `- ${c.name}`).join('\n')
+  }
+};
+
+async function emitFill(field, value) {
+  // Normalización básica
+  const val = String(value || '').trim();
+  if (!val) return;
+
+  // Si el campo tiene un resolver definido (requiere búsqueda en BD)
+  if (FieldResolver[field]) {
+    const resolver = FieldResolver[field];
+    
+    // Si ya es un código numérico (y el campo lo admite como ID directo),
+    // intentamos validar que exista o lo asignamos directo si confiamos.
+    // La lógica anterior confiaba en IDs numéricos para Vendedor, pero para Cliente verificaba.
+    // Vamos a verificar SIEMPRE para dar feedback de "nombre real".
+    
+    try {
+      const { data } = await resolver.search(val);
+      
+      if (!data || data.length === 0) {
+        // No encontrado
+        chatBus.emit('assistant-message', resolver.notFound(val));
+        console.warn(`[FieldResolver] ${field}: "${val}" no encontrado.`);
+        return; // No rellenamos nada si no existe
+      }
+
+      // Buscar coincidencia exacta
+      let exactMatch = null;
+      
+      // 1. Coincidencia por ID/Código exacto
+      if (/^\d+$/.test(val)) {
+        exactMatch = data.find(item => String(resolver.id(item)) === val);
+      }
+      
+      // 2. Si no es numérico o no hubo match por código, buscar match exacto por nombre
+      if (!exactMatch) {
+          const upperVal = val.toUpperCase();
+          // Buscar si alguno de los resultados coincide EXACTAMENTE en nombre con lo buscado
+          // Para vendedor: Nombre
+          // Para cliente: cliente
+          // Para ciudad: municipio_nombre o ciudad_nombre
+          
+          exactMatch = data.find(item => {
+              if (item.Nombre && item.Nombre.toUpperCase() === upperVal) return true;
+              if (item.cliente && item.cliente.toUpperCase() === upperVal) return true;
+              if (item.municipio_nombre && item.municipio_nombre.toUpperCase() === upperVal) return true;
+              if (item.ciudad_nombre && item.ciudad_nombre.toUpperCase() === upperVal) return true;
+              return false;
+          });
+
+          // 3. Estrategia "Smart Match" para Ciudad Facturación y Vendedor (similar a Vendedor)
+          // Si no hay match exacto, pero el primer resultado "contiene" la búsqueda de forma muy evidente,
+          // lo asumimos como válido para evitar preguntar demasiado.
+          if (!exactMatch && (field === 'ciudad_facturacion' || field === 'vendedor' || field === 'cliente_codigo')) {
+             const first = data[0];
+             // Verificar si el primer resultado es muy relevante
+             let candidateName = '';
+             if (first.Nombre) candidateName = first.Nombre.toUpperCase();
+             else if (first.cliente) candidateName = first.cliente.toUpperCase();
+             else {
+                 // Para ciudades, revisar tanto municipio como ciudad_nombre
+                 const m = first.municipio_nombre ? first.municipio_nombre.toUpperCase() : '';
+                 const c = first.ciudad_nombre ? first.ciudad_nombre.toUpperCase() : '';
+                 candidateName = m;
+                 if (!candidateName.includes(upperVal) && c.includes(upperVal)) {
+                     candidateName = c;
+                 }
+             }
+             
+             // Si la búsqueda está contenida en el nombre del primer resultado, lo tomamos.
+             // Esto asume que el backend ya ordenó por relevancia (que sí lo hace).
+             if (candidateName.includes(upperVal)) {
+                 exactMatch = first;
+                 console.log(`[SmartMatch] Asumiendo match para ${field}: ${candidateName} (query: ${upperVal})`);
+             }
+          }
+      }
+      
+      if (exactMatch) {
+        chatBus.emit('fill-field', field, resolver.id(exactMatch));
+        if (resolver.extraFill) {
+            const extras = resolver.extraFill(exactMatch);
+            Object.entries(extras).forEach(([k, v]) => chatBus.emit('fill-field', k, v));
+        }
+        chatBus.emit('assistant-message', resolver.found(exactMatch));
+        return;
+      }
+
+      // Si no hubo exact match por código, evaluamos resultados de texto
+      if (data.length === 1) {
+        const item = data[0];
+        chatBus.emit('fill-field', field, resolver.id(item));
+        if (resolver.extraFill) {
+            const extras = resolver.extraFill(item);
+            Object.entries(extras).forEach(([k, v]) => chatBus.emit('fill-field', k, v));
+        }
+        chatBus.emit('assistant-message', resolver.found(item));
+      } else {
+        // Múltiples resultados
+        chatBus.emit('assistant-message', resolver.ambiguous(val, data));
+      }
+
+    } catch (err) {
+      console.error(`[FieldResolver] Error buscando ${field}:`, err);
+      chatBus.emit('assistant-message', `Error consultando datos para ${field}: "${val}"`);
+    }
+    return;
+  }
+
+  // Campos normales (texto libre, selects estáticos)
+  chatBus.emit('fill-field', field, value);
+  
+  // Feedback para campos importantes que no son de BD pero son clave
+  if (field === 'centro_costo_despacho') {
+      // Feedback visual opcional
+      // chatBus.emit('assistant-message', `Centro de costo establecido: ${value}`);
+  }
+}
+
+/* ---------- Heurística local: extraer campos del texto del usuario ---------- */
+async function extractFieldsFromText(rawText) {
+  if (!rawText) return;
+  const lower = String(rawText).toLowerCase();
+  const clean = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const emit = (field, rawVal) => {
+    const value = normalizeValue(field, rawVal);
+    // Usamos emitFill para aprovechar la validación
+    emitFill(field, value);
+    console.log('🧩 Autofill inmediato:', field, '=', value);
+  };
+
+  // tipo_viaje
+  if (clean.includes('nacional')) emit('tipo_viaje', 'NACIONAL');
+  if (clean.includes('internacional')) emit('tipo_viaje', 'INTERNACIONAL');
+  if (clean.includes('urbano')) emit('tipo_viaje', 'URBANO');
+
+  // moneda
+  if (/\b(usd|dolar|dolares|dollar)\b/.test(clean)) emit('moneda', 'DOLARES');
+  if (/\b(peso|cop)\b/.test(clean)) emit('moneda', 'PESOS');
+
+  // tipo_operacion
+  if (clean.includes('distribucion')) emit('tipo_operacion', 'DISTRIBUCION');
+  if (clean.includes('importacion')) emit('tipo_operacion', 'IMPORTACION');
+  if (clean.includes('exportacion')) emit('tipo_operacion', 'EXPORTACION');
+
+  // fuente_solicitud
+  if (clean.includes('pagina web') || clean.includes('web')) emit('fuente_solicitud', 'PAGINA WEB');
+  if (clean.includes('despachador')) emit('fuente_solicitud', 'TELEFONO DESPACHADOR');
+  if (clean.includes('atencion cliente')) emit('fuente_solicitud', 'TELEFONO ATENCION CLIENTE');
+  if (clean.includes('fax')) emit('fuente_solicitud', 'FAX');
+  if (clean.includes('mail') || clean.includes('correo')) emit('fuente_solicitud', 'MAIL');
+  if (clean.includes('sia')) emit('fuente_solicitud', 'SIA');
+
+  // condicion_despacho
+  const cdesp = clean.match(/condicion(?: de)? despacho\W+([a-z0-9\s._-]+)/);
+  if (cdesp) emit('condicion_despacho', cdesp[1].trim());
+  const cdespChange = clean.match(/(?:condicion(?: de)? despacho|condicion|despacho).*?(?:a|en)\s+([a-z0-9._-]+)/);
+  if (cdespChange) emit('condicion_despacho', cdespChange[1].trim());
+  if ((clean.includes('condicion') || clean.includes('despacho')) && clean.includes('nuevo')) emit('condicion_despacho', 'NUEVO');
+  if ((clean.includes('condicion') || clean.includes('despacho')) && clean.includes('usado')) emit('condicion_despacho', 'USADO');
+
+  // condicion_facturacion
+  const cfact = clean.match(/condicion(?: de)? facturacion\W+([a-z0-9\s._-]+)/);
+  if (cfact) emit('condicion_facturacion', cfact[1].trim());
+
+  // centro_costo_despacho
+  const ccosto = clean.match(/centro(?: de)? costos?(?: despacho)?\W+([a-z0-9\s._-]+)/);
+  if (ccosto) {
+      emit('centro_costo_despacho', ccosto[1].trim());
+  } else {
+    if (clean.includes('conalca bogota')) emit('centro_costo_despacho', 'CONALCA BOGOTA');
+    if (clean.includes('conalca cali')) emit('centro_costo_despacho', 'CONALCA CALI');
+    if (clean.includes('conalca medellin')) emit('centro_costo_despacho', 'CONALCA MEDELLIN');
+  }
+
+  // vendedor (número tras la palabra vendedor o nombre)
+  const vendCode = clean.match(/(?:vendedor|vendor|comercial|asesor)[^0-9]*([0-9]{4,})/);
+  if (vendCode) {
+      emit('vendedor', vendCode[1]);
+  } else {
+    const vendName = String(rawText).match(/(?:vendedor|vendor|comercial|asesor)\W+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+)$/);
+    if (vendName && vendName[1].trim().length >= 2) {
+        emit('vendedor', vendName[1].trim());
+    }
+  }
+
+  // cliente_codigo
+  const cliCode = clean.match(/(codigo(?: del)? cliente|cliente(?:\s*codigo)?)\W*([0-9]{3,})/);
+  if (cliCode) {
+      emit('cliente_codigo', cliCode[2]);
+  } else {
+    const cliName = String(rawText).match(/cliente\W+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s0-9]+)$/);
+    // Permitimos números en nombre de cliente (e.g. "Cliente 123")
+    if (cliName && cliName[1].trim().length >= 2) {
+        // Evitamos capturar "cliente codigo 123" si ya lo capturó el regex de arriba
+        if (!cliCode) {
+             emit('cliente_codigo', cliName[1].trim());
+        }
+    }
+  }
+
+  // ciudad_facturacion
+  // 1. Intentar capturar código DANE al inicio o explícito (ej. "ciudad 05001000")
+  const cfCode = clean.match(/(?:ciudad(?: de)? facturacion|ciudad|facturar en)\W*([0-9]{5,})/);
+  if (cfCode) {
+      emit('ciudad_facturacion', cfCode[1]);
+  } else {
+    // 2. Si no hay código, capturar nombre.
+    // OJO: "ciudad medellin" o "ciudad de facturacion medellin"
+    const cfName = clean.match(/(?:ciudad(?: de)? facturacion|ciudad|facturar en)\W+([a-z\u00C0-\u017F\s]+)/);
+    if (cfName && cfName[1].trim().length >= 3) {
+        // Evitar capturar palabras reservadas o comandos como si fueran ciudades
+        const val = cfName[1].trim();
+        const reserved = ['de', 'facturacion', 'origen', 'destino', 'cliente', 'vendedor', 'a', 'en', 'el', 'la'];
+        // Solo emitir si no es una palabra reservada y no parece ser parte de otra instrucción
+        if (!reserved.includes(val) && !val.startsWith('condicion')) {
+             emit('ciudad_facturacion', val);
+        }
+    }
+  }
+
+  // origen/destino por frase “de X a Y” / “desde X hacia Y”
+  const route = clean.match(/\b(desde|de)\s+([a-z\s]+?)\s+(hacia|a)\s+([a-z\s]+)/);
+  if (route) {
+    emit('origen', route[2].trim());
+    emit('destino', route[4].trim());
+  }
+
+  // origen/destino por etiquetas directas
+  const org = clean.match(/origen\W+([a-z\s]+)/);
+  if (org) emit('origen', org[1].trim());
+  const dst = clean.match(/destino\W+([a-z\s]+)/);
+  if (dst) emit('destino', dst[1].trim());
+
+  // peso
+  const peso = clean.match(/(\d+(?:[.,]\d+)?)\s*(kg|kilos?)/);
+  if (peso) emit('peso', peso[1]);
+
+  // cantidad_mercancia
+  const qty = clean.match(/cantidad\W*([0-9]+)/);
+  if (qty) emit('cantidad_mercancia', qty[1]);
 }
 
 /* ---------- Funciones de búsqueda ---------- */
@@ -453,9 +814,16 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 const SYSTEM_PROMPT = `
 Eres un asistente de cotización de transporte. Tu ÚNICA tarea es detectar información en los mensajes del usuario y llamar a la función "rellenar" para cada campo que identifiques.
 
+**IMPORTANTE: CAPACIDAD DE EDICIÓN Y CORRECCIÓN**
+El usuario puede proporcionar datos nuevos O corregir datos ya ingresados.
+- Si el usuario dice "cambia el peso a 600", llama a rellenar("peso", "600").
+- Si dice "el cliente no es ese, es Transportes X", llama a rellenar("cliente_codigo", "Transportes X").
+- Siempre prioriza la última instrucción del usuario.
+- Si detectas múltiples campos en una frase, llama a "rellenar" para cada uno.
+
 NUNCA expliques qué campos necesitas. NUNCA des ejemplos. NUNCA des información detallada.
 
-SIEMPRE usa la función "rellenar" cuando detectes datos. Después de rellenar todos los campos posibles, da una respuesta corta confirmando lo que llenaste.
+SIEMPRE usa la función "rellenar" cuando detectes datos. Después de rellenar, confirma brevemente (ej: "He actualizado el peso a 600kg").
 
 **COMANDO ESPECIAL - LLENADO COMPLETO:**
 Si el usuario dice "llena todo con ejemplos", "completa el formulario con datos de ejemplo", "llena todos los campos", o similar, debes llamar a la función "rellenar" para TODOS estos campos con valores de ejemplo:
@@ -545,6 +913,11 @@ export default function ChatBox() {
     setMsgs(prev => [...prev, m]);
   };
 
+  useEffect(() => {
+    const say = msg => pushMsg({ role: 'assistant', content: String(msg || '') });
+    chatBus.on('assistant-message', say);
+    return () => chatBus.off('assistant-message', say);
+  }, []);
   // Auto-scroll cuando hay nuevos mensajes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -714,8 +1087,9 @@ export default function ChatBox() {
   // };
 
   // resources/js/components/SolicitudWizard/ChatBox.jsx
+  // Función que usa Backend API para evitar CORS
   const runChat = async (history) => {
-    console.log('🚀 runChat iniciado');
+    console.log('🚀 runChat iniciado (vía Backend API)');
     console.log('📜 Historia recibida:', history.length, 'mensajes');
     
     let workHistory = [
@@ -723,100 +1097,91 @@ export default function ChatBox() {
       ...history
     ];
 
-    console.log('📤 Enviando a OpenAI API...');
-    console.log('🔑 API Key presente:', !!import.meta.env.VITE_OPENAI_API_KEY);
+    console.log('📤 Enviando al Backend API...');
 
     const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
     const isCompleteFormRequest = /\b(llena todo|completa el formulario|llena.*ejemplo|llena.*campos|formulario.*ejemplo|datos.*ejemplo|llena.*completo)\b/.test(lastUserMessage);
     const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina)\b/.test(lastUserMessage);
-    const functionCallSetting = (isCompleteFormRequest || containsData) ? { name: 'rellenar' } : 'auto';
+    const functionCallSetting = (isCompleteFormRequest || containsData) ? 'rellenar' : 'auto';
     console.log('🎯 Function call setting:', functionCallSetting, 'for message:', lastUserMessage);
     console.log('🔄 Complete form request:', isCompleteFormRequest, '| Contains data:', containsData);
 
-    let response = await openai.chat.completions.create({
-      model        : 'gpt-4o-mini',
-      messages     : workHistory,
-      functions    : FUNCTIONS,
-      function_call: functionCallSetting
+    // Llamar al backend API en lugar de OpenAI directamente
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    const apiResponse = await fetch(`${API_BASE_URL}/simple`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+      },
+      body: JSON.stringify({
+        messages: workHistory.map(m => ({
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+        }))
+      })
     });
 
-    console.log('📥 Respuesta de OpenAI:', response);
+    const data = await apiResponse.json();
+    console.log('📥 Respuesta del Backend:', data);
 
-    while (response.choices?.[0]?.message?.function_call) {
-      const assistantMsg = response.choices[0].message;
-      workHistory.push(assistantMsg);
-
-      const call = assistantMsg.function_call;
-      try {
-        const args     = JSON.parse(call.arguments || '{}');
-        const fieldRaw = args.field;
-        const valueRaw = String(args.value ?? '');
-
-        const rawOriginal = String(fieldRaw ?? '');
-        const rawLower    = rawOriginal.toLowerCase();
-        const rawClean    = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-        let field = normalizeKey(fieldRaw);
-        let value = normalizeValue(field, valueRaw);
-
-        const MODALITY_VALUES = ['OTM', 'DTA', 'DTAI', 'NACIONALIZADA'];
-        const ACC_VALUES      = ['MOTORIZADO', 'VEHICULAR', 'CABINA'];
-
-        if (field === 'tipo_carga' && MODALITY_VALUES.includes(value.toUpperCase())) {
-          field = 'modalidad_internacional';
-        }
-
-        if (field === 'tipo_carga' && ACC_VALUES.includes(value.toUpperCase())) {
-          field = 'tipo_vehiculo_acom';
-        }
-
-        const activeStep = currentStepRef.current;
-        const wantsStep6 = activeStep === 6 || rawClean.includes('acompanamiento');
-        if (wantsStep6) {
-          if (['cargue_cuenta_de', 'descargue_cuenta_de', 'seguro_cuenta_de'].includes(field)) {
-            field = 'acompanamiento_cuenta_acom';
-          }
-          if (['valor_mercancia', 'tarifa_cliente'].includes(field)) {
-            field = 'valor_acompanante_acom';
-          }
-          if (['tipo_carga', 'tipo_remesa_rndc'].includes(field) || ACC_VALUES.includes(value.toUpperCase())) {
-            field = 'tipo_vehiculo_acom';
-          }
-        }
-
-        if (rawClean.includes('acompanamientocuent') && field !== 'acompanamiento_cuenta_acom') {
-          field = 'acompanamiento_cuenta_acom';
-        }
-        if (rawClean.includes('acompanamientoval') && field !== 'valor_acompanante_acom') {
-          field = 'valor_acompanante_acom';
-        }
-
-        chatBus.emit('fill-field', field, value);
-
-        workHistory.push({
-          role   : 'function',
-          name   : call.name,
-          content: JSON.stringify({ field, value })
-        });
-      } catch (err) {
-        console.error('Error parseando argumentos de function_call', err);
-        workHistory.push({
-          role   : 'function',
-          name   : call?.name || 'rellenar',
-          content: 'error'
-        });
-      }
-
-      response = await openai.chat.completions.create({
-        model        : 'gpt-4o-mini',
-        messages     : workHistory,
-        functions    : FUNCTIONS,
-        function_call: 'auto'
-      });
+    if (!data.success) {
+      throw new Error(data.error || 'Error del servidor');
     }
 
-    const finalMsg = response.choices?.[0]?.message;
-    if (finalMsg) pushMsg(finalMsg);
+    // Procesar respuesta del asistente
+    const assistantMessage = data.message;
+    
+    // Detectar si la respuesta contiene datos para rellenar campos
+    if (assistantMessage?.content) {
+      // Intentar extraer datos estructurados de la respuesta
+      const content = assistantMessage.content;
+      
+      // Buscar patrones de campos en la respuesta
+      const fieldPatterns = [
+        { pattern: /tipo de viaje[:\s]+([^\n]+)/i, field: 'tipo_viaje' },
+        { pattern: /moneda[:\s]+([^\n]+)/i, field: 'moneda' },
+        { pattern: /tipo de operaci[oó]n[:\s]+([^\n]+)/i, field: 'tipo_operacion' },
+        { pattern: /fuente(?: de la solicitud)?[:\s]+([^\n]+)/i, field: 'fuente_solicitud' },
+        { pattern: /centro(?: de)? costo(?: despacho)?[:\s]+([^\n]+)/i, field: 'centro_costo_despacho' },
+        { pattern: /condici[oó]n(?: de)? despacho[:\s]+([^\n]+)/i, field: 'condicion_despacho' },
+        { pattern: /condici[oó]n(?: de)? facturaci[oó]n[:\s]+([^\n]+)/i, field: 'condicion_facturacion' },
+        { pattern: /vendedor[:\s]+([^,\n]+)/i, field: 'vendedor' },
+        { pattern: /c[oó]digo(?: del)? cliente[:\s]+([^,\n]+)/i, field: 'cliente_codigo' },
+        { pattern: /ciudad de facturaci[oó]n[:\s]+([^,\n]+)/i, field: 'ciudad_facturacion' },
+        { pattern: /ciudad origen[:\s]+([^,\n]+)/i, field: 'origen' },
+        { pattern: /ciudad destino[:\s]+([^,\n]+)/i, field: 'destino' },
+        { pattern: /origen[:\s]+([^,\n]+)/i, field: 'origen' },
+        { pattern: /destino[:\s]+([^,\n]+)/i, field: 'destino' },
+        { pattern: /peso[:\s]+([\d.,]+)/i, field: 'peso' },
+        { pattern: /cantidad[:\s]+(\d+)/i, field: 'cantidad_mercancia' },
+      ];
+
+      for (const { pattern, field } of fieldPatterns) {
+        const match = content.match(pattern);
+        if (match) {
+          const raw = match[1].trim();
+          const value = normalizeValue(field, raw);
+          console.log(`🔧 Detectado campo: ${field} = ${value}`);
+          await emitFill(field, value);
+        }
+      }
+
+      const fn = /rellenar\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*\)/gi;
+      let m;
+      while ((m = fn.exec(content))) {
+        const field = normalizeKey(m[1]);
+        const value = normalizeValue(field, m[2]);
+        await emitFill(field, value);
+      }
+    }
+
+    // Mostrar mensaje del asistente
+    if (assistantMessage) {
+      pushMsg(assistantMessage);
+    }
   };
 
   // Función REFACTORIZADA para enviar mensajes
@@ -835,6 +1200,8 @@ export default function ChatBox() {
     const userMsg = { role: 'user', content: text };
     console.log('✅ Agregando mensaje del usuario:', userMsg);
     pushMsg(userMsg);
+    
+    try { await extractFieldsFromText(text); } catch (e) {}
     
     // Limpiar input inmediatamente
     setUserInput('');

@@ -345,11 +345,72 @@ class ChatController extends Controller
             // Ejecutar el asistente
             $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
             if (!$run || !isset($run['id'])) {
-                // Si OpenAI falla, implementar fallback
-                Log::warning('OpenAI assistant falló, implementando fallback', [
+                // Si OpenAI Assistants falla, usar Chat Completions como fallback
+                Log::warning('OpenAI assistant falló, usando Chat Completions como fallback', [
                     'client_id' => $request->client_id,
                     'thread_id' => $threadId
                 ]);
+                
+                // Fallback: usar Chat Completions API directamente
+                $fallbackResponse = $this->chatCompletionsFallback($request->message, $request->type_business);
+                
+                if ($fallbackResponse) {
+                    // Procesar respuesta estructurada si es JSON
+                    $assistantContent = $fallbackResponse;
+                    $quoteData = null;
+                    
+                    if (is_array($fallbackResponse)) {
+                        // Extraer SOLO el campo respuesta y limpiar cualquier comando técnico
+                        $rawResponse = $fallbackResponse['respuesta'] ?? json_encode($fallbackResponse);
+                        
+                        // Limpiar comandos técnicos del mensaje
+                        $assistantContent = $this->cleanTechnicalCommands($rawResponse);
+                        
+                        // Si quedó vacío después de limpiar, usar mensaje genérico
+                        if (empty(trim($assistantContent))) {
+                            $assistantContent = 'He registrado tu información. ¿Qué más necesitas agregar?';
+                        }
+                        
+                        $quoteData = $fallbackResponse['datos_extraidos'] ?? null;
+                        
+                        Log::info('Datos extraídos del fallback', [
+                            'respuesta_original' => $rawResponse,
+                            'respuesta_limpia' => $assistantContent,
+                            'quote_data' => $quoteData,
+                            'cotizacion_completa' => $fallbackResponse['cotizacion_completa'] ?? false
+                        ]);
+                    }
+                    
+                    $responseData = [
+                        'thread_id' => $threadId,
+                        'run_id' => null, // No run_id para evitar polling
+                        'user_message' => $userMessage,
+                        'messages' => [
+                            [
+                                'role' => 'user',
+                                'content' => $request->message,
+                                'created_at' => now()->toIso8601String()
+                            ],
+                            [
+                                'role' => 'assistant', 
+                                'content' => $assistantContent,
+                                'created_at' => now()->toIso8601String()
+                            ]
+                        ],
+                        'status' => 'completed', // Marcar como completado
+                        'fallback_mode' => true
+                    ];
+                    
+                    // Agregar datos de cotización si se extrajeron
+                    if ($quoteData) {
+                        $responseData['quote_data'] = $quoteData;
+                    }
+                    
+                    return response()->json([
+                        'success' => true,
+                        'data' => $responseData
+                    ]);
+                }
                 
                 return response()->json([
                     'success' => false,
@@ -442,6 +503,30 @@ class ChatController extends Controller
                 'thread_id' => $threadId,
                 'run_id' => $runId
             ]);
+
+            // Si es un run de fallback (Chat Completions), marcarlo como completado inmediatamente
+            if (str_starts_with($runId, 'fallback_')) {
+                Log::info('Run de fallback detectado, marcando como completado', [
+                    'run_id' => $runId
+                ]);
+                
+                // Limpiar run activo del cliente
+                $client = \App\Models\Client::where('openai_current_run', $runId)->first();
+                if ($client) {
+                    $client->openai_current_run = null;
+                    $client->save();
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'thread_id' => $threadId,
+                        'run_id' => $runId,
+                        'status' => 'completed',
+                        'fallback_mode' => true
+                    ]
+                ]);
+            }
 
             $runData = QuoteAssistantService::checkRunStatus($threadId, $runId);
             
@@ -565,5 +650,165 @@ class ChatController extends Controller
                 'error' => 'Error interno del servidor'
             ], 500);
         }
+    }
+
+    /**
+     * Fallback usando Chat Completions API cuando Assistants falla
+     * Ahora extrae datos estructurados del mensaje
+     */
+    private function chatCompletionsFallback($userMessage, $typeBusiness)
+    {
+        try {
+            $systemPrompt = $this->getSystemPromptForBusiness($typeBusiness);
+            
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . config('services.openai.api_key'),
+                'Content-Type' => 'application/json',
+            ])->timeout(30)->post('https://api.openai.com/v1/chat/completions', [
+                'model' => 'gpt-4o-mini',
+                'messages' => [
+                    ['role' => 'system', 'content' => $systemPrompt],
+                    ['role' => 'user', 'content' => $userMessage]
+                ],
+                'max_tokens' => 1500,
+                'temperature' => 0.3,
+                'response_format' => ['type' => 'json_object']
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                Log::info('Chat Completions fallback exitoso', [
+                    'usage' => $data['usage'] ?? null
+                ]);
+                
+                $content = $data['choices'][0]['message']['content'] ?? null;
+                
+                // Intentar parsear JSON si es respuesta estructurada
+                if ($content) {
+                    try {
+                        $jsonData = json_decode($content, true);
+                        if (json_last_error() === JSON_ERROR_NONE && isset($jsonData['respuesta'])) {
+                            return $jsonData;
+                        }
+                    } catch (\Exception $e) {
+                        // Si no es JSON válido, devolver como texto
+                    }
+                }
+                
+                return $content;
+            }
+            
+            Log::error('Chat Completions fallback falló', [
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+            return null;
+            
+        } catch (\Exception $e) {
+            Log::error('Error en Chat Completions fallback', [
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Limpia comandos técnicos del texto del asistente
+     */
+    private function cleanTechnicalCommands($text)
+    {
+        if (empty($text)) {
+            return '';
+        }
+
+        // Dividir en líneas y filtrar agresivamente
+        $lines = explode("\n", $text);
+        $cleanedLines = array_filter($lines, function($line) {
+            $lineLower = strtolower($line);
+            
+            // Eliminar líneas que contengan comandos o sintaxis técnica
+            if (strpos($lineLower, 'rellenar') !== false) return false;
+            if (strpos($lineLower, 'update(') !== false) return false;
+            if (strpos($lineLower, 'set(') !== false) return false;
+            if (preg_match('/\w+\([\'"]/', $line)) return false; // función con string
+            if (preg_match('/["\'][\w_]+["\']\s*,\s*["\']/', $line)) return false; // patrón "campo", "valor"
+            
+            return true;
+        });
+
+        $cleaned = implode("\n", $cleanedLines);
+        $cleaned = preg_replace('/\n{3,}/', "\n\n", $cleaned);
+        
+        return trim($cleaned);
+    }
+
+    /**
+     * Obtiene el prompt del sistema según el tipo de negocio
+     * Con instrucciones para devolver JSON estructurado
+     */
+    private function getSystemPromptForBusiness($typeBusiness)
+    {
+        $basePrompt = <<<PROMPT
+Eres Andrea, asistente virtual de CONALCA. Hablas de forma natural y profesional.
+
+Tu ÚNICA tarea es extraer datos y responder de forma amigable en JSON:
+
+{
+  "respuesta": "Mensaje amigable para el usuario (SOLO TEXTO CONVERSACIONAL)",
+  "datos_extraidos": {
+    "ciudad_origen": "ciudad o null",
+    "ciudad_destino": "ciudad o null",
+    "peso_mercancia": "número o null",
+    "cantidad": "número o null",
+    "tipo_embalaje": "texto o null",
+    "tipo_producto": "texto o null",
+    "vehiculo_requerido": "texto o null",
+    "valor_declarado": "número o null",
+    "tipo_viaje": "NACIONAL|URBANO|INTERNACIONAL o null",
+    "tipo_operacion": "DISTRIBUCION|EXPORTACION|IMPORTACION o null",
+    "tipo_modalidad": "dta|otm|nacionalizado o null",
+    "tipo_carga": "refrigerado|general|extradimensional|dangerous|otro o null"
+  },
+  "cotizacion_completa": true/false
+}
+
+REGLAS ESTRICTAS PARA "respuesta":
+1. NUNCA escribas código o comandos
+2. NUNCA uses palabras: rellenar, set, update, execute
+3. NUNCA uses paréntesis () para funciones
+4. NUNCA menciones nombres técnicos de campos
+5. SOLO conversación natural en español
+
+EJEMPLOS CORRECTOS de "respuesta":
+- "Perfecto, tengo tu viaje de Bogotá a Medellín con 500kg de alimentos"
+- "Entendido, ¿cuál es el peso de tu carga?"
+- "Genial, solo me falta saber el tipo de embalaje"
+
+EJEMPLOS INCORRECTOS (PROHIBIDO):
+- "rellenar('ciudad', 'Bogotá')" ❌
+- "He actualizado el campo origen" ❌
+- "Ejecutando set(tipo_viaje, NACIONAL)" ❌
+
+Si extraes datos, NO los menciones en "respuesta". El formulario se llena automáticamente.
+Ejemplo: Si extraes ciudad_origen="Bogotá", di "Perfecto, ¿cuál es el destino?" (no "He guardado Bogotá como origen")
+
+VALORES PERMITIDOS:
+- tipo_viaje: NACIONAL, URBANO, INTERNACIONAL (mayúsculas)
+- tipo_operacion: DISTRIBUCION, EXPORTACION, IMPORTACION (sin tildes, mayúsculas)
+- tipo_modalidad: dta, otm, nacionalizado (minúsculas)
+- tipo_carga: refrigerado, general, extradimensional, dangerous, otro (minúsculas)
+
+Mínimos para cotización: origen, destino, peso, producto.
+PROMPT;
+
+        $businessSpecific = match($typeBusiness) {
+            'dta', 'otm' => "\nModalidad: DTA/OTM.",
+            'refri' => "\nModalidad: Refrigerado.",
+            'impo', 'expo' => "\nModalidad: Importación/Exportación.",
+            'distri' => "\nModalidad: Distribución urbana.",
+            default => ""
+        };
+
+        return $basePrompt . $businessSpecific;
     }
 }

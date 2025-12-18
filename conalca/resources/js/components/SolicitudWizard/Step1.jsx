@@ -143,8 +143,7 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
     const fill = async (field, value) => {
       console.log('📝 Step1 recibió fill-field:', field, '=', value);
       
-      // Si es vendedor y solo viene el código, buscar el label automáticamente
-      if (field === 'vendedor' && value && !form.vendedor_label) {
+      if (field === 'vendedor' && value) {
         try {
           const label = await fetchSellerLabel(value);
           setForm(prev => ({ 
@@ -157,8 +156,14 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
           setForm(prev => ({ ...prev, [field]: value }));
         }
       }
-      // Si es ciudad y solo viene el código, buscar el label automáticamente  
-      else if (field === 'ciudad_facturacion' && value && !form.ciudad_facturacion_label) {
+      else if (field === 'ciudad_facturacion' && value) {
+        // Mismo patrón de limpieza temporal para forzar render visual inmediato
+        setForm(prev => ({ 
+            ...prev, 
+            [field]: value,
+            ciudad_facturacion_label: '' 
+        }));
+
         try {
           const label = await fetchCityLabel(value);
           setForm(prev => ({ 
@@ -171,17 +176,25 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
           setForm(prev => ({ ...prev, [field]: value }));
         }
       }
-      // Si es cliente y solo viene el código, buscar el label automáticamente
-      else if (field === 'cliente_codigo' && value && !form.cliente_nombre) {
+      else if (field === 'cliente_codigo' && value) {
+        // Al recibir un código, limpiamos temporalmente el nombre para forzar la actualización visual
+        // y luego buscamos el label correcto.
+        setForm(prev => ({ 
+           ...prev, 
+           [field]: value,
+           cliente_nombre: '' // Limpiar nombre temporalmente
+        }));
+
         try {
           const label = await fetchClientLabel(value);
           setForm(prev => ({ 
             ...prev, 
-            [field]: value,
+            [field]: value, // Asegurar que el código se mantiene
             cliente_nombre: label 
           }));
         } catch (error) {
           console.error('Error buscando label para cliente:', error);
+          // Si falla, al menos dejamos el código
           setForm(prev => ({ ...prev, [field]: value }));
         }
       }
@@ -196,7 +209,8 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
 
   const change = e => {
     const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
+    const nextValue = name === 'centro_costo_despacho' ? String(value).toUpperCase() : value;
+    setForm({ ...form, [name]: nextValue });
     
     // Manejar cambio de tipo de operación
     if (name === 'tipo_operacion') {
@@ -237,9 +251,7 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
       const { data } = await searchCiudades(code);
       const found = data.find(c => String(c.ciudad_codigodane) === String(code));
       return found
-        ? `${found.ciudad_codigodane} – ${found.ciudad_nombre}${
-            found.municipio_nombre ? ` – ${found.municipio_nombre}` : ''
-          }`
+        ? `${found.ciudad_codigodane} – ${found.municipio_nombre} – ${found.departamento_nombre}`
         : '';
     } catch {
       return '';
@@ -287,10 +299,25 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
 
   /* si hay cliente sin label → buscamos el nombre */
   useEffect(() => {
-    if (form.cliente_codigo && !form.cliente_nombre) {
-      fetchClientLabel(form.cliente_codigo).then(name => {
-        if (name) setForm(p => ({ ...p, cliente_nombre: name }));
-      });
+    const codeVal = String(form.cliente_codigo || '').trim();
+    // Si hay código pero no nombre o nombre es solo numérico (posiblemente un id residual)
+    // OJO: Queremos refrescar SIEMPRE si el nombre no cuadra con el código, 
+    // pero para evitar loops infinitos, confiamos en fetchClientLabel.
+    // Para reforzar updates desde chat, si el nombre actual NO contiene el código entre paréntesis, forzamos refetch.
+    
+    if (codeVal) {
+        const nameVal = String(form.cliente_nombre || '');
+        // Patrón esperado: "NOMBRE CLIENTE (CODIGO)"
+        // Si no cumple patrón o es vacío, buscamos.
+        const hasCorrectFormat = nameVal.includes(`(${codeVal})`);
+        
+        if (!nameVal || !hasCorrectFormat) {
+             fetchClientLabel(codeVal).then(name => {
+                if (name && name !== form.cliente_nombre) {
+                    setForm(p => ({ ...p, cliente_nombre: name }));
+                }
+            });
+        }
     }
   }, [form.cliente_codigo, form.cliente_nombre]);
 
@@ -513,9 +540,7 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
             load={searchCiudades}
             getOpt={c => ({
               value : c.ciudad_codigodane,
-              label : `${c.ciudad_codigodane} – ${c.ciudad_nombre}${
-                c.municipio_nombre ? ` – ${c.municipio_nombre}` : ''
-              }`
+              label : `${c.ciudad_codigodane} – ${c.municipio_nombre} – ${c.departamento_nombre}`
             })}
             value={
               form.ciudad_facturacion

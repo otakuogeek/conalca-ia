@@ -15,7 +15,15 @@ const EditRoutesModal = ({
   setQuoteData,
   clientData
 }) => {
-  const [localRoutes, setLocalRoutes] = useState(quoteData || []);
+  const [localRoutes, setLocalRoutes] = useState([]);
+
+  // Sync localRoutes with quoteData whenever quoteData changes
+  useEffect(() => {
+    if (quoteData && quoteData.length > 0) {
+      setLocalRoutes(quoteData);
+    }
+  }, [quoteData]);
+
   const [cities, setCities] = useState([]);
   const [packings, setPackings] = useState([]);
   const [products, setProducts] = useState([]);
@@ -88,14 +96,26 @@ const EditRoutesModal = ({
   // Helpers to preselect if route has code or name
   const resolveCityCode = (routeValue) => {
     if (!routeValue) return '';
-    const byCode = cities.find(c => String(c.ciudad_codigo) === String(routeValue));
-    if (byCode) return byCode.ciudad_codigo;
-
-    const byName = cities.find(c => {
-      const name = c.ciudad_nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+    const valStr = String(routeValue).trim();
+    const byCode = cities.find(c => {
+      const code = String(c.ciudad_codigodane || c.ciudad_codigo || '').trim();
+      return code && code === valStr;
     });
-    return byName ? byName.ciudad_codigo : '';
+    if (byCode) return String(byCode.ciudad_codigodane || byCode.ciudad_codigo);
+
+    const lower = valStr.toLowerCase();
+    const byExactName = cities.find(c => {
+      const name = (c.municipio_nombre || c.ciudad_nombre || '').toString().toLowerCase().trim();
+      return name && name === lower;
+    });
+    if (byExactName) return String(byExactName.ciudad_codigodane || byExactName.ciudad_codigo);
+
+    // startsWith/contains fallback
+    const byContains = cities.find(c => {
+      const name = (c.municipio_nombre || c.ciudad_nombre || '').toString().toLowerCase();
+      return name.includes(lower);
+    });
+    return byContains ? String(byContains.ciudad_codigodane || byContains.ciudad_codigo) : '';
   };
 
   const resolvePackingCode = (routeValue) => {
@@ -178,8 +198,8 @@ const EditRoutesModal = ({
 
   // Options for react-select
   const citiesOptions = cities.map(c => ({
-    value: c.ciudad_codigo,
-    label: `${c.ciudad_nombre} - ${c.departamento_nombre}`,
+    value: String(c.ciudad_codigodane || c.ciudad_codigo || ''),
+    label: `${(c.municipio_nombre || c.ciudad_nombre || '').toUpperCase()} - ${(c.departamento_nombre || c.departamento || '').toUpperCase()}`,
   }));
 
   const packingOptions = packings.map(p => ({
@@ -198,7 +218,9 @@ const EditRoutesModal = ({
       {
         id: null,
         ciudad_origen: '',
+        codigo_dane_origen: '',
         ciudad_destino: '',
+        codigo_dane_destino: '',
         peso_mercancia: '',
         cantidad: '',
         tipo_embajale: '',
@@ -217,10 +239,10 @@ const EditRoutesModal = ({
     <Modal onClose={onClose} size="large">
       <div className="p-6">
         <h3 className="text-lg font-semibold mb-4">
-          Edit Routes for {clientData?.clientName || 'Client'}
+          Editar Rutas para {clientData?.clientName || 'Cliente'}
         </h3>
 
-        {loading && <p className="text-sm text-gray-500">Loading routes...</p>}
+        {loading && <p className="text-sm text-gray-500">Cargando rutas...</p>}
         {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
 
         {!loading && (
@@ -234,49 +256,51 @@ const EditRoutesModal = ({
               return (
                 <div key={index} className="border p-4 rounded-lg bg-gray-50 relative">
                   <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-semibold">Route #{index + 1}</h4>
+                    <h4 className="font-semibold">Ruta #{index + 1}</h4>
                     {localRoutes.length > 1 && (
                       <button
                         className="text-xs text-red-500 underline"
                         onClick={() => removeRoute(index)}
                       >
-                        Remove
+                        Eliminar
                       </button>
                     )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    {/* Origen */}
-                    <div>
-                      <label className="text-xs uppercase text-gray-500">Ciudad Origen</label>
-                      <Select
-                        classNamePrefix="rs"
-                        placeholder="Seleccione origen"
-                        options={citiesOptions}
-                        value={citiesOptions.find(o => String(o.value) === String(selectedOriginCode)) || null}
-                        onChange={(opt) => {
-                          const city = cities.find(c => String(c.ciudad_codigo) === String(opt?.value));
-                          handleChange(index, 'ciudad_origen', city ? city.ciudad_nombre : '');
-                        }}
-                        isClearable
-                      />
-                    </div>
+                {/* Origen */}
+                <div>
+                  <label className="text-xs uppercase text-gray-500">Ciudad Origen</label>
+                  <Select
+                    classNamePrefix="rs"
+                    placeholder="Seleccione origen"
+                    options={citiesOptions}
+                    value={citiesOptions.find(o => String(o.value) === String(resolveCityCode(route.codigo_dane_origen || route.ciudad_origen))) || null}
+                    onChange={(opt) => {
+                      const city = cities.find(c => String(c.ciudad_codigodane || c.ciudad_codigo) === String(opt?.value));
+                      handleChange(index, 'ciudad_origen', city ? (city.municipio_nombre || city.ciudad_nombre) : '');
+                      handleChange(index, 'codigo_dane_origen', city ? String(city.ciudad_codigodane || city.ciudad_codigo) : '');
+                    }}
+                    isClearable
+                  />
+                </div>
 
-                    {/* Destino */}
-                    <div>
-                      <label className="text-xs uppercase text-gray-500">Ciudad Destino</label>
-                      <Select
-                        classNamePrefix="rs"
-                        placeholder="Seleccione destino"
-                        options={citiesOptions}
-                        value={citiesOptions.find(o => String(o.value) === String(selectedDestinationCode)) || null}
-                        onChange={(opt) => {
-                          const city = cities.find(c => String(c.ciudad_codigo) === String(opt?.value));
-                          handleChange(index, 'ciudad_destino', city ? city.ciudad_nombre : '');
-                        }}
-                        isClearable
-                      />
-                    </div>
+                {/* Destino */}
+                <div>
+                  <label className="text-xs uppercase text-gray-500">Ciudad Destino</label>
+                  <Select
+                    classNamePrefix="rs"
+                    placeholder="Seleccione destino"
+                    options={citiesOptions}
+                    value={citiesOptions.find(o => String(o.value) === String(resolveCityCode(route.codigo_dane_destino || route.ciudad_destino))) || null}
+                    onChange={(opt) => {
+                      const city = cities.find(c => String(c.ciudad_codigodane || c.ciudad_codigo) === String(opt?.value));
+                      handleChange(index, 'ciudad_destino', city ? (city.municipio_nombre || city.ciudad_nombre) : '');
+                      handleChange(index, 'codigo_dane_destino', city ? String(city.ciudad_codigodane || city.ciudad_codigo) : '');
+                    }}
+                    isClearable
+                  />
+                </div>
 
                     {/* Tipo Embalaje (Packing) */}
                     <div>
@@ -356,7 +380,7 @@ const EditRoutesModal = ({
             onClick={addRoute}
             className="px-3 py-2 bg-gray-100 border rounded text-sm"
           >
-            + Add Route
+            + Agregar Ruta
           </button>
 
           <div className="space-x-2">
@@ -365,14 +389,14 @@ const EditRoutesModal = ({
               className="px-4 py-2 border rounded text-sm text-gray-600"
               disabled={saving}
             >
-              Cancel
+              Cancelar
             </button>
             <button
               onClick={handleSave}
               className="px-4 py-2 bg-orange-500 text-white rounded text-sm"
               disabled={saving}
             >
-              {saving ? 'Saving...' : 'Save & Continue'}
+              {saving ? 'Guardando...' : 'Guardar y Continuar'}
             </button>
           </div>
         </div>

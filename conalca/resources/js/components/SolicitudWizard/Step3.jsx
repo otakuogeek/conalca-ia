@@ -152,21 +152,15 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
           >
             <FiUserCheck className="text-orange-500" /> Destinatario
           </label>
-          {/* <input
+          <input
             id="destinatario"
             name="destinatario"
-            value={form.destinatario}
-            onChange={change}
+            value={form.destinatario || form.destinario}
+            onChange={(e) => {
+              const v = e.target.value;
+              setForm(prev => ({ ...prev, destinatario: v, destinario: v }));
+            }}
             className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            placeholder="Destinatario"
-            required
-          /> */}
-          <input
-            id="destinario"
-            name="destinario"
-            value={form.destinario}
-            onChange={change}
-            className="…"
             placeholder="Destinatario"
             required
           />
