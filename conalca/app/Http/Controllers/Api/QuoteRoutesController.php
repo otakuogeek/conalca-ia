@@ -174,6 +174,7 @@ class QuoteRoutesController extends Controller
                     'ciudad_destino' => $cotization->ciudad_destino,
                     'peso_mercancia' => $cotization->peso_mercancia,
                     'cantidad' => $cotization->cantidad,
+                    'tipo_embajale' => $cotization->tipo_embajale,
                     'tipo_producto' => $cotization->tipo_producto,
                     'vehiculo_requerido' => $cotization->vehiculo_requerido,
                     'valor_declarado' => $cotization->valor_declarado,

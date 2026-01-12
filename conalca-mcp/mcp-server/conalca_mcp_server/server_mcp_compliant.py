@@ -225,6 +225,213 @@ class ConalcaMCPServer:
                                     }
                                 },
                                 {
+                                    "name": "get_cotizacion_by_id",
+                                    "description": "Obtiene una cotización específica por su ID. Devuelve todos los detalles de la cotización incluyendo ciudades, peso, tipo de producto, fechas, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID único de la cotización a consultar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "create_cotizacion",
+                                    "description": "Crea una nueva cotización con todos los campos disponibles: ciudades origen/destino, peso, tipo de producto, vehículo requerido, fechas, valores, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "pricing_id": {"type": "integer", "description": "ID del pricing asociado"},
+                                            "ciudad_origen": {"type": "string", "description": "Ciudad de origen del transporte"},
+                                            "ciudad_destino": {"type": "string", "description": "Ciudad de destino del transporte"},
+                                            "peso_mercancia": {"type": "string", "description": "Peso de la mercancía"},
+                                            "cantidad": {"type": "string", "description": "Cantidad de unidades"},
+                                            "tipo_embajale": {"type": "string", "description": "Tipo de embalaje"},
+                                            "tipo_producto": {"type": "string", "description": "Tipo de producto a transportar"},
+                                            "vehiculo_requerido": {"type": "string", "description": "Tipo de vehículo requerido"},
+                                            "fecha_hora_descargue_cargue": {"type": "string", "description": "Fecha y hora de descargue/cargue"},
+                                            "ruta": {"type": "string", "description": "Ruta del transporte"},
+                                            "valor": {"type": "string", "description": "Valor de la cotización"},
+                                            "valor_declarado": {"type": "string", "description": "Valor declarado de la mercancía"},
+                                            "tipo_mercancia": {"type": "string", "description": "Tipo de mercancía"},
+                                            "group_cotizations_id": {"type": "integer", "description": "ID del grupo de cotizaciones"},
+                                            "porcentaje": {"type": "string"},
+                                            "ciudad_origen_dane": {"type": "string"},
+                                            "ciudad_destino_dane": {"type": "string"},
+                                            "dimensiones_exactas": {"type": "string"},
+                                            "registro_fotografico": {"type": "string"},
+                                            "planos": {"type": "string"},
+                                            "temperatura_mercancia": {"type": "string"},
+                                            "humedad": {"type": "string"},
+                                            "regimen_nacionalizado": {"type": "string"},
+                                            "agente_aduanas": {"type": "string"},
+                                            "descargue_cargue": {"type": "string"},
+                                            "consolidado_expreso": {"type": "string"},
+                                            "fcl_lcl": {"type": "string"},
+                                            "sitio_devolucion_contenedor": {"type": "string"},
+                                            "numero_documento_bl": {"type": "string"},
+                                            "cantidad_vh": {"type": "string"},
+                                            "un": {"type": "string"},
+                                            "frecuencia": {"type": "string"},
+                                            "esquema_seguridad": {"type": "string"},
+                                            "tipo_carroceria": {"type": "string"},
+                                            "ventanas_horarios_recibidos": {"type": "string"},
+                                            "seguro": {"type": "string"},
+                                            "silogtran_status": {"type": "string"}
+                                        },
+                                        "required": ["pricing_id"]
+                                    }
+                                },
+                                {
+                                    "name": "update_cotizacion",
+                                    "description": "Actualiza los campos de una cotización existente. Puedes actualizar cualquier campo: ciudades, peso, fechas, valores, estado, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID de la cotización a actualizar",
+                                                "minimum": 1
+                                            },
+                                            "ciudad_origen": {"type": "string"},
+                                            "ciudad_destino": {"type": "string"},
+                                            "peso_mercancia": {"type": "string"},
+                                            "cantidad": {"type": "string"},
+                                            "tipo_embajale": {"type": "string"},
+                                            "tipo_producto": {"type": "string"},
+                                            "vehiculo_requerido": {"type": "string"},
+                                            "fecha_hora_descargue_cargue": {"type": "string"},
+                                            "ruta": {"type": "string"},
+                                            "valor": {"type": "string"},
+                                            "valor_declarado": {"type": "string"},
+                                            "tipo_mercancia": {"type": "string"},
+                                            "silogtran_status": {"type": "string"},
+                                            "group_cotizations_id": {"type": "integer"},
+                                            "pricing_id": {"type": "integer"},
+                                            "porcentaje": {"type": "string"},
+                                            "ciudad_origen_dane": {"type": "string"},
+                                            "ciudad_destino_dane": {"type": "string"},
+                                            "dimensiones_exactas": {"type": "string"},
+                                            "registro_fotografico": {"type": "string"},
+                                            "planos": {"type": "string"},
+                                            "temperatura_mercancia": {"type": "string"},
+                                            "humedad": {"type": "string"},
+                                            "regimen_nacionalizado": {"type": "string"},
+                                            "agente_aduanas": {"type": "string"},
+                                            "descargue_cargue": {"type": "string"},
+                                            "consolidado_expreso": {"type": "string"},
+                                            "fcl_lcl": {"type": "string"},
+                                            "sitio_devolucion_contenedor": {"type": "string"},
+                                            "numero_documento_bl": {"type": "string"},
+                                            "cantidad_vh": {"type": "string"},
+                                            "un": {"type": "string"},
+                                            "frecuencia": {"type": "string"},
+                                            "esquema_seguridad": {"type": "string"},
+                                            "tipo_carroceria": {"type": "string"},
+                                            "ventanas_horarios_recibidos": {"type": "string"},
+                                            "seguro": {"type": "string"}
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "delete_cotizacion",
+                                    "description": "Elimina una cotización de la base de datos usando su ID. Esta acción es permanente.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID de la cotización a eliminar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "search_cotizaciones",
+                                    "description": "Búsqueda avanzada de cotizaciones con filtros múltiples: ciudad origen/destino, tipo de producto, ruta, vehículo, estado, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ciudad_origen": {"type": "string", "description": "Filtrar por ciudad de origen"},
+                                            "ciudad_destino": {"type": "string", "description": "Filtrar por ciudad de destino"},
+                                            "tipo_producto": {"type": "string", "description": "Filtrar por tipo de producto"},
+                                            "ruta": {"type": "string", "description": "Filtrar por ruta"},
+                                            "vehiculo_requerido": {"type": "string", "description": "Filtrar por tipo de vehículo"},
+                                            "tipo_carroceria": {"type": "string", "description": "Filtrar por tipo de carrocería"},
+                                            "silogtran_status": {"type": "string", "description": "Filtrar por estado en Silogtran"},
+                                            "group_cotizations_id": {"type": "integer", "description": "Filtrar por grupo de cotizaciones"},
+                                            "limit": {"type": "integer", "description": "Límite de resultados", "default": 50},
+                                            "offset": {"type": "integer", "description": "Offset para paginación", "default": 0}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "search_products",
+                                    "description": "Busca productos por nombre usando coincidencia parcial. Devuelve los resultados más relevantes ordenados por similitud. Ideal para autocompletar o encontrar productos similares.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "search_term": {
+                                                "type": "string",
+                                                "description": "Término de búsqueda (palabra o parte del nombre del producto)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["search_term"]
+                                    }
+                                },
+                                {
+                                    "name": "get_product_by_code",
+                                    "description": "Obtiene un producto específico por su código único.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "producto_codigo": {
+                                                "type": "integer",
+                                                "description": "Código único del producto",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["producto_codigo"]
+                                    }
+                                },
+                                {
+                                    "name": "get_products_by_category",
+                                    "description": "Obtiene productos filtrados por categoría (tipo de producto o naturaleza de carga).",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "categoria": {
+                                                "type": "string",
+                                                "description": "Nombre de la categoría a buscar (ej: ANIMALES, CARNES, MERCANCIAS)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 50,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["categoria"]
+                                    }
+                                },
+                                {
                                     "name": "get_vehicle_by_telefono_conductor",
                                     "description": "Busca vehículos asociados a un conductor específico usando su número de teléfono. Devuelve información del vehículo, conductor y propietario.",
                                     "inputSchema": {
@@ -287,6 +494,65 @@ class ConalcaMCPServer:
                                             }
                                         },
                                         "required": ["placa"]
+                                    }
+                                },
+                                {
+                                    "name": "get_empaques",
+                                    "description": "Obtiene lista de todos los tipos de embalaje disponibles con paginación. Devuelve códigos ministerio, nombres y fechas de creación/modificación.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "page": {
+                                                "type": "integer",
+                                                "description": "Número de página para paginación",
+                                                "default": 1,
+                                                "minimum": 1
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Cantidad máxima de empaques por página",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_empaque_by_id",
+                                    "description": "Obtiene un tipo de embalaje específico por su ID. Devuelve código ministerio, nombre y datos completos del empaque.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "empaque_id": {
+                                                "type": "integer",
+                                                "description": "ID único del empaque a consultar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["empaque_id"]
+                                    }
+                                },
+                                {
+                                    "name": "search_empaques",
+                                    "description": "Busca tipos de embalaje por nombre usando coincidencia parcial. Devuelve resultados ordenados por relevancia (ej: CAJA, SACO, TANQUE).",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "search_term": {
+                                                "type": "string",
+                                                "description": "Término de búsqueda (palabra o parte del nombre del empaque)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["search_term"]
                                     }
                                 }
                             ]
@@ -583,6 +849,115 @@ class ConalcaMCPServer:
                             }
                         },
                         {
+                            "name": "get_cotizacion_by_id",
+                            "description": "Obtiene una cotización específica por su ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {
+                                        "type": "integer",
+                                        "description": "ID único de la cotización",
+                                        "minimum": 1
+                                    }
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "create_cotizacion",
+                            "description": "Crea una nueva cotización con todos los campos disponibles.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "pricing_id": {"type": "integer"},
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "peso_mercancia": {"type": "string"},
+                                    "tipo_producto": {"type": "string"},
+                                    "vehiculo_requerido": {"type": "string"},
+                                    "fecha_hora_descargue_cargue": {"type": "string"},
+                                    "ruta": {"type": "string"},
+                                    "valor": {"type": "string"}
+                                },
+                                "required": ["pricing_id"]
+                            }
+                        },
+                        {
+                            "name": "update_cotizacion",
+                            "description": "Actualiza campos de una cotización existente.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {"type": "integer", "minimum": 1},
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "peso_mercancia": {"type": "string"},
+                                    "valor": {"type": "string"}
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "delete_cotizacion",
+                            "description": "Elimina una cotización por ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "search_cotizaciones",
+                            "description": "Búsqueda avanzada de cotizaciones con filtros.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "tipo_producto": {"type": "string"},
+                                    "ruta": {"type": "string"},
+                                    "limit": {"type": "integer", "default": 50}
+                                }
+                            }
+                        },
+                        {
+                            "name": "search_products",
+                            "description": "Busca productos por nombre. Devuelve resultados ordenados por relevancia.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "search_term": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 20, "maximum": 100}
+                                },
+                                "required": ["search_term"]
+                            }
+                        },
+                        {
+                            "name": "get_product_by_code",
+                            "description": "Obtiene un producto por su código.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "producto_codigo": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["producto_codigo"]
+                            }
+                        },
+                        {
+                            "name": "get_products_by_category",
+                            "description": "Obtiene productos por categoría.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "categoria": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 50}
+                                },
+                                "required": ["categoria"]
+                            }
+                        },
+                        {
                             "name": "get_vehicle_by_telefono_conductor",
                             "description": "Busca vehículos asociados a un conductor específico usando su número de teléfono. Devuelve información del vehículo, conductor y propietario.",
                             "inputSchema": {
@@ -646,6 +1021,40 @@ class ConalcaMCPServer:
                                 },
                                 "required": ["placa"]
                             }
+                        },
+                        {
+                            "name": "get_empaques",
+                            "description": "Obtiene lista de tipos de embalaje disponibles (CAJA, SACO, PALLET, TANQUE, etc.).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                                    "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+                                }
+                            }
+                        },
+                        {
+                            "name": "get_empaque_by_id",
+                            "description": "Obtiene un tipo de embalaje específico por ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "empaque_id": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["empaque_id"]
+                            }
+                        },
+                        {
+                            "name": "search_empaques",
+                            "description": "Busca tipos de embalaje por nombre (ej: CAJA, SACO).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "search_term": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 20, "maximum": 100}
+                                },
+                                "required": ["search_term"]
+                            }
                         }
                     ]
                     
@@ -700,7 +1109,7 @@ class ConalcaMCPServer:
                     "health": f"{self.root_path}/health",
                     "webhook": f"{self.root_path}/webhook/elevenlabs"
                 },
-                "tools_available": 8,
+                "tools_available": 19,
                 "capabilities": ["tools", "resources", "streaming"]
             }
         
@@ -1055,6 +1464,280 @@ class ConalcaMCPServer:
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
             
+            elif tool_name == "get_cotizacion_by_id":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                
+                if cotizacion:
+                    result = {
+                        "success": True,
+                        "cotizacion": cotizacion.model_dump()
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "error": f"No se encontró cotización con ID: {cotizacion_id}"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "create_cotizacion":
+                # Validar que tenga al menos pricing_id
+                if "pricing_id" not in arguments:
+                    return json.dumps({"error": "pricing_id es requerido"}, ensure_ascii=False)
+                
+                try:
+                    cotizacion_id = await repository.create_cotizacion(arguments)
+                    
+                    if cotizacion_id > 0:
+                        # Obtener la cotización recién creada
+                        nueva_cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                        
+                        result = {
+                            "success": True,
+                            "message": "Cotización creada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "cotizacion": nueva_cotizacion.model_dump() if nueva_cotizacion else None
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": "No se pudo crear la cotización"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error creando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al crear cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "update_cotizacion":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                # Remover cotizacion_id de los datos de actualización
+                update_data = {k: v for k, v in arguments.items() if k != "cotizacion_id"}
+                
+                if not update_data:
+                    return json.dumps({
+                        "success": False,
+                        "error": "No se proporcionaron campos para actualizar"
+                    }, ensure_ascii=False)
+                
+                try:
+                    success = await repository.update_cotizacion(cotizacion_id, update_data)
+                    
+                    if success:
+                        # Obtener la cotización actualizada
+                        cotizacion_actualizada = await repository.get_cotizacion_by_id(cotizacion_id)
+                        
+                        result = {
+                            "success": True,
+                            "message": f"Cotización {cotizacion_id} actualizada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "campos_actualizados": list(update_data.keys()),
+                            "cotizacion_actualizada": cotizacion_actualizada.model_dump() if cotizacion_actualizada else None
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se pudo actualizar la cotización {cotizacion_id}. Verifique que el ID exista."
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error actualizando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al actualizar cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "delete_cotizacion":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                try:
+                    # Primero obtener la cotización para confirmar que existe
+                    cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                    
+                    if not cotizacion:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró cotización con ID: {cotizacion_id}"
+                        }, ensure_ascii=False)
+                    
+                    # Eliminar la cotización
+                    success = await repository.delete_cotizacion(cotizacion_id)
+                    
+                    if success:
+                        result = {
+                            "success": True,
+                            "message": f"Cotización {cotizacion_id} eliminada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "cotizacion_eliminada": cotizacion.model_dump()
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se pudo eliminar la cotización {cotizacion_id}"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error eliminando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al eliminar cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "search_cotizaciones":
+                try:
+                    cotizaciones = await repository.search_cotizaciones_advanced(arguments)
+                    
+                    result = {
+                        "success": True,
+                        "total_encontradas": len(cotizaciones),
+                        "filtros_aplicados": {k: v for k, v in arguments.items() if k not in ["limit", "offset"]},
+                        "cotizaciones": [cotizacion.model_dump() for cotizacion in cotizaciones]
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando cotizaciones: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "search_products":
+                search_term = arguments.get("search_term")
+                limit = arguments.get("limit", 20)
+                
+                if not search_term:
+                    return json.dumps({"error": "search_term es requerido"}, ensure_ascii=False)
+                
+                if len(search_term) < 2:
+                    return json.dumps({
+                        "error": "El término de búsqueda debe tener al menos 2 caracteres"
+                    }, ensure_ascii=False)
+                
+                try:
+                    products = await repository.search_products_by_name(search_term, limit)
+                    
+                    result = {
+                        "success": True,
+                        "search_term": search_term,
+                        "total_encontrados": len(products),
+                        "productos": [
+                            {
+                                "codigo": p.producto_codigo,
+                                "codigo_ministerio": p.producto_codigo_ministerio,
+                                "nombre": p.producto_nombre,
+                                "tipo_producto": p.tippro_nombre,
+                                "naturaleza_carga": p.natcar_nombre,
+                                "fecha_creacion": p.producto_fechacreacion,
+                                "usuario": p.usuario_nombre
+                            }
+                            for p in products
+                        ],
+                        "mensaje": f"Se encontraron {len(products)} producto(s) que coinciden con '{search_term}'"
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando productos: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en la búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_product_by_code":
+                producto_codigo = arguments.get("producto_codigo")
+                
+                if not producto_codigo:
+                    return json.dumps({"error": "producto_codigo es requerido"}, ensure_ascii=False)
+                
+                try:
+                    product = await repository.get_product_by_code(producto_codigo)
+                    
+                    if product:
+                        result = {
+                            "success": True,
+                            "producto": {
+                                "codigo": product.producto_codigo,
+                                "codigo_ministerio": product.producto_codigo_ministerio,
+                                "nombre": product.producto_nombre,
+                                "tipo_producto": product.tippro_nombre,
+                                "naturaleza_carga": product.natcar_nombre,
+                                "fecha_creacion": product.producto_fechacreacion,
+                                "usuario": product.usuario_nombre
+                            }
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se encontró producto con código: {producto_codigo}"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error obteniendo producto: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al obtener producto: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_products_by_category":
+                categoria = arguments.get("categoria")
+                limit = arguments.get("limit", 50)
+                
+                if not categoria:
+                    return json.dumps({"error": "categoria es requerida"}, ensure_ascii=False)
+                
+                try:
+                    products = await repository.get_products_by_category(categoria, limit)
+                    
+                    result = {
+                        "success": True,
+                        "categoria_buscada": categoria,
+                        "total_encontrados": len(products),
+                        "productos": [
+                            {
+                                "codigo": p.producto_codigo,
+                                "codigo_ministerio": p.producto_codigo_ministerio,
+                                "nombre": p.producto_nombre,
+                                "tipo_producto": p.tippro_nombre,
+                                "naturaleza_carga": p.natcar_nombre,
+                                "fecha_creacion": p.producto_fechacreacion,
+                                "usuario": p.usuario_nombre
+                            }
+                            for p in products
+                        ],
+                        "mensaje": f"Se encontraron {len(products)} producto(s) en la categoría '{categoria}'"
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando productos por categoría: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en la búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
+            
             elif tool_name == "get_vehicle_by_telefono_conductor":
                 telefono = arguments.get("telefono")
                 if not telefono:
@@ -1134,6 +1817,70 @@ class ConalcaMCPServer:
                         "vehiculo_encontrado": False,
                         "error": f"No se encontró ningún vehículo con la placa: {placa_limpia}",
                         "sugerencia": "Verifique que la placa esté correctamente escrita y completa"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_empaques":
+                page = arguments.get("page", 1)
+                limit = arguments.get("limit", 20)
+                offset = (page - 1) * limit
+                
+                empaques = await repository.get_empaques(limit=limit, offset=offset)
+                
+                result = {
+                    "success": True,
+                    "total_encontrados": len(empaques),
+                    "page": page,
+                    "limit": limit,
+                    "empaques": [empaque.model_dump() for empaque in empaques]
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_empaque_by_id":
+                empaque_id = arguments.get("empaque_id")
+                if not empaque_id:
+                    return json.dumps({"error": "Se requiere empaque_id"}, ensure_ascii=False)
+                
+                empaque = await repository.get_empaque_by_id(empaque_id)
+                
+                if empaque:
+                    result = {
+                        "success": True,
+                        "empaque": empaque.model_dump()
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"No se encontró empaque con ID {empaque_id}"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "search_empaques":
+                search_term = arguments.get("search_term", "")
+                limit = arguments.get("limit", 20)
+                
+                if not search_term or len(search_term) < 2:
+                    return json.dumps({
+                        "error": "El término de búsqueda debe tener al menos 2 caracteres"
+                    }, ensure_ascii=False)
+                
+                empaques = await repository.search_empaques_by_name(search_term, limit)
+                
+                if empaques:
+                    result = {
+                        "success": True,
+                        "total_encontrados": len(empaques),
+                        "busqueda": search_term,
+                        "empaques": [empaque.model_dump() for empaque in empaques]
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"No se encontraron empaques que coincidan con '{search_term}'",
+                        "sugerencia": "Intente con otros términos como: CAJA, SACO, PALLET, TANQUE, GRANEL"
                     }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
@@ -1399,6 +2146,15 @@ async def main():
     finally:
         if 'mcp_server' in locals():
             await mcp_server.close()
+
+# Crear instancia de la aplicación para uvicorn
+mcp_server_instance = ConalcaMCPServer(root_path="/mcp")
+app = mcp_server_instance.app
+
+# Evento de inicio para inicializar conexiones
+@app.on_event("startup")
+async def startup_event():
+    await mcp_server_instance.initialize()
 
 if __name__ == "__main__":
     import sys

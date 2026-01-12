@@ -57,6 +57,14 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    'mcp' => [
+        'base_url' => env('MCP_BASE_URL', 'https://conalcaia.conalca.com.co/mcp/'),
+        'websocket_url' => env('MCP_WEBSOCKET_URL', 'wss://conalcaia.conalca.com.co/ws'),
+        'tools_enabled' => env('MCP_TOOLS_ENABLED', true),
+        'server_port' => env('MCP_SERVER_PORT', 18840),
+        'server_host' => env('MCP_SERVER_HOST', '0.0.0.0'),
+    ],
+
     'local_audio' => [
         'enabled' => env('LOCAL_AUDIO_STORAGE', true),
         'path' => env('LOCAL_AUDIO_PATH', 'storage/app/public/audios'),

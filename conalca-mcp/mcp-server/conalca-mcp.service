@@ -1,0 +1,19 @@
+[Unit]
+Description=Conalca MCP Server - ElevenLabs Compatible
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/conalca/conalca-mcp/mcp-server
+Environment="PATH=/home/ubuntu/conalca/conalca-mcp/mcp-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/ubuntu/conalca/conalca-mcp/mcp-server/venv/bin/uvicorn conalca_mcp_server.server_mcp_compliant:app --host 127.0.0.1 --port 18840
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/conalca/conalca-mcp/mcp-server/logs/mcp_server.log
+StandardError=append:/home/ubuntu/conalca/conalca-mcp/mcp-server/logs/mcp_server_error.log
+
+[Install]
+WantedBy=multi-user.target

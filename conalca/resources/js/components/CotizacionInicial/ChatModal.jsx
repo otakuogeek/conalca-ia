@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import SpeechRecognition from './ui/SpeechRecognition';
+import QuoteDetailsPanel from './QuoteDetailsPanel';
 
 const ChatModal = ({ 
   onClose, 
@@ -28,6 +29,9 @@ const ChatModal = ({
   const [processingProgress, setProcessingProgress] = useState(0); // Progreso 0-100
   const sendingRef = useRef(false); // Ref adicional para bloqueo
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedEmpaque, setSelectedEmpaque] = useState(null);
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(null); // 🆕 Índice de ruta seleccionada para edición
 
   const stripMarkdown = (text = '') => {
     return text
@@ -47,6 +51,52 @@ const ChatModal = ({
       .trim();
   };
 
+  // 🆕 Función para detectar número de ruta mencionada en el mensaje
+  const detectRouteFromMessage = (messageText) => {
+    if (!messageText) return null;
+    
+    const lower = messageText.toLowerCase();
+    
+    // Patrones para detectar ruta específica
+    const patterns = [
+      /(?:ruta|route)\s*(?:n[uú]mero|#|num\.?)?\s*(\d+)/i,
+      /(?:cambiar?|editar?|modificar?|actualizar?)\s+(?:la\s+)?(?:ruta|route)\s*(\d+)/i,
+      /(?:en\s+la\s+)?ruta\s*(\d+)/i,
+      /(?:para\s+la\s+)?ruta\s*(\d+)/i,
+      /(?:de\s+la\s+)?ruta\s*(\d+)/i,
+      /ruta\s+(\d+)/i,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = lower.match(pattern);
+      if (match && match[1]) {
+        const routeNum = parseInt(match[1], 10);
+        console.log(`🎯 Detectada mención a Ruta ${routeNum} en mensaje:`, messageText);
+        return routeNum - 1; // Convertir a índice base 0
+      }
+    }
+    
+    return null;
+  };
+
+  // 🆕 Función para manejar selección de ruta
+  const handleSelectRoute = (index) => {
+    console.log(`🔄 Seleccionando ruta para edición:`, index !== null ? `Ruta ${index + 1}` : 'Ninguna');
+    setSelectedRouteIndex(index);
+    
+    // Notificar al usuario en el chat
+    if (onUpdateMessages && index !== null) {
+      onUpdateMessages(prev => [
+        ...prev,
+        {
+          role: 'system',
+          text: `📝 Ruta ${index + 1} seleccionada para edición. Los próximos cambios se aplicarán solo a esta ruta.`,
+          created_at: new Date().toLocaleTimeString()
+        }
+      ]);
+    }
+  };
+
   // Debug: Log clientData para verificar qué información llega
   useEffect(() => {
     console.log('🔍 ChatModal - clientData completo:', clientData);
@@ -63,38 +113,37 @@ const ChatModal = ({
     const resetConversation = async () => {
       if (!clientData.clientId) return;
 
-      // Clear the stored messages in the parent/local state
+      console.log('🧽 Iniciando reseteo de conversación para nuevo chat');
+      console.log('🎯 GroupId actual:', clientData.groupId);
+      console.log('🔗 ThreadId actual:', clientData.threadId);
+
+      // SIEMPRE limpiar al cambiar de grupo para evitar mezcla de datos
+      console.log('🆕 Cambio de grupo/cliente detectado - limpiando estado');
+      
+      // Limpiar mensajes del chat
       if (onUpdateMessages) {
         onUpdateMessages([]);
       }
+      
+      // Limpiar datos de cotización para empezar fresco
       if (setQuoteData) {
-        setQuoteData([]);
+        setQuoteData({});
       }
 
-      // Tell the backend to discard the previous thread so a brand-new one is created
-      try {
-        if (clientData.threadId) {
-          await fetch('/api/chat/clear-thread', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-            },
-            body: JSON.stringify({
-              thread_id: clientData.threadId,
-              client_id: clientData.clientId
-            })
-          });
-        }
-      } catch (error) {
-        console.error('Error clearing previous thread:', error);
-      } finally {
-        setThreadId(null); // force ChatModal to request a new thread
+      // Resetear selección de producto y empaque
+      setSelectedProduct(null);
+      setSelectedEmpaque(null);
+      
+      // Usar threadId existente si hay, sino null
+      if (clientData.threadId) {
+        setThreadId(clientData.threadId);
+      } else {
+        setThreadId(null);
       }
     };
 
     resetConversation();
-  }, [clientData.clientId]);
+  }, [clientData.clientId, clientData.groupId]); // 🔴 Ejecutar cuando cambia cliente O grupo
 
   // Auto-enviar mensaje inicial con datos del formulario si existen
   useEffect(() => {
@@ -156,6 +205,135 @@ const ChatModal = ({
     }
   }, []); // Solo ejecutar al montar
 
+  // DESHABILITADO: Auto-procesamiento automático de cotización
+  // Ahora el usuario debe hacer clic en "Crear Cotización" manualmente
+  /*
+  useEffect(() => {
+    console.log('🔍 useEffect auto-procesamiento ejecutado', {
+      selectedProduct,
+      selectedEmpaque,
+      quoteData,
+      isSending,
+      messagesLength: messages.length
+    });
+
+    // Verificar si tenemos todos los datos mínimos necesarios
+    const hasAllRequiredData = 
+      selectedProduct && 
+      selectedEmpaque;
+
+    console.log('✅ Verificación de datos:', {
+      hasAllRequiredData,
+      hasProduct: !!selectedProduct,
+      hasEmpaque: !!selectedEmpaque
+    });
+
+    // Solo procesar si tenemos datos completos y no estamos ya procesando
+    if (hasAllRequiredData && !isSending && messages.length > 0) {
+      // Verificar si ya se envió el mensaje de creación (para evitar duplicados)
+      const yaEnvioCreacion = messages.some(msg => 
+        msg.text && msg.text.includes('Por favor crea la cotización con estos datos completos')
+      );
+
+      if (yaEnvioCreacion) {
+        console.log('⏭️ Cotización ya solicitada, evitando duplicado');
+        return;
+      }
+
+      console.log('✅ Todos los datos completos. Procesando cotización automáticamente...');
+      console.log('📦 Datos para cotización:', {
+        producto: selectedProduct.nombre,
+        codigoProducto: selectedProduct.codigo,
+        empaque: selectedEmpaque.nome || selectedEmpaque.nombre,
+        empaqueId: selectedEmpaque.id
+      });
+
+      // Enviar mensaje al asistente para crear la cotización
+      const nombreEmpaque = selectedEmpaque.nome || selectedEmpaque.nombre;
+      const mensajeCreacion = `Por favor crea la cotización con estos datos completos. 
+Tipo de embalaje: ${nombreEmpaque}
+Producto: ${selectedProduct.nombre}`;
+
+      // Pequeño delay para evitar doble procesamiento
+      setTimeout(() => {
+        if (!isSending) {
+          console.log('🚀 Enviando solicitud de creación de cotización...');
+          onSendMessage(mensajeCreacion);
+        }
+      }, 1000);
+    }
+  }, [selectedProduct, selectedEmpaque, isSending, messages.length]);
+  */
+
+  // 🆕 Cargar mensajes existentes desde la base de datos cuando hay threadId o groupId
+  useEffect(() => {
+    const loadExistingMessages = async () => {
+      const currentThreadId = clientData?.threadId || threadId;
+      const currentGroupId = clientData?.groupId;
+      
+      // Solo cargar si hay threadId o groupId y NO hay mensajes ya cargados
+      if (!currentThreadId && !currentGroupId) {
+        console.log('⏭️ No hay threadId ni groupId, saltando carga de mensajes');
+        return;
+      }
+      
+      if (messages.length > 0) {
+        console.log('⏭️ Ya hay mensajes cargados, saltando fetch:', messages.length);
+        return;
+      }
+
+      try {
+        console.log('📥 Cargando mensajes existentes...', {
+          threadId: currentThreadId,
+          groupId: currentGroupId
+        });
+
+        const url = currentGroupId 
+          ? `/api/chat/messages/${currentThreadId}?group_id=${currentGroupId}`
+          : `/api/chat/messages/${currentThreadId}`;
+
+        const response = await fetch(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.success && data.messages && data.messages.length > 0) {
+          console.log('✅ Mensajes cargados desde DB:', data.messages.length);
+          
+          // Formatear mensajes para el componente
+          const formattedMessages = data.messages.map(msg => ({
+            role: msg.role,
+            text: msg.text || msg.content || '',
+            created_at: msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : new Date().toLocaleTimeString()
+          }));
+
+          // Actualizar mensajes usando el callback del padre
+          if (onUpdateMessages) {
+            onUpdateMessages(formattedMessages);
+          }
+          
+          console.log('💬 Mensajes restaurados en UI');
+        } else {
+          console.log('ℹ️ No hay mensajes previos en esta conversación');
+        }
+      } catch (error) {
+        console.error('❌ Error cargando mensajes existentes:', error);
+        // No mostrar error al usuario, simplemente continuar con chat vacío
+      }
+    };
+
+    loadExistingMessages();
+  }, [clientData?.threadId, clientData?.groupId]); // Ejecutar cuando cambian threadId o groupId
+
   useEffect(() => {
     if (shouldAutoScroll && conversationRef.current) {
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
@@ -170,6 +348,23 @@ const ChatModal = ({
       }
     };
   }, [pollingInterval]);
+
+  // Validar si tenemos todos los datos necesarios para crear cotización
+  const hasAllRequiredData = useMemo(() => {
+    // Obtener el primer elemento si es array, o el objeto directamente
+    const data = Array.isArray(quoteData) ? quoteData[0] : quoteData;
+    
+    if (!data) return false;
+    
+    return (
+      (selectedProduct !== null || data.producto || data.tipo_producto) &&
+      (selectedEmpaque !== null || data.empaque || data.tipo_embajale) &&
+      (data.ciudadOrigen || data.ciudad_origen) &&
+      (data.ciudadDestino || data.ciudad_destino) &&
+      (data.pesoMercancia || data.peso_mercancia) &&
+      (data.cantidadMercancia || data.cantidad)
+    );
+  }, [selectedProduct, selectedEmpaque, quoteData]);
 
   // Helper para limpiar estado de procesamiento
   const clearProcessingState = () => {
@@ -260,235 +455,170 @@ const ChatModal = ({
   const startPollingRun = (threadId, runId) => {
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
-    setProcessingProgress(50); // Progreso al iniciar polling
+    setProcessingProgress(50);
     
     let pollAttempts = 0;
-    const maxPollAttempts = 300; // Máximo 60 segundos de polling (30 * 2 segundos)
+    const maxPollAttempts = 20;
+    let isPollingActive = true;
+    
+    const stopPolling = (reason = '') => {
+      console.log(`🛑 Deteniendo polling: ${reason}`);
+      isPollingActive = false;
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        setPollingInterval(null);
+      }
+      setCurrentRunId(null);
+      setProcessingMessage(null);
+    };
     
     const pollRun = async () => {
       try {
-        pollAttempts++;
+        if (!isPollingActive) {
+          console.log('⏹️ Polling ya detenido, saliendo...');
+          return;
+        }
         
-        // Si superamos el máximo de intentos, detener polling y mostrar opción de cancelar
+        pollAttempts++;
+        console.log(`🔍 Polling intento ${pollAttempts}/${maxPollAttempts}`);
+        
         if (pollAttempts > maxPollAttempts) {
-          console.warn('⏰ Timeout de polling alcanzado, deteniendo...');
-          if (pollingInterval) {
-            clearInterval(pollingInterval);
-            setPollingInterval(null);
-          }
-          
-          // Mostrar mensaje de timeout con opción de reiniciar
-          setProcessingMessage({
-            role: 'system',
-            text: '⏰ El procesamiento está tardando más de lo esperado. Puedes cancelar y reintentar.',
-            created_at: new Date().toLocaleTimeString(),
-            status: 'timeout',
-            isTemporary: true
-          });
-          
-          // NO limpiar currentRunId para mantener el botón de cancelar visible
-          
-          // Intentar obtener mensajes finales
-          try {
-            const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
-              headers: {
-                'Accept': 'application/json'
-              }
-            });
-            
-            const messagesData = await messagesResponse.json();
-            if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
-              onUpdateMessages(messagesData.data.messages);
-            }
-          } catch (error) {
-            console.error('Error obteniendo mensajes después de timeout:', error);
-          }
+          stopPolling('Timeout alcanzado');
           return;
         }
         
         const response = await fetch(`/api/chat/run/${threadId}/${runId}`, {
-          headers: {
-            'Accept': 'application/json'
-          }
+          headers: { 'Accept': 'application/json' }
         });
         
         const data = await response.json();
+        console.log(`📊 Status recibido:`, data.data?.status);
         
-        // Actualizar progreso basado en intentos
-        const progress = Math.min(50 + (pollAttempts / maxPollAttempts) * 40, 90);
-        setProcessingProgress(progress);
+        if (!data.success) {
+          console.error('❌ Error en respuesta:', data);
+          return;
+        }
         
-        console.log(`🔍 Polling intento ${pollAttempts}/${maxPollAttempts}, status:`, data.data?.status);
+        const status = data.data?.status;
         
-        if (data.success) {
-          if (data.data.status === 'completed_with_data' && data.data.quote_data) {
-            console.log('✅ Datos de cotización extraídos:', data.data.quote_data);
+        // DETENER INMEDIATAMENTE si hay datos
+        if (status === 'completed_with_data') {
+          console.log('✅ DATOS RECIBIDOS - Procesando y deteniendo...');
+          
+          // Procesar extracted_data - AHORA PROCESA TODAS LAS RUTAS
+          if (data.data.extracted_data && Array.isArray(data.data.extracted_data)) {
+            const allRoutes = data.data.extracted_data;
+            console.log('📦 Rutas extraídas:', allRoutes.length, allRoutes);
             
-            // Actualizar quoteData con los datos extraídos
-            if (setQuoteData && Array.isArray(data.data.quote_data)) {
-              setQuoteData(data.data.quote_data);
-              
-              // Guardar las rutas en la base de datos automáticamente
-            }
-            
-            // Detener polling
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              setPollingInterval(null);
-            }
-            setCurrentRunId(null);
-            
-            // Quitar mensaje de "Pensando..."
-            setProcessingMessage(null);
-            
-            // Obtener mensajes actualizados
-            setTimeout(async () => {
-              try {
-                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
-                  headers: {
-                    'Accept': 'application/json'
-                  }
-                });
-                
-                const messagesData = await messagesResponse.json();
-                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
-                  onUpdateMessages(messagesData.data.messages);
-                }
-              } catch (error) {
-                console.error('Error obteniendo mensajes después de polling:', error);
-              }
-            }, 1000);
-          } else if (data.data.status === 'completed_with_indication') {
-            // El asistente indicó que las cotizaciones están completadas
-            console.log('✅ Asistente indica cotizaciones completadas:', data.data.message);
-            
-            // Detener polling
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              setPollingInterval(null);
-            }
-            setCurrentRunId(null);
-            
-            // Quitar mensaje de "Pensando..."
-            setProcessingMessage(null);
-            
-            // Obtener mensajes actualizados
-            setTimeout(async () => {
-              try {
-                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
-                  headers: {
-                    'Accept': 'application/json'
-                  }
-                });
-                
-                const messagesData = await messagesResponse.json();
-                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
-                  // Verificar si hay mensajes del asistente
-                  const assistantMessages = messagesData.data.messages.filter(msg => msg.role === 'assistant');
-                  const userMessages = messagesData.data.messages.filter(msg => msg.role === 'user');
-                  
-                  console.log('📊 Análisis de mensajes (completed_with_indication):', {
-                    total: messagesData.data.messages.length,
-                    assistant: assistantMessages.length,
-                    user: userMessages.length
-                  });
-                  
-                  // Si hay mensajes del usuario pero ninguno del asistente después de completion,
-                  // puede indicar que el run no se ejecutó correctamente
-                  if (userMessages.length > 0 && assistantMessages.length === 0) {
-                    console.warn('⚠️ Se detectó mensaje del usuario sin respuesta del asistente');
-                    // Mostrar mensaje de error al usuario
-                    setProcessingMessage({
-                      role: 'assistant',
-                      text: 'Parece que hubo un problema procesando tu solicitud. Por favor, inténtalo de nuevo.',
-                      created_at: new Date().toLocaleTimeString(),
-                      status: 'error',
-                      isTemporary: true
-                    });
-                  }
-                  
-                  onUpdateMessages(messagesData.data.messages);
-                }
-              } catch (error) {
-                console.error('Error obteniendo mensajes después de polling:', error);
-              }
-            }, 1000);
-          } else if (data.data.status === 'in_progress') {
-            // Si status es 'in_progress', continúa el polling
-            console.log('🔄 Run aún en progreso, continuando polling...');
-          } else if (data.data.status === 'completed') {
-            // Run completado sin datos específicos, detener polling y actualizar mensajes
-            console.log('🏁 Run completado sin datos, actualizando mensajes...');
-            
-            // Detener polling
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              setPollingInterval(null);
-            }
-            setCurrentRunId(null);
-            
-            // Quitar mensaje de "Pensando..."
-            setProcessingMessage(null);
-            
-            // Obtener mensajes actualizados inmediatamente
-            try {
-              const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
-                headers: {
-                  'Accept': 'application/json'
-                }
+            if (setQuoteData && allRoutes.length > 0) {
+              // 🆕 PROCESAR TODAS LAS RUTAS COMO ARRAY
+              const processedRoutes = allRoutes.map((route, idx) => {
+                console.log(`📍 Procesando ruta ${idx + 1}:`, route);
+                return {
+                  ciudadOrigen: route.ciudad_origen ?? route.origen ?? null,
+                  ciudadDestino: route.ciudad_destino ?? route.destino ?? null,
+                  pesoMercancia: route.peso_mercancia ?? route.peso_kg ?? null,
+                  cantidadMercancia: route.cantidad_unidades ?? route.cantidad ?? null,
+                  valorMercancia: route.valor_mercancia ?? route.valor_declarado ?? null,
+                  claseVehiculo: route.vehiculo_requerido ?? route.vehiculo ?? null,
+                  producto: route.tipo_producto ?? route.producto ?? null,
+                  tipo_producto: route.tipo_producto ?? route.producto ?? null,
+                  empaque: route.empaque ?? null,
+                  empaque_id: route.empaque_id ?? null,
+                };
               });
               
-              const messagesData = await messagesResponse.json();
-              if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
-                onUpdateMessages(messagesData.data.messages);
-              }
-            } catch (error) {
-              console.error('Error obteniendo mensajes después de completar:', error);
-            }
-          } else {
-            // Si es cualquier otro estado (finished, completed, etc.), detener polling
-            console.log('🏁 Run completado sin datos específicos, deteniendo polling');
-            
-            // Detener polling
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              setPollingInterval(null);
-            }
-            setCurrentRunId(null);
-            
-            // Quitar mensaje de "Pensando..."
-            setProcessingMessage(null);
-            
-            // Obtener mensajes actualizados
-            setTimeout(async () => {
-              try {
-                const messagesResponse = await fetch(`/api/chat/messages/${threadId}`, {
-                  headers: {
-                    'Accept': 'application/json'
-                  }
+              console.log(`✅ ${processedRoutes.length} rutas procesadas para QuoteDetailsPanel:`, processedRoutes);
+              
+              // 🆕 SIEMPRE devolver array
+              setQuoteData(processedRoutes);
+              
+              // Auto-seleccionar empaque del PRIMER elemento
+              const firstRoute = allRoutes[0];
+              if (firstRoute.empaque && firstRoute.empaque_id) {
+                setSelectedEmpaque({
+                  id: firstRoute.empaque_id,
+                  nome: firstRoute.empaque,
+                  nombre: firstRoute.empaque
                 });
-                
-                const messagesData = await messagesResponse.json();
-                if (messagesData.success && messagesData.data.messages && onUpdateMessages) {
-                  onUpdateMessages(messagesData.data.messages);
-                }
-              } catch (error) {
-                console.error('Error obteniendo mensajes después de polling:', error);
               }
-            }, 1000);
+              
+              // Auto-seleccionar producto del PRIMER elemento (si es común a todas)
+              if (firstRoute.tipo_producto || firstRoute.producto) {
+                const prodNombre = firstRoute.tipo_producto || firstRoute.producto;
+                setSelectedProduct({
+                  id: firstRoute.producto_id || 0,
+                  codigo: firstRoute.producto_codigo || prodNombre.toUpperCase(),
+                  producto_codigo: firstRoute.producto_codigo || prodNombre.toUpperCase(),
+                  nombre: prodNombre.toUpperCase(),
+                  producto: prodNombre.toUpperCase()
+                });
+                console.log('✅ Producto auto-seleccionado de primera ruta:', {
+                  codigo: firstRoute.producto_codigo || prodNombre.toUpperCase(),
+                  nombre: prodNombre.toUpperCase()
+                });
+              }
+            }
           }
+          
+          // NOTA: quote_data viene como array de rutas pero no tiene la normalización camelCase
+          // extracted_data ya fue procesado arriba con el mapeo correcto
+          // NO sobrescribir quoteData con quote_data crudo
+          
+          // Obtener mensajes finales con filtro por group_id
+          try {
+            const groupId = clientData?.groupId;
+            const url = groupId 
+              ? `/api/chat/messages/${threadId}?group_id=${groupId}`
+              : `/api/chat/messages/${threadId}`;
+            
+            console.log('📬 Solicitando mensajes:', { threadId, groupId, url });
+            
+            const msgResp = await fetch(url, {
+              headers: { 'Accept': 'application/json' }
+            });
+            const msgData = await msgResp.json();
+            
+            console.log('✅ Mensajes recibidos:', {
+              success: msgData.success,
+              count: msgData.data?.messages?.length,
+              group_id: msgData.data?.group_id
+            });
+            
+            if (msgData.success && msgData.data.messages && onUpdateMessages) {
+              onUpdateMessages(msgData.data.messages);
+            }
+          } catch (err) {
+            console.error('Error obteniendo mensajes:', err);
+          }
+          
+          stopPolling('Datos completados');
+          return;
         }
+        
+        // Estados que también detienen
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+          stopPolling(`Estado final: ${status}`);
+          return;
+        }
+        
+        // in_progress continúa normalmente
+        if (status === 'in_progress') {
+          console.log('⏳ Procesando...');
+        }
+        
       } catch (error) {
-        console.error('Error en polling run:', error);
+        console.error('❌ Error en polling:', error);
+        stopPolling('Error en fetch');
       }
     };
     
-    // Polling cada 2 segundos
+    // Ejecutar primera vez inmediatamente
+    pollRun();
+    
+    // Configurar intervalo
     const interval = setInterval(pollRun, 2000);
     setPollingInterval(interval);
-    
-    // Primera verificación inmediata
-    pollRun();
   };
 
   const handleSendMessage = async (retryAttempt = false) => {
@@ -498,6 +628,102 @@ const ChatModal = ({
     if (currentRunId || processingMessage) return;
 
     const messageText = inputMessage.trim();
+    
+    // 🔍 BÚSQUEDA PROACTIVA DE PRODUCTOS - Busca CUALQUIER producto mencionado
+    const buscarProductoProactivamente = async (texto) => {
+      // Regex mejorado para capturar productos mencionados después de palabras clave
+      const regex = /(?:toneladas de|tonelada de|kilos de|kilo de|kg de|transportar|llevar|enviar|envío de|envio de)\s+([a-záéíóúñ\s]+?)(?:\s+(?:por|en|con|desde|hacia|para|,|\.)|$)/gi;
+      
+      let posibleProducto = null;
+      let match;
+      
+      // Buscar el primer producto mencionado
+      while ((match = regex.exec(texto)) !== null) {
+        const producto = match[1].trim();
+        // Filtrar palabras muy cortas o comunes que no son productos
+        if (producto.length > 2 && !['por', 'con', 'sin', 'para', 'desde', 'hacia'].includes(producto.toLowerCase())) {
+          posibleProducto = producto;
+          break;
+        }
+      }
+      
+      // Si se detectó un posible producto y no hay producto seleccionado, buscar en BD
+      if (posibleProducto && !selectedProduct) {
+        console.log('🔍 BÚSQUEDA PROACTIVA - Detectado:', posibleProducto);
+        
+        try {
+          const response = await fetch('/api/mcp/search-products', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+            },
+            body: JSON.stringify({ query: posibleProducto })
+          });
+          
+          const result = await response.json();
+          console.log('📦 Resultado búsqueda proactiva:', result);
+          
+          if (result.success && result.productos && result.productos.length > 0) {
+            const producto = result.productos[0];
+            
+            if (result.match_type === 'exact') {
+              console.log('✅ MATCH EXACTO - Auto-seleccionando:', producto);
+              
+              setSelectedProduct({
+                codigo: producto.codigo,
+                nombre: producto.nombre,
+                producto_codigo: producto.codigo
+              });
+              
+              setQuoteData(prev => ({
+                ...prev,
+                producto: producto.nombre,
+                producto_codigo: producto.codigo,
+                tipo_producto: producto.nombre
+              }));
+            } else if (result.match_type === 'partial') {
+              console.log('⚠️ MATCH PARCIAL - Mostrando sugerencia:', producto);
+              
+              // Auto-seleccionar el más parecido
+              setSelectedProduct({
+                codigo: producto.codigo,
+                nombre: producto.nombre,
+                producto_codigo: producto.codigo
+              });
+              
+              setQuoteData(prev => ({
+                ...prev,
+                producto: producto.nombre,
+                producto_codigo: producto.codigo,
+                tipo_producto: producto.nombre
+              }));
+              
+              // Mostrar mensaje informativo
+              if (onUpdateMessages) {
+                setTimeout(() => {
+                  onUpdateMessages(prevMessages => [
+                    ...prevMessages,
+                    {
+                      role: 'assistant',
+                      text: `📦 Producto similar encontrado: "${producto.nombre}" (buscaste: "${posibleProducto}")`,
+                      created_at: new Date().toLocaleTimeString()
+                    }
+                  ]);
+                }, 300);
+              }
+            }
+          } else if (result.match_type === 'none') {
+            console.warn('❌ No se encontró ningún producto similar a:', posibleProducto);
+          }
+        } catch (err) {
+          console.error('Error búsqueda proactiva:', err);
+        }
+      }
+    };
+    
+    await buscarProductoProactivamente(messageText);
+    
     setIsSending(true);
     sendingRef.current = true;
     setProcessingProgress(10);
@@ -507,7 +733,14 @@ const ChatModal = ({
     try {
       if (activeThreadId) {
         try {
-          const existingMessagesResponse = await fetch(`/api/chat/messages/${activeThreadId}`, {
+          const groupId = clientData?.groupId;
+          const url = groupId
+            ? `/api/chat/messages/${activeThreadId}?group_id=${groupId}`
+            : `/api/chat/messages/${activeThreadId}`;
+          
+          console.log('🔍 Verificando mensajes existentes:', { activeThreadId, groupId });
+          
+          const existingMessagesResponse = await fetch(url, {
             headers: { Accept: 'application/json' }
           });
           const existingData = await existingMessagesResponse.json();
@@ -549,6 +782,7 @@ const ChatModal = ({
           message: messageText,
           thread_id: activeThreadId || null, // <-- never send clientData.threadId
           client_id: clientData.clientId,
+          group_id: clientData.groupId || null, // 🆕 Enviar group_id para guardar en conversation_messages
           type_business: clientData.typeBusiness || typeBusiness
         })
       });
@@ -580,6 +814,337 @@ const ChatModal = ({
 
         if (data.data.thread_id && !activeThreadId) {
           setThreadId(data.data.thread_id); // <-- store new thread locally
+        }
+
+        // NUEVO: Procesar datos extraídos inmediatamente
+        if (data.data.extracted_data && setQuoteData) {
+          console.log('✅ Datos extraídos recibidos, auto-llenando campos:', data.data.extracted_data);
+          
+          // 🆕 DETECTAR SI ES ARRAY (MULTI-RUTA) O OBJETO (RUTA ÚNICA)
+          const isMultiRoute = Array.isArray(data.data.extracted_data);
+          const routesArray = isMultiRoute 
+            ? data.data.extracted_data 
+            : [data.data.extracted_data];
+          
+          console.log(`🛣️ Detectadas ${routesArray.length} ruta(s):`, routesArray);
+          
+          // Auto-buscar producto del PRIMER elemento (o único)
+          const firstRoute = routesArray[0];
+          if (firstRoute.producto && (!selectedProduct || selectedProduct.nombre !== firstRoute.producto)) {
+            const productoTexto = firstRoute.producto;
+            console.log('🔍 Backend extrajo producto diferente, buscando en BD:', productoTexto);
+            
+            // Llamar al backend para buscar el producto
+            fetch('/api/mcp/search-products', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+              },
+              body: JSON.stringify({ query: productoTexto })
+            })
+            .then(res => res.json())
+            .then(result => {
+              console.log('📦 Resultado búsqueda producto:', result);
+              
+              if (result.success && result.productos && result.productos.length > 0) {
+                if (result.match_type === 'exact') {
+                  // Coincidencia exacta - auto-seleccionar
+                  const producto = result.productos[0];
+                  console.log('✅ Coincidencia EXACTA - Auto-seleccionando:', producto);
+                  
+                  // 1. Actualizar selectedProduct
+                  setSelectedProduct({
+                    codigo: producto.codigo,
+                    nombre: producto.nombre,
+                    producto_codigo: producto.codigo
+                  });
+
+                  // 2. Actualizar TAMBIÉN las rutas existentes con el producto
+                  setQuoteData(prev => {
+                    console.log('🔄 Actualizando quoteData con producto. prev:', prev);
+                    
+                    if (Array.isArray(prev) && prev.length > 0) {
+                      const updated = prev.map(route => ({
+                        ...route,
+                        producto: producto.nombre,
+                        producto_codigo: producto.codigo,
+                        tipo_producto: producto.nombre
+                      }));
+                      console.log('✅ Array actualizado:', updated);
+                      return updated;
+                    } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
+                      const updated = {
+                        ...prev,
+                        producto: producto.nombre,
+                        producto_codigo: producto.codigo,
+                        tipo_producto: producto.nombre
+                      };
+                      console.log('✅ Objeto actualizado:', updated);
+                      return updated;
+                    } else {
+                      // Si NO hay datos previos, crear objeto inicial con solo el producto
+                      const newData = {
+                        producto: producto.nombre,
+                        producto_codigo: producto.codigo,
+                        tipo_producto: producto.nombre
+                      };
+                      console.log('🆕 Creando nuevo quoteData con producto:', newData);
+                      return newData;
+                    }
+                  });
+                } else if (result.match_type === 'partial') {
+                  // Sugerencias - mostrar al usuario para que elija
+                  console.log('⚠️ No hay coincidencia exacta - Mostrando sugerencias:', result.productos);
+                  
+                  // Agregar mensaje al chat con sugerencias
+                  if (onUpdateMessages) {
+                    onUpdateMessages(prev => [
+                      ...prev,
+                      {
+                        role: 'assistant',
+                        text: `No encontré "${productoTexto}" exactamente en el catálogo. ¿Te refieres a alguno de estos?`,
+                        created_at: new Date().toLocaleTimeString(),
+                        toolCallData: {
+                          isToolCall: true,
+                          type: 'productos',
+                          content: (
+                            <div className="space-y-2">
+                              {result.productos.map((prod, idx) => (
+                                <button
+                                  key={idx}
+                                  className="block w-full text-left px-4 py-2 rounded bg-gray-100 hover:bg-orange-100 transition-colors"
+                                  onClick={() => {
+                                    console.log('✅ Usuario seleccionó sugerencia:', prod);
+                                    
+                                    // 1. Actualizar selectedProduct
+                                    setSelectedProduct({
+                                      codigo: prod.codigo,
+                                      nombre: prod.nombre,
+                                      producto_codigo: prod.codigo
+                                    });
+
+                                    // 2. Actualizar routes con el producto seleccionado
+                                    setQuoteData(prev => {
+                                      console.log('🔄 Actualizando quoteData (sugerencia). prev:', prev);
+                                      
+                                      if (Array.isArray(prev) && prev.length > 0) {
+                                        const updated = prev.map(route => ({
+                                          ...route,
+                                          producto: prod.nombre,
+                                          producto_codigo: prod.codigo,
+                                          tipo_producto: prod.nombre
+                                        }));
+                                        console.log('✅ Array actualizado:', updated);
+                                        return updated;
+                                      } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
+                                        const updated = {
+                                          ...prev,
+                                          producto: prod.nombre,
+                                          producto_codigo: prod.codigo,
+                                          tipo_producto: prod.nombre
+                                        };
+                                        console.log('✅ Objeto actualizado:', updated);
+                                        return updated;
+                                      } else {
+                                        // Si NO hay datos previos, crear objeto inicial
+                                        const newData = {
+                                          producto: prod.nombre,
+                                          producto_codigo: prod.codigo,
+                                          tipo_producto: prod.nombre
+                                        };
+                                        console.log('🆕 Creando nuevo quoteData:', newData);
+                                        return newData;
+                                      }
+                                    });
+                                  }}
+                                >
+                                  <div className="font-semibold text-gray-900">{prod.nombre}</div>
+                                  <div className="text-xs text-gray-500">Código: {prod.codigo}</div>
+                                </button>
+                              ))}
+                            </div>
+                          )
+                        }
+                      }
+                    ]);
+                  }
+                }
+              } else {
+                console.warn('❌ Producto no encontrado en BD:', productoTexto, '- Se usará como texto personalizado');
+                // Crear mensaje informativo
+                if (onUpdateMessages) {
+                  onUpdateMessages(prev => [
+                    ...prev,
+                    {
+                      role: 'assistant',
+                      text: `⚠️ El producto "${productoTexto}" no existe en nuestro catálogo. Se guardará como producto personalizado.`,
+                      created_at: new Date().toLocaleTimeString(),
+                    }
+                  ]);
+                }
+              }
+            })
+            .catch(err => {
+              console.error('❌ Error buscando producto:', err);
+            });
+          }
+          
+          // 2️⃣ Actualizar quoteData - AHORA MANEJA MULTI-RUTA Y EDICIÓN INDIVIDUAL
+          console.log('🚀 Antes de setQuoteData - routesArray:', routesArray, 'length:', routesArray.length);
+          
+          // 🆕 Detectar si el mensaje menciona una ruta específica para editar
+          const mentionedRouteIndex = detectRouteFromMessage(messageText);
+          if (mentionedRouteIndex !== null) {
+            console.log(`🎯 Usuario mencionó Ruta ${mentionedRouteIndex + 1} - seleccionando automáticamente`);
+            setSelectedRouteIndex(mentionedRouteIndex);
+          }
+          
+          setQuoteData(prev => {
+            console.log('📝 Dentro de setQuoteData - routesArray:', routesArray.length, 'elementos');
+            console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
+            console.log('📍 mentionedRouteIndex detectado:', mentionedRouteIndex);
+            
+            // 🆕 Determinar qué índice de ruta usar para edición
+            const editingRouteIndex = mentionedRouteIndex !== null ? mentionedRouteIndex : selectedRouteIndex;
+            
+            const mensajeLower = messageText.toLowerCase();
+            const mencionaTara = 
+              mensajeLower.includes('incluir tara') ||
+              mensajeLower.includes('incluye tara') ||
+              mensajeLower.includes('suma tara') ||
+              mensajeLower.includes('suma el tara') ||
+              mensajeLower.includes('sumar tara') ||
+              mensajeLower.includes('con tara') ||
+              mensajeLower.includes('más tara') ||
+              mensajeLower.includes('mas tara') ||
+              mensajeLower.includes('agregar tara') ||
+              mensajeLower.includes('agrega tara') ||
+              mensajeLower.includes('peso incluye tara');
+            
+            const TARA_KG = 3400;
+            
+            // 🆕 Si hay una ruta seleccionada para edición y solo viene 1 ruta en los datos,
+            // aplicar los cambios SOLO a esa ruta, manteniendo las demás intactas
+            const prevArray = Array.isArray(prev) ? prev : (prev ? [prev] : []);
+            const hasExistingRoutes = prevArray.length > 0;
+            const isEditingSingleRoute = editingRouteIndex !== null && routesArray.length === 1 && hasExistingRoutes;
+            
+            console.log('🔧 Modo de edición:', {
+              isEditingSingleRoute,
+              editingRouteIndex,
+              prevRoutesCount: prevArray.length,
+              newRoutesCount: routesArray.length
+            });
+            
+            if (isEditingSingleRoute && editingRouteIndex < prevArray.length) {
+              // 🆕 EDICIÓN DE RUTA INDIVIDUAL - Fusionar cambios solo en la ruta seleccionada
+              const editedRoute = routesArray[0];
+              const updatedRoutes = prevArray.map((existingRoute, idx) => {
+                if (idx === editingRouteIndex) {
+                  // Esta es la ruta que se está editando - fusionar cambios
+                  const pesoBase = editedRoute.peso_kg || existingRoute.pesoMercancia || 0;
+                  const pesoFinal = (mencionaTara && pesoBase > 0) 
+                    ? parseFloat(pesoBase) + TARA_KG 
+                    : pesoBase;
+                  
+                  const mergedRoute = {
+                    ...existingRoute,
+                    // Solo sobrescribir campos que vienen con valor
+                    ciudadOrigen: editedRoute.origen || existingRoute.ciudadOrigen,
+                    ciudadDestino: editedRoute.destino || existingRoute.ciudadDestino,
+                    pesoMercancia: pesoFinal || existingRoute.pesoMercancia,
+                    cantidadMercancia: editedRoute.cantidad || existingRoute.cantidadMercancia,
+                    valorMercancia: editedRoute.valor_declarado || existingRoute.valorMercancia,
+                    claseVehiculo: editedRoute.vehiculo || existingRoute.claseVehiculo,
+                    empaque: editedRoute.empaque || existingRoute.empaque,
+                    empaque_id: editedRoute.empaque_id || existingRoute.empaque_id,
+                    producto: editedRoute.producto || existingRoute.producto,
+                    tipo_producto: editedRoute.producto || existingRoute.tipo_producto,
+                  };
+                  
+                  console.log(`✏️ Ruta ${idx + 1} EDITADA:`, mergedRoute);
+                  return mergedRoute;
+                }
+                // Rutas no editadas permanecen igual
+                return existingRoute;
+              });
+              
+              console.log(`📊 Rutas actualizadas (1 editada, ${updatedRoutes.length - 1} sin cambios):`, updatedRoutes);
+              
+              // Notificar al usuario
+              if (onUpdateMessages) {
+                setTimeout(() => {
+                  onUpdateMessages(prevMessages => [
+                    ...prevMessages,
+                    {
+                      role: 'system',
+                      text: `✅ Ruta ${editingRouteIndex + 1} actualizada correctamente.`,
+                      created_at: new Date().toLocaleTimeString()
+                    }
+                  ]);
+                }, 300);
+              }
+              
+              return updatedRoutes;
+            }
+            
+            // 🆕 MODO NORMAL - Procesar CADA ruta del array (creación inicial o multi-ruta)
+            const processedRoutes = routesArray.map((routeData, idx) => {
+              const pesoBase = routeData.peso_kg || 0;
+              const pesoFinal = (mencionaTara && pesoBase > 0) 
+                ? parseFloat(pesoBase) + TARA_KG 
+                : pesoBase;
+              
+              // Si es la primera ruta con tara, mostrar mensaje
+              if (idx === 0 && mencionaTara && pesoBase > 0 && onUpdateMessages) {
+                console.log(`🏋️ TARA DETECTADA - Sumando ${TARA_KG} kg al peso base ${pesoBase} kg`);
+                setTimeout(() => {
+                  onUpdateMessages(prevMessages => [
+                    ...prevMessages,
+                    {
+                      role: 'assistant',
+                      text: `✅ Tara agregada: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg + 3,400 kg (tara) = ${pesoFinal.toLocaleString('es-CO')} kg total`,
+                      created_at: new Date().toLocaleTimeString()
+                    }
+                  ]);
+                }, 500);
+              }
+              
+              return {
+                ciudadOrigen: routeData.origen || null,
+                ciudadDestino: routeData.destino || null,
+                pesoMercancia: pesoFinal || null,
+                cantidadMercancia: routeData.cantidad || null,
+                valorMercancia: routeData.valor_declarado || null,
+                claseVehiculo: routeData.vehiculo || null,
+                empaque: routeData.empaque || null,
+                empaque_id: routeData.empaque_id || null,
+                producto: routeData.producto || null,
+                tipo_producto: routeData.producto || null,
+              };
+            });
+            
+            console.log(`📊 ${processedRoutes.length} ruta(s) procesadas:`, processedRoutes);
+            
+            // 🆕 SIEMPRE devolver array para consistencia con QuoteDetailsPanel
+            return processedRoutes;
+          });
+
+          // NUEVO: Auto-seleccionar empaque del PRIMER elemento si viene con ID de la BD
+          const firstExtracted = Array.isArray(data.data.extracted_data) 
+            ? data.data.extracted_data[0] 
+            : data.data.extracted_data;
+            
+          if (firstExtracted?.empaque && firstExtracted?.empaque_id) {
+            const empaqueObj = {
+              id: firstExtracted.empaque_id,
+              nome: firstExtracted.empaque,
+              nombre: firstExtracted.empaque
+            };
+            setSelectedEmpaque(empaqueObj);
+            console.log('✅ Embalaje auto-seleccionado:', empaqueObj);
+          }
         }
 
         if (data.data.run_id) {
@@ -721,14 +1286,96 @@ const ChatModal = ({
   };
 
     const handleCreateQuote = async () => {
+    // 🆕 Convertir a array si es objeto único
+    const routesArray = Array.isArray(quoteData) ? quoteData : (quoteData ? [quoteData] : []);
+    
+    if (routesArray.length === 0) {
+      alert('⚠️ No hay datos de cotización. Por favor completa la información en el chat.');
+      return;
+    }
+    
+    // Validar que al menos la primera ruta tenga datos básicos
+    const firstRoute = routesArray[0];
+    const missingFields = [];
+    
+    if (!firstRoute.ciudadOrigen && !firstRoute.ciudad_origen && !firstRoute.origen) {
+      missingFields.push('Ciudad de origen');
+    }
+    if (!firstRoute.ciudadDestino && !firstRoute.ciudad_destino && !firstRoute.destino) {
+      missingFields.push('Ciudad de destino');
+    }
+    if (!firstRoute.pesoMercancia && !firstRoute.peso_mercancia && !firstRoute.peso_kg) {
+      missingFields.push('Peso de mercancía');
+    }
+    
+    // Validar producto (puede venir de selectedProduct o de la ruta)
+    if (!selectedProduct && !firstRoute.producto && !firstRoute.tipo_producto) {
+      missingFields.push('Producto');
+    }
+    
+    // Si faltan datos, mostrar mensaje específico
+    if (missingFields.length > 0) {
+      alert(`⚠️ FALTAN DATOS REQUERIDOS:\n\n${missingFields.map(f => `• ${f}`).join('\n')}\n\nPor favor completa la información en el chat.`);
+      return;
+    }
+    
     if (!clientData.groupId) {
-      alert('You need a quote group before saving routes.');
+      alert('No se encontró el grupo de cotización. Por favor recarga la página.');
       return;
     }
-    if (!quoteData || !quoteData.length) {
-      alert('No routes to save.');
-      return;
-    }
+
+    // Tabla de capacidades de vehículos (kg)
+    const vehicleCapacities = {
+      'CAMIONETA': 2000,
+      'TURBO': 4000,
+      'SENCILLO': 9000,
+      'PATINETA2': 20000,
+      'PATINETA3': 25000,
+      'TRACTOMULA 2': 30000,
+      'TRACTOMULA 3': 34000
+    };
+
+    // Función para recomendar vehículo basado en peso
+    const recommendVehicle = (weight) => {
+      if (!weight || weight <= 0) return 'Sencillo';
+      
+      const sortedVehicles = Object.entries(vehicleCapacities)
+        .sort((a, b) => a[1] - b[1]);
+      
+      for (const [vehicle, capacity] of sortedVehicles) {
+        if (weight <= capacity) {
+          return vehicle;
+        }
+      }
+      
+      return 'TRACTOMULA 3';
+    };
+
+    // 🆕 PROCESAR TODAS LAS RUTAS - cada una con sus datos explícitos
+    const routesToSave = routesArray.map((route, idx) => {
+      const pesoMercancia = route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0;
+      const vehiculoRecomendado = route.claseVehiculo || route.vehiculo || recommendVehicle(pesoMercancia);
+      
+      return {
+        ciudad_origen: route.ciudadOrigen || route.ciudad_origen || route.origen,
+        ciudad_destino: route.ciudadDestino || route.ciudad_destino || route.destino,
+        peso_mercancia: pesoMercancia,
+        cantidad: route.cantidadMercancia || route.cantidad || 1,
+        tipo_embajale: route.empaque || selectedEmpaque?.Codigo || selectedEmpaque?.codigo || selectedEmpaque?.nome || 'Caja',
+        tipo_producto: route.producto || route.tipo_producto || selectedProduct?.codigo || selectedProduct?.nombre || 'Mercancía general',
+        vehiculo_requerido: vehiculoRecomendado,
+        valor_declarado: route.valorMercancia || route.valor_declarado || 0,
+      };
+    });
+
+    console.log('📤 Preparando guardar cotización MULTI-RUTA:', {
+      groupId: clientData.groupId,
+      clientId: clientData.clientId,
+      routesCount: routesToSave.length,
+      routes: routesToSave,
+      selectedProduct,
+      selectedEmpaque
+    });
 
     try {
       const saveResponse = await fetch('/api/chat/quote/save-routes', {
@@ -742,25 +1389,45 @@ const ChatModal = ({
         credentials: 'same-origin',
         body: JSON.stringify({
           group_id: clientData.groupId,
-          routes: quoteData
+          routes: routesToSave
         })
       });
 
       const saveResult = await saveResponse.json();
 
       if (saveResult.success) {
-        // Merge returned IDs into quoteData so later steps update instead of create
-        if (saveResult.data?.routes) {
-          setQuoteData(prev =>
-            prev.map((r, i) => ({
-              ...r,
-              id: saveResult.data.routes[i]?.id || r.id || null,
-            }))
-          );
+        console.log('✅ Cotización guardada exitosamente:', saveResult.data);
+        
+        // Actualizar quoteData con los IDs retornados
+        if (saveResult.data?.routes && saveResult.data.routes.length > 0) {
+          if (Array.isArray(quoteData)) {
+            // Si es array, actualizar cada elemento con su ID correspondiente
+            setQuoteData(prev => 
+              prev.map((route, idx) => ({
+                ...route,
+                id: saveResult.data.routes[idx]?.id || route.id
+              }))
+            );
+          } else {
+            // Si es objeto, actualizar con el primer ID
+            const savedRoute = saveResult.data.routes[0];
+            setQuoteData(prev => ({
+              ...prev,
+              id: savedRoute.id
+            }));
+          }
         }
 
-        // proceed to next step
-        onNext && onNext(saveResult.data);
+        // Cerrar modal actual y avanzar al siguiente paso (EditRoutesModal)
+        console.log('🔄 Avanzando al siguiente paso del flujo...');
+        console.log('onNext disponible:', typeof onNext);
+        
+        if (onNext) {
+          console.log('✅ Ejecutando onNext para abrir EditRoutesModal');
+          onNext();
+        } else {
+          console.warn('⚠️ onNext no está definido - no se puede avanzar al siguiente modal');
+        }
       } else {
         console.error('Error saving routes:', saveResult.error);
         alert('There was a problem saving routes. Please try again.');
@@ -774,11 +1441,330 @@ const ChatModal = ({
   const canProceed = quoteData && quoteData.length > 0 && 
                    quoteData.some(route => route.ciudad_origen && route.ciudad_destino);
 
+  // Función para formatear mensajes de tool calls
+  const formatToolCallMessage = (text) => {
+    try {
+      const data = JSON.parse(text);
+      
+      console.log('🔍 Parseando tool call:', { function: data.function, hasResult: !!data.result, data });
+      
+      // Si es una llamada a search_products con resultados (soportar múltiples variantes del nombre)
+      const isSearchProducts = data.function && (
+        data.function.toLowerCase().includes('searchproduct') || 
+        data.function === 'search_products'
+      );
+      
+      if (isSearchProducts && data.result?.productos && Array.isArray(data.result.productos)) {
+        const productos = data.result.productos;
+        console.log('✅ Mostrando productos:', productos.length, productos);
+        return {
+          isToolCall: true,
+          type: 'productos',
+          content: (
+            <div className="space-y-3">
+              <div className="font-semibold text-gray-900 mb-2">
+                🔍 Encontré {productos.length} producto(s). Selecciona uno:
+              </div>
+              <div className="space-y-2">
+                {productos.map((producto, idx) => {
+                  const isSelected = selectedProduct?.codigo === producto.codigo;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm ${
+                        isSelected 
+                          ? 'bg-orange-100 border-orange-500 shadow-md' 
+                          : 'bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400'
+                      }`}
+                      onClick={() => {
+                        setSelectedProduct(producto);
+                        // Actualizar quoteData automáticamente
+                        setQuoteData(prev => ({
+                          ...prev,
+                          producto: producto.nombre,
+                          codigoProducto: producto.codigo
+                        }));
+                      }}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
+                          isSelected
+                            ? 'border-orange-600 bg-orange-600'
+                            : 'border-orange-400'
+                        }`}>
+                          {isSelected && (
+                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-bold text-orange-900 mb-2 text-base">
+                            {producto.nombre}
+                          </div>
+                          <div className="text-xs text-gray-700 space-y-1">
+                            <div className="flex items-center gap-1">
+                              <span className="font-semibold">📦 Código:</span> {producto.codigo}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedProduct && (
+                <div className="text-sm bg-green-50 border border-green-200 rounded p-3 text-green-800 font-medium">
+                  ✅ Producto seleccionado: {selectedProduct.nombre}
+                </div>
+              )}
+            </div>
+          )
+        };
+      }
+      
+      // Si es una llamada a get_empaques con resultados
+      if (data.function === 'get_empaques' && data.result?.success && data.result?.empaques) {
+        const empaques = data.result.empaques;
+        console.log('✅ Mostrando empaques:', empaques.length);
+        return {
+          isToolCall: true,
+          type: 'empaques',
+          content: (
+            <div className="space-y-3">
+              <div className="font-semibold text-gray-900 mb-2">
+                📦 Tipos de embalaje disponibles. Selecciona uno:
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {empaques.map((empaque, idx) => {
+                  const nombre = empaque.nome || empaque.nombre;
+                  const isSelected = selectedEmpaque?.id === empaque.id;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`border-2 rounded-lg p-3 transition-all text-center cursor-pointer shadow-sm ${
+                        isSelected
+                          ? 'bg-blue-100 border-blue-500 shadow-md'
+                          : 'bg-blue-50 border-blue-300 hover:bg-blue-100 hover:border-blue-400'
+                      }`}
+                      onClick={() => {
+                        setSelectedEmpaque(empaque);
+                        // Actualizar quoteData automáticamente
+                        setQuoteData(prev => ({
+                          ...prev,
+                          empaque: nombre,
+                          empaqueId: empaque.id
+                        }));
+                      }}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                          isSelected
+                            ? 'border-blue-600 bg-blue-600'
+                            : 'border-blue-400'
+                        }`}>
+                          {isSelected && (
+                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                            </svg>
+                          )}
+                        </div>
+                        <div className="font-bold text-blue-900 text-sm">
+                          {nombre}
+                        </div>
+                        {empaque.id && (
+                          <div className="text-xs text-gray-500">ID: {empaque.id}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedEmpaque && (
+                <div className="text-sm bg-green-50 border border-green-200 rounded p-3 text-green-800 font-medium">
+                  ✅ Empaque seleccionado: {selectedEmpaque.nome || selectedEmpaque.nombre}
+                </div>
+              )}
+            </div>
+          )
+        };
+      }
+      
+      // Si es create_cotizacion con resultado exitoso
+      if (data.function === 'create_cotizacion' && data.result) {
+        console.log('✅ Cotización creada:', data.result);
+        
+        // Actualizar quoteData con los resultados
+        if (setQuoteData && data.result.cotizacion) {
+          const cotizacion = data.result.cotizacion;
+          setQuoteData(prev => Array.isArray(prev) ? [{
+            ciudad_origen: cotizacion.ciudad_origen || prev.ciudadOrigen,
+            ciudad_destino: cotizacion.ciudad_destino || prev.ciudadDestino,
+            peso_mercancia: cotizacion.peso_mercancia || prev.pesoMercancia,
+            cantidad: cotizacion.cantidad || prev.cantidadMercancia,
+            tipo_embajale: cotizacion.tipo_embajale || prev.empaque,
+            producto: cotizacion.producto || prev.producto,
+            vehiculo_requerido: cotizacion.vehiculo_requerido,
+            valor_flete: cotizacion.valor_flete,
+            distancia_km: cotizacion.distancia_km,
+            tiempo_estimado: cotizacion.tiempo_estimado
+          }] : prev);
+        }
+        
+        return {
+          isToolCall: true,
+          type: 'cotizacion_creada',
+          content: (
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-5 shadow-md">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-green-900">¡Cotización Creada Exitosamente!</div>
+                  <div className="text-sm text-green-700">ID: {data.result.cotizacion_id}</div>
+                </div>
+              </div>
+              
+              {data.result.cotizacion && (
+                <div className="space-y-2 bg-white rounded-lg p-4 border border-green-200">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="font-semibold text-gray-600">📍 Origen:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.ciudad_origen}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">📍 Destino:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.ciudad_destino}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">⚖️ Peso:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.peso_mercancia} kg</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">📦 Cantidad:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.cantidad}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">📦 Embalaje:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.tipo_embajale}</div>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-600">🏷️ Producto:</span>
+                      <div className="text-gray-900 font-medium">{data.result.cotizacion.producto}</div>
+                    </div>
+                    {data.result.cotizacion.vehiculo_requerido && (
+                      <div className="col-span-2">
+                        <span className="font-semibold text-gray-600">🚛 Vehículo:</span>
+                        <div className="text-gray-900 font-medium">{data.result.cotizacion.vehiculo_requerido}</div>
+                      </div>
+                    )}
+                    {data.result.cotizacion.valor_flete && (
+                      <div className="col-span-2 bg-green-50 p-3 rounded border border-green-200">
+                        <span className="font-semibold text-green-700">💰 Valor del Flete:</span>
+                        <div className="text-2xl font-bold text-green-900">${Number(data.result.cotizacion.valor_flete).toLocaleString()}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {data.result.message && (
+                <div className="mt-3 text-sm text-green-700 font-medium">
+                  ℹ️ {data.result.message}
+                </div>
+              )}
+            </div>
+          )
+        };
+      }
+      
+      // Si es un error de herramienta
+      if (data.result?.error) {
+        return {
+          isToolCall: true,
+          type: 'error',
+          content: (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="text-red-800">
+                ⚠️ El servidor está experimentando demoras. Intenta nuevamente en unos momentos.
+              </div>
+            </div>
+          )
+        };
+      }
+      
+      // Fallback: Si tiene función y resultado pero no coincide con ningún formato conocido
+      if (data.function && data.result) {
+        console.warn('⚠️ Tool call no reconocido:', data);
+      }
+      
+    } catch (e) {
+      // No es JSON válido, retornar null para mostrar texto normal
+      return null;
+    }
+    
+    return null;
+  };
+
+  // Función helper para formatear timestamps de manera segura
+  const formatMessageTime = (timestamp) => {
+    if (!timestamp) {
+      return new Date().toLocaleTimeString('es-CO', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    }
+    
+    try {
+      // Si ya es una hora formateada (HH:MM:SS o HH:MM), devolverla
+      if (typeof timestamp === 'string' && /^\d{1,2}:\d{2}/.test(timestamp)) {
+        return timestamp;
+      }
+      
+      // Intentar parsear como fecha
+      const date = new Date(timestamp);
+      
+      // Verificar si es fecha válida
+      if (isNaN(date.getTime())) {
+        return new Date().toLocaleTimeString('es-CO', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+      }
+      
+      return date.toLocaleTimeString('es-CO', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    } catch (error) {
+      console.warn('Error formateando timestamp:', timestamp, error);
+      return new Date().toLocaleTimeString('es-CO', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    }
+  };
+
   const sanitizedMessages = useMemo(() => {
-    return messages.map(msg => ({
-      ...msg,
-      text: stripMarkdown(msg.text)
-    }));
+    return messages.map(msg => {
+      const toolCallFormatted = formatToolCallMessage(msg.text);
+      if (toolCallFormatted) {
+        return {
+          ...msg,
+          text: null,
+          toolCallData: toolCallFormatted,
+          created_at: formatMessageTime(msg.created_at)
+        };
+      }
+      return {
+        ...msg,
+        text: stripMarkdown(msg.text),
+        created_at: formatMessageTime(msg.created_at)
+      };
+    });
   }, [messages]);                
 
   return (
@@ -915,13 +1901,571 @@ const ChatModal = ({
             )}
           </div>
 
-          {/* Información de Rutas */}
+          {/* Panel de Progreso de Cotización - OCULTO */}
+          {false && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="bg-gradient-to-r from-green-50 to-blue-50 px-6 py-4 border-b border-gray-200">
+              <h4 className="text-base font-600 text-gray-700 product-sans">📋 Información de la Cotización</h4>
+            </div>
+            <div className="p-6 space-y-2">
+              {/* 1. Origen */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.ciudadOrigen 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.ciudadOrigen ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.ciudadOrigen ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">1</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Origen</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.ciudadOrigen || 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Destino */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.ciudadDestino 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.ciudadDestino ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.ciudadDestino ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">2</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Destino</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.ciudadDestino || 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Peso */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.pesoMercancia 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.pesoMercancia ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.pesoMercancia ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">3</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Peso</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.pesoMercancia ? `${quoteData.pesoMercancia} kg` : 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Cantidad */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.cantidadMercancia 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.cantidadMercancia ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.cantidadMercancia ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">4</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Cantidad</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.cantidadMercancia ? `${quoteData.cantidadMercancia} unidades` : 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. Embalaje */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                selectedEmpaque 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    selectedEmpaque ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {selectedEmpaque ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">5</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Embalaje</div>
+                    <div className="text-xs text-gray-500">
+                      {selectedEmpaque ? (selectedEmpaque.nome || selectedEmpaque.nombre) : 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. Producto */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                selectedProduct 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    selectedProduct ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {selectedProduct ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">6</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Producto</div>
+                    <div className="text-xs text-gray-500">
+                      {selectedProduct ? selectedProduct.nombre : 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 7. Vehículo */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.claseVehiculo || quoteData?.vehiculoRequerido 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">7</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Vehículo</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido || 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 8. Valor */}
+              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                quoteData?.valorMercancia 
+                  ? 'bg-green-50 border-green-300' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                    quoteData?.valorMercancia ? 'bg-green-500' : 'bg-gray-300'
+                  }`}>
+                    {quoteData?.valorMercancia ? (
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                      </svg>
+                    ) : (
+                      <span className="text-xs text-white">8</span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-600 text-gray-700">Valor</div>
+                    <div className="text-xs text-gray-500">
+                      {quoteData?.valorMercancia ? `$${parseInt(quoteData.valorMercancia).toLocaleString('es-CO')}` : 'Esperando...'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen */}
+              <div className="pt-3 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-600 text-gray-600">
+                    Campos completados
+                  </span>
+                  <span className="text-xs font-700 text-gray-900">
+                    {(() => {
+                      const fields = [
+                        quoteData?.ciudadOrigen,
+                        quoteData?.ciudadDestino,
+                        quoteData?.pesoMercancia,
+                        quoteData?.cantidadMercancia,
+                        selectedEmpaque,
+                        selectedProduct,
+                        quoteData?.claseVehiculo || quoteData?.vehiculoRequerido,
+                        quoteData?.valorMercancia
+                      ];
+                      const completed = fields.filter(f => f).length;
+                      return `${completed}/8`;
+                    })()}
+                  </span>
+                </div>
+                <div className="mt-2 bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-green-500 to-blue-500 h-full transition-all duration-500"
+                    style={{ 
+                      width: `${(() => {
+                        const fields = [
+                          quoteData?.ciudadOrigen,
+                          quoteData?.ciudadDestino,
+                          quoteData?.pesoMercancia,
+                          quoteData?.cantidadMercancia,
+                          selectedEmpaque,
+                          selectedProduct,
+                          quoteData?.claseVehiculo || quoteData?.vehiculoRequerido,
+                          quoteData?.valorMercancia
+                        ];
+                        const completed = fields.filter(f => f).length;
+                        return Math.round((completed / 8) * 100);
+                      })()}%` 
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* Panel de Detalles de Cotización - React Component */}
+          {(() => {
+            // 🔍 DEBUG: Log para verificar qué contiene quoteData
+            console.log('🔍 QuoteDetailsPanel - quoteData actual:', {
+              quoteData,
+              isArray: Array.isArray(quoteData),
+              length: Array.isArray(quoteData) ? quoteData.length : 'N/A (no es array)',
+              type: typeof quoteData
+            });
+            
+            // Construir routesData SIEMPRE con datos disponibles
+            let routesData = [];
+            
+            // Caso 1: quoteData es array (multi-ruta)
+            if (Array.isArray(quoteData) && quoteData.length > 0) {
+              console.log('✅ CASO 1: quoteData es ARRAY con', quoteData.length, 'rutas');
+              routesData = quoteData.map(route => ({
+                ...route,
+                // Sobrescribir con selectedProduct/selectedEmpaque si existen
+                producto: selectedProduct?.nombre || route.producto || route.tipo_producto,
+                producto_codigo: selectedProduct?.codigo || route.producto_codigo,
+                tipo_producto: selectedProduct?.nombre || route.tipo_producto || route.producto,
+                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || route.empaque || route.tipo_embalaje,
+                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || route.tipo_embalaje || route.empaque
+              }));
+            } 
+            // Caso 2: quoteData es objeto con datos
+            else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
+              routesData = [{
+                ...quoteData,
+                producto: selectedProduct?.nombre || quoteData.producto || quoteData.tipo_producto,
+                producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
+                tipo_producto: selectedProduct?.nombre || quoteData.tipo_producto || quoteData.producto,
+                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
+                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
+              }];
+            }
+            // Caso 3: NO hay quoteData pero SÍ hay selectedProduct o selectedEmpaque
+            else if (selectedProduct || selectedEmpaque) {
+              routesData = [{
+                producto: selectedProduct?.nombre,
+                producto_codigo: selectedProduct?.codigo,
+                tipo_producto: selectedProduct?.nombre,
+                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre,
+                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
+              }];
+            }
+            
+            console.log('🎯 Datos pasados a QuoteDetailsPanel:', {
+              quoteDataOriginal: quoteData,
+              selectedProduct,
+              selectedEmpaque,
+              routesData,
+              routesLength: routesData.length,
+              hasAllRequiredData,
+              selectedRouteIndex
+            });
+            
+            return (
+              <QuoteDetailsPanel 
+                routes={routesData}
+                selectedProduct={selectedProduct}
+                selectedEmpaque={selectedEmpaque}
+                isLoading={!!processingMessage && (!quoteData || (Array.isArray(quoteData) ? quoteData.length === 0 : !quoteData.ciudadOrigen))}
+                onCreateQuote={handleCreateQuote}
+                canCreate={hasAllRequiredData}
+                selectedRouteIndex={selectedRouteIndex}
+                onSelectRoute={handleSelectRoute}
+              />
+            );
+          })()}
+
+          {/* ELIMINADO: Panel antiguo Livewire/Detalles editables que causaba errores */}
+          {false && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="bg-gray-100 px-6 py-4 border-b border-gray-200">
               <h4 className="text-base font-600 text-gray-600 product-sans">Detalles de la Cotización</h4>
             </div>
-            <div className="max-h-96 overflow-y-auto scrollbar-thin">
-              {quoteData.length > 0 ? (
+            <div className="max-h-[500px] overflow-y-auto scrollbar-thin">
+              {/* Mostrar productos disponibles para selección SI existen */}
+              {(() => {
+                // Buscar si hay productos en los mensajes
+                const productosMessage = messages.find(msg => 
+                  msg.content?.props?.type === 'productos' && 
+                  msg.content?.props?.content?.props?.children?.[1]?.props?.children
+                );
+                
+                const productos = productosMessage?.content?.props?.content?.props?.children?.[1]?.props?.children;
+                
+                if (productos && Array.isArray(productos)) {
+                  const totalProductos = productos.length;
+                  return (
+                    <div className="p-6 space-y-4">
+                      <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                        <h5 className="font-600 text-orange-900 mb-2 product-sans flex items-center justify-between">
+                          <span className="flex items-center gap-2">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                            </svg>
+                            Productos Disponibles
+                          </span>
+                          <span className="bg-orange-200 text-orange-900 px-2.5 py-1 rounded-full text-xs font-700">
+                            {totalProductos} {totalProductos === 1 ? 'variación' : 'variaciones'}
+                          </span>
+                        </h5>
+                        {!selectedProduct && (
+                          <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-2.5 mb-3">
+                            <p className="text-xs text-yellow-900 font-600 product-sans flex items-center gap-1.5">
+                              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                              </svg>
+                              ⚠️ REQUERIDO: Debes seleccionar un producto antes de crear la cotización
+                            </p>
+                          </div>
+                        )}
+                        <p className="text-sm text-gray-700 product-sans mb-3">
+                          {totalProductos > 1 
+                            ? `Hay ${totalProductos} variaciones disponibles. Selecciona la que mejor describa tu mercancía:` 
+                            : 'Confirma que este producto corresponde a tu mercancía:'
+                          }
+                        </p>
+                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                          {productos.map((productoEl, idx) => {
+                            if (!productoEl?.props) return null;
+                            const producto = productoEl.props;
+                            const productoData = {
+                              nombre: producto.children?.[1]?.props?.children?.[0]?.props?.children,
+                              codigo: producto.children?.[1]?.props?.children?.[1]?.props?.children?.[1]?.props?.children
+                            };
+                            const isSelected = selectedProduct?.codigo === productoData.codigo;
+                            
+                            return (
+                              <div 
+                                key={idx}
+                                className={`border-2 rounded-lg p-3 transition-all cursor-pointer ${
+                                  isSelected 
+                                    ? 'bg-orange-100 border-orange-500' 
+                                    : 'bg-white border-gray-300 hover:border-orange-400'
+                                }`}
+                                onClick={() => {
+                                  setSelectedProduct(productoData);
+                                  setQuoteData(prev => ({
+                                    ...prev,
+                                    producto: productoData.nombre,
+                                    codigoProducto: productoData.codigo
+                                  }));
+                                }}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                                    isSelected ? 'border-orange-600 bg-orange-600' : 'border-gray-400'
+                                  }`}>
+                                    {isSelected && (
+                                      <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="font-600 text-sm text-gray-900 product-sans">
+                                      {productoData.nombre}
+                                    </div>
+                                    <div className="text-xs text-gray-600 mt-0.5 product-sans">
+                                      Código: {productoData.codigo}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {selectedProduct && (
+                          <div className="mt-3 bg-green-50 border-2 border-green-400 rounded-lg p-3 shadow-sm">
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                                </svg>
+                              </div>
+                              <div className="flex-1">
+                                <div className="text-xs text-green-700 font-600 product-sans">PRODUCTO SELECCIONADO</div>
+                                <div className="text-sm text-green-900 font-700 product-sans mt-0.5">{selectedProduct.nombre}</div>
+                                <div className="text-xs text-green-700 product-sans mt-0.5">Código: {selectedProduct.codigo}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+              })()}
+
+              {/* Formulario editable con datos extraídos */}
+              {(quoteData?.ciudadOrigen || quoteData?.ciudadDestino || quoteData?.pesoMercancia) ? (
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Origen */}
+                    <div>
+                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Origen</label>
+                      <input
+                        type="text"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={quoteData.ciudadOrigen || ''}
+                        onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadOrigen: e.target.value }))}
+                        placeholder="Ciudad origen"
+                      />
+                    </div>
+                    
+                    {/* Destino */}
+                    <div>
+                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Destino</label>
+                      <input
+                        type="text"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={quoteData.ciudadDestino || ''}
+                        onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadDestino: e.target.value }))}
+                        placeholder="Ciudad destino"
+                      />
+                    </div>
+                    
+                    {/* Peso */}
+                    <div>
+                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Peso (kg)</label>
+                      <input
+                        type="number"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={quoteData.pesoMercancia || ''}
+                        onChange={(e) => setQuoteData(prev => ({ ...prev, pesoMercancia: parseInt(e.target.value) || 0 }))}
+                        placeholder="0"
+                      />
+                    </div>
+                    
+                    {/* Cantidad */}
+                    <div>
+                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Cantidad</label>
+                      <input
+                        type="number"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={quoteData.cantidadMercancia || ''}
+                        onChange={(e) => setQuoteData(prev => ({ ...prev, cantidadMercancia: parseInt(e.target.value) || 0 }))}
+                        placeholder="0"
+                      />
+                    </div>
+                    
+                    {/* Valor Declarado */}
+                    <div className="col-span-2">
+                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Valor Declarado (COP)</label>
+                      <input
+                        type="number"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={quoteData.valorMercancia || ''}
+                        onChange={(e) => setQuoteData(prev => ({ ...prev, valorMercancia: parseInt(e.target.value) || 0 }))}
+                        placeholder="0"
+                      />
+                    </div>
+                    
+                    {/* Vehículo */}
+                    {quoteData.claseVehiculo && (
+                      <div className="col-span-2">
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Vehículo</label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={quoteData.claseVehiculo || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, claseVehiculo: e.target.value }))}
+                          placeholder="Tipo de vehículo"
+                        />
+                      </div>
+                    )}
+                    
+                    {/* Embalaje seleccionado */}
+                    {selectedEmpaque && (
+                      <div className="col-span-2">
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Embalaje</label>
+                        <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
+                          ✅ {selectedEmpaque.nome || selectedEmpaque.nombre}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Producto seleccionado */}
+                    {selectedProduct && (
+                      <div className="col-span-2">
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Producto</label>
+                        <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
+                          ✅ {selectedProduct.nombre}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : quoteData.length > 0 ? (
                 quoteData.map((route, index) => (
                   <div key={index} className={`p-6 ${index > 0 ? 'border-t border-gray-200' : ''}`}>
                     <div className="flex items-center space-x-2 mb-4">
@@ -990,6 +2534,7 @@ const ChatModal = ({
               )}
             </div>
           </div>
+          )}
         </div>
 
         {/* Columna Derecha - Chat y Acciones */}
@@ -1045,9 +2590,15 @@ const ChatModal = ({
                           )}
                         </div>
                       </div>
-                      <p className="text-sm product-sans leading-relaxed whitespace-pre-wrap">
-                        {message.text}
-                      </p>
+                      {message.toolCallData ? (
+                        <div className="text-sm product-sans leading-relaxed">
+                          {message.toolCallData.content}
+                        </div>
+                      ) : (
+                        <p className="text-sm product-sans leading-relaxed whitespace-pre-wrap">
+                          {message.text}
+                        </p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1290,6 +2841,26 @@ const ChatModal = ({
                     </div>
                   )}
                   
+                  {/* 🆕 Indicador de ruta en edición - FUERA del textarea */}
+                  {selectedRouteIndex !== null && (
+                    <div className="mb-2 flex items-center justify-between bg-yellow-100 border border-yellow-300 rounded-lg px-3 py-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-1 rounded-full">
+                          ✏️ Ruta {selectedRouteIndex + 1}
+                        </span>
+                        <span className="text-yellow-700 text-sm">
+                          Modo edición activo - Los cambios se aplicarán solo a esta ruta
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleSelectRoute(null)}
+                        className="bg-yellow-200 hover:bg-yellow-300 text-yellow-800 text-xs font-medium px-3 py-1 rounded-full transition-colors"
+                      >
+                        ✕ Cancelar
+                      </button>
+                    </div>
+                  )}
+                  
                   <div className="relative">
                     <textarea 
                       value={inputMessage}
@@ -1303,14 +2874,18 @@ const ChatModal = ({
                       placeholder={
                         isSending || currentRunId || processingMessage 
                           ? "⏳ Mensaje en proceso de envío..." 
-                          : "Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
+                          : selectedRouteIndex !== null
+                            ? `Ej: 'Cambia el destino a Cali' o 'Peso 5000 kg' o 'Producto neumáticos'...`
+                            : "Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
                       }
                       className={`w-full px-4 py-3 pr-20 border rounded-xl resize-none focus:outline-none transition-all duration-200 product-sans ${
                         isSending || currentRunId || processingMessage 
                           ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium' 
-                          : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
+                          : selectedRouteIndex !== null
+                            ? 'bg-yellow-50 border-yellow-400 text-gray-800 placeholder-yellow-600 focus:ring-2 focus:ring-yellow-400 focus:border-transparent'
+                            : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
                       }`}
-                      rows="3"
+                      rows="2"
                       disabled={isSending || currentRunId || processingMessage}
                       readOnly={isSending || currentRunId || processingMessage}
                     />
@@ -1355,18 +2930,42 @@ const ChatModal = ({
           {/* Botón de Crear Cotización */}
           {canProceed && (
             <div className="border-t border-gray-200 p-6 bg-gray-50">
-              <button 
-                onClick={handleCreateQuote}
-                className="w-full py-4 px-6 bg-orange-400 hover:bg-orange-500 text-white font-600 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 hover:scale-105 product-sans group"
-              >
-                <div className="flex items-center justify-center space-x-2">
-                  <svg className="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                  </svg>
-                  <span className="text-base">Crear Cotización</span>
-                  <div className="w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              {!selectedProduct ? (
+                <div className="space-y-3">
+                  <button 
+                    disabled
+                    className="w-full py-4 px-6 bg-gray-300 text-gray-500 font-600 rounded-xl shadow cursor-not-allowed product-sans opacity-60"
+                  >
+                    <div className="flex items-center justify-center space-x-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                      </svg>
+                      <span className="text-base">Crear Cotización</span>
+                    </div>
+                  </button>
+                  <div className="bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-2.5">
+                    <p className="text-xs text-yellow-900 font-600 product-sans text-center flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                      </svg>
+                      Selecciona un producto en el panel lateral para continuar
+                    </p>
+                  </div>
                 </div>
-              </button>
+              ) : (
+                <button 
+                  onClick={handleCreateQuote}
+                  className="w-full py-4 px-6 bg-orange-400 hover:bg-orange-500 text-white font-600 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 hover:scale-105 product-sans group"
+                >
+                  <div className="flex items-center justify-center space-x-2">
+                    <svg className="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <span className="text-base">Crear Cotización</span>
+                    <div className="w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  </div>
+                </button>
+              )}
             </div>
           )}
         </div>

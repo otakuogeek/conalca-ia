@@ -68,6 +68,41 @@ class CotizacionModel(BaseModel):
     class Config:
         from_attributes = True
 
+class ProductModel(BaseModel):
+    """Modelo para la tabla products"""
+    producto_codigo: int
+    producto_codigo_ministerio: int
+    producto_nombre: Optional[str] = None
+    tippro_nombre: Optional[str] = None
+    producto_fechacreacion: Optional[int] = None
+    natcar_nombre: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+class EmpaqueModel(BaseModel):
+    """Modelo para la tabla tb_empaque"""
+    id: int
+    codigo_ministerio: int
+    nome: str
+    usuario: str
+    data_criacao: Optional[datetime] = None
+    data_modificacao: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+class EmpaqueModel(BaseModel):
+    """Modelo para la tabla tb_empaque"""
+    id: int
+    codigo_ministerio: int
+    nome: str
+    usuario: str
+    data_criacao: Optional[datetime] = None
+    data_modificacao: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 class GroupCotizationsModel(BaseModel):
     """Modelo para la tabla group_cotizations"""
     id: int
@@ -348,6 +383,231 @@ class DatabaseRepository:
         results = await self.db.execute_query(query, (f"%{ruta}%",))
         return [CotizacionModel(**row) for row in results]
     
+    async def create_cotizacion(self, cotizacion_data: Dict[str, Any]) -> int:
+        """Crea una nueva cotización en la base de datos"""
+        # Campos disponibles en cotizacion_models
+        fields = []
+        values = []
+        placeholders = []
+        
+        # Mapear campos del diccionario a la tabla
+        field_mapping = {
+            'pricing_id': 'pricing_id',
+            'porcentaje': 'porcentaje',
+            'ciudad_origen': 'ciudad_origen',
+            'ciudad_destino': 'ciudad_destino',
+            'ciudad_origen_dane': 'ciudad_origen_dane',
+            'ciudad_destino_dane': 'ciudad_destino_dane',
+            'peso_mercancia': 'peso_mercancia',
+            'cantidad': 'cantidad',
+            'tipo_embajale': 'tipo_embajale',
+            'dimensiones_exactas': 'dimensiones_exactas',
+            'registro_fotografico': 'registro_fotografico',
+            'planos': 'planos',
+            'tipo_producto': 'tipo_producto',
+            'temperatura_mercancia': 'temperatura_mercancia',
+            'humedad': 'humedad',
+            'vehiculo_requerido': 'vehiculo_requerido',
+            'regimen_nacionalizado': 'regimen_nacionalizado',
+            'agente_aduanas': 'agente_aduanas',
+            'descargue_cargue': 'descargue_cargue',
+            'consolidado_expreso': 'consolidado_expreso',
+            'fcl_lcl': 'fcl_lcl',
+            'sitio_devolucion_contenedor': 'sitio_devolucion_contenedor',
+            'numero_documento_bl': 'numero_documento_bl',
+            'fecha_hora_descargue_cargue': 'fecha_hora_descargue_cargue',
+            'cantidad_vh': 'cantidad_vh',
+            'un': 'un',
+            'ruta': 'ruta',
+            'frecuencia': 'frecuencia',
+            'esquema_seguridad': 'esquema_seguridad',
+            'tipo_carroceria': 'tipo_carroceria',
+            'valor': 'valor',
+            'valor_declarado': 'valor_declarado',
+            'tipo_mercancia': 'tipo_mercancia',
+            'ventanas_horarios_recibidos': 'ventanas_horarios_recibidos',
+            'seguro': 'seguro',
+            'silogtran_status': 'silogtran_status',
+            'group_cotizations_id': 'group_cotizations_id'
+        }
+        
+        for key, db_field in field_mapping.items():
+            if key in cotizacion_data and cotizacion_data[key] is not None:
+                fields.append(db_field)
+                values.append(cotizacion_data[key])
+                placeholders.append('%s')
+        
+        if not fields:
+            raise ValueError("No se proporcionaron datos para crear la cotización")
+        
+        query = f"INSERT INTO cotizacion_models ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
+        affected_rows = await self.db.execute_update(query, tuple(values))
+        
+        if affected_rows > 0:
+            # Obtener el ID de la cotización recién creada
+            result = await self.db.execute_query("SELECT LAST_INSERT_ID() as id")
+            return result[0]['id'] if result else 0
+        return 0
+    
+    async def update_cotizacion(self, cotizacion_id: int, update_data: Dict[str, Any]) -> bool:
+        """Actualiza una cotización existente"""
+        if not update_data:
+            return False
+        
+        # Campos que se pueden actualizar
+        field_mapping = {
+            'pricing_id': 'pricing_id',
+            'porcentaje': 'porcentaje',
+            'ciudad_origen': 'ciudad_origen',
+            'ciudad_destino': 'ciudad_destino',
+            'ciudad_origen_dane': 'ciudad_origen_dane',
+            'ciudad_destino_dane': 'ciudad_destino_dane',
+            'peso_mercancia': 'peso_mercancia',
+            'cantidad': 'cantidad',
+            'tipo_embajale': 'tipo_embajale',
+            'dimensiones_exactas': 'dimensiones_exactas',
+            'registro_fotografico': 'registro_fotografico',
+            'planos': 'planos',
+            'tipo_producto': 'tipo_producto',
+            'temperatura_mercancia': 'temperatura_mercancia',
+            'humedad': 'humedad',
+            'vehiculo_requerido': 'vehiculo_requerido',
+            'regimen_nacionalizado': 'regimen_nacionalizado',
+            'agente_aduanas': 'agente_aduanas',
+            'descargue_cargue': 'descargue_cargue',
+            'consolidado_expreso': 'consolidado_expreso',
+            'fcl_lcl': 'fcl_lcl',
+            'sitio_devolucion_contenedor': 'sitio_devolucion_contenedor',
+            'numero_documento_bl': 'numero_documento_bl',
+            'fecha_hora_descargue_cargue': 'fecha_hora_descargue_cargue',
+            'cantidad_vh': 'cantidad_vh',
+            'un': 'un',
+            'ruta': 'ruta',
+            'frecuencia': 'frecuencia',
+            'esquema_seguridad': 'esquema_seguridad',
+            'tipo_carroceria': 'tipo_carroceria',
+            'valor': 'valor',
+            'valor_declarado': 'valor_declarado',
+            'tipo_mercancia': 'tipo_mercancia',
+            'ventanas_horarios_recibidos': 'ventanas_horarios_recibidos',
+            'seguro': 'seguro',
+            'silogtran_status': 'silogtran_status',
+            'group_cotizations_id': 'group_cotizations_id'
+        }
+        
+        set_clauses = []
+        values = []
+        
+        for key, db_field in field_mapping.items():
+            if key in update_data:
+                set_clauses.append(f"{db_field} = %s")
+                values.append(update_data[key])
+        
+        if not set_clauses:
+            return False
+        
+        values.append(cotizacion_id)
+        query = f"UPDATE cotizacion_models SET {', '.join(set_clauses)} WHERE id = %s"
+        affected_rows = await self.db.execute_update(query, tuple(values))
+        return affected_rows > 0
+    
+    async def delete_cotizacion(self, cotizacion_id: int) -> bool:
+        """Elimina una cotización por ID"""
+        query = "DELETE FROM cotizacion_models WHERE id = %s"
+        affected_rows = await self.db.execute_update(query, (cotizacion_id,))
+        return affected_rows > 0
+    
+    async def search_cotizaciones_advanced(self, filters: Dict[str, Any]) -> List[CotizacionModel]:
+        """Búsqueda avanzada de cotizaciones con múltiples filtros"""
+        where_clauses = []
+        values = []
+        
+        # Filtros de búsqueda exacta
+        exact_filters = ['id', 'pricing_id', 'group_cotizations_id', 'silogtran_status']
+        for field in exact_filters:
+            if field in filters and filters[field] is not None:
+                where_clauses.append(f"{field} = %s")
+                values.append(filters[field])
+        
+        # Filtros de búsqueda parcial (LIKE)
+        like_filters = [
+            'ciudad_origen', 'ciudad_destino', 'tipo_producto', 'ruta', 
+            'vehiculo_requerido', 'tipo_carroceria', 'tipo_mercancia'
+        ]
+        for field in like_filters:
+            if field in filters and filters[field]:
+                where_clauses.append(f"{field} LIKE %s")
+                values.append(f"%{filters[field]}%")
+        
+        # Construir query
+        query = "SELECT * FROM cotizacion_models"
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        query += " ORDER BY id DESC"
+        
+        # Aplicar límite si se especifica
+        if 'limit' in filters:
+            query += " LIMIT %s"
+            values.append(filters['limit'])
+            if 'offset' in filters:
+                query += " OFFSET %s"
+                values.append(filters['offset'])
+        
+        results = await self.db.execute_query(query, tuple(values) if values else None)
+        return [CotizacionModel(**row) for row in results]
+    
+    # Métodos para tabla products
+    async def search_products_by_name(self, search_term: str, limit: int = 20) -> List[ProductModel]:
+        """Busca productos por nombre usando coincidencia parcial"""
+        query = """
+        SELECT producto_codigo, producto_codigo_ministerio, producto_nombre, 
+               tippro_nombre, producto_fechacreacion, natcar_nombre, usuario_nombre
+        FROM products 
+        WHERE producto_nombre LIKE %s
+        ORDER BY 
+            CASE 
+                WHEN producto_nombre LIKE %s THEN 1
+                WHEN producto_nombre LIKE %s THEN 2
+                ELSE 3
+            END,
+            producto_nombre
+        LIMIT %s
+        """
+        search_pattern = f"%{search_term}%"
+        start_pattern = f"{search_term}%"
+        word_pattern = f"% {search_term}%"
+        
+        results = await self.db.execute_query(
+            query, 
+            (search_pattern, start_pattern, word_pattern, limit)
+        )
+        return [ProductModel(**row) for row in results]
+    
+    async def get_product_by_code(self, producto_codigo: int) -> Optional[ProductModel]:
+        """Obtiene un producto por su código"""
+        query = """
+        SELECT producto_codigo, producto_codigo_ministerio, producto_nombre, 
+               tippro_nombre, producto_fechacreacion, natcar_nombre, usuario_nombre
+        FROM products 
+        WHERE producto_codigo = %s
+        """
+        results = await self.db.execute_query(query, (producto_codigo,))
+        return ProductModel(**results[0]) if results else None
+    
+    async def get_products_by_category(self, categoria: str, limit: int = 50) -> List[ProductModel]:
+        """Obtiene productos por categoría (tippro_nombre o natcar_nombre)"""
+        query = """
+        SELECT producto_codigo, producto_codigo_ministerio, producto_nombre, 
+               tippro_nombre, producto_fechacreacion, natcar_nombre, usuario_nombre
+        FROM products 
+        WHERE tippro_nombre LIKE %s OR natcar_nombre LIKE %s
+        ORDER BY producto_nombre
+        LIMIT %s
+        """
+        search_pattern = f"%{categoria}%"
+        results = await self.db.execute_query(query, (search_pattern, search_pattern, limit))
+        return [ProductModel(**row) for row in results]
+    
     # Métodos para tabla vehicle_owner_holder_driver
     async def get_vehicles(self, limit: int = 100, offset: int = 0) -> List[VehicleOwnerHolderDriverModel]:
         """Obtiene los vehículos con paginación"""
@@ -388,6 +648,106 @@ class DatabaseRepository:
         query = "SELECT * FROM vehicle_owner_holder_driver WHERE id = %s"
         results = await self.db.execute_query(query, (chofer_id,))
         return VehicleOwnerHolderDriverModel(**results[0]) if results else None
+
+    # Métodos para tabla tb_empaque
+    async def get_empaques(self, limit: int = 50, offset: int = 0) -> List[EmpaqueModel]:
+        """Obtiene lista de empaques con paginación"""
+        try:
+            query = """
+                SELECT id, codigo_ministerio, nome, usuario, data_criacao, data_modificacao
+                FROM tb_empaque
+                ORDER BY id ASC
+                LIMIT %s OFFSET %s
+            """
+            
+            results = await self.db.execute_query(query, (limit, offset))
+            
+            empaques = []
+            for row in results:
+                empaque = EmpaqueModel(
+                    id=row['id'],
+                    codigo_ministerio=row['codigo_ministerio'],
+                    nome=row['nome'],
+                    usuario=row['usuario'],
+                    data_criacao=row['data_criacao'],
+                    data_modificacao=row['data_modificacao']
+                )
+                empaques.append(empaque)
+            
+            return empaques
+        except Exception as e:
+            logger.error(f"Error al obtener empaques: {e}")
+            return []
+    
+    async def get_empaque_by_id(self, empaque_id: int) -> Optional[EmpaqueModel]:
+        """Obtiene un empaque específico por su ID"""
+        try:
+            query = """
+                SELECT id, codigo_ministerio, nome, usuario, data_criacao, data_modificacao
+                FROM tb_empaque
+                WHERE id = %s
+            """
+            
+            results = await self.db.execute_query(query, (empaque_id,))
+            
+            if results:
+                row = results[0]
+                return EmpaqueModel(
+                    id=row['id'],
+                    codigo_ministerio=row['codigo_ministerio'],
+                    nome=row['nome'],
+                    usuario=row['usuario'],
+                    data_criacao=row['data_criacao'],
+                    data_modificacao=row['data_modificacao']
+                )
+            return None
+        except Exception as e:
+            logger.error(f"Error al obtener empaque por ID: {e}")
+            return None
+    
+    async def search_empaques_by_name(self, search_term: str, limit: int = 20) -> List[EmpaqueModel]:
+        """Busca empaques por nombre con coincidencia parcial"""
+        try:
+            query = """
+                SELECT id, codigo_ministerio, nome, usuario, data_criacao, data_modificacao
+                FROM tb_empaque
+                WHERE nome LIKE %s
+                ORDER BY 
+                    CASE 
+                        WHEN nome LIKE %s THEN 1
+                        WHEN nome LIKE %s THEN 2
+                        ELSE 3
+                    END,
+                    nome ASC
+                LIMIT %s
+            """
+            
+            search_pattern = f"%{search_term}%"
+            starts_with = f"{search_term}%"
+            word_starts = f"% {search_term}%"
+            
+            results = await self.db.execute_query(
+                query, 
+                (search_pattern, starts_with, word_starts, limit)
+            )
+            
+            empaques = []
+            for row in results:
+                empaque = EmpaqueModel(
+                    id=row['id'],
+                    codigo_ministerio=row['codigo_ministerio'],
+                    nome=row['nome'],
+                    usuario=row['usuario'],
+                    data_criacao=row['data_criacao'],
+                    data_modificacao=row['data_modificacao']
+                )
+                empaques.append(empaque)
+            
+            return empaques
+        except Exception as e:
+            logger.error(f"Error al buscar empaques por nombre: {e}")
+            return []
+
 
     async def save_driver_decision(self, cotizacion_model_id: int, driver_id: int, decision: int) -> bool:
         """Guarda la decisión del conductor sobre una cotización (1 = acepta, 0 = rechaza)"""

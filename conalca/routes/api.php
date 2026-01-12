@@ -18,6 +18,53 @@ use App\Http\Controllers\Api\ElevenLabsController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\PricingApiController;
 use App\Http\Controllers\Api\ArcangelController;
+use App\Models\ConversationSession;
+
+// ═══════════════════════════════════════════════════════════════
+// EMERGENCY ENDPOINT - Detener runs atascados
+// ═══════════════════════════════════════════════════════════════
+Route::get('/emergency/stop-run/{threadId}', function($threadId) {
+    try {
+        $session = ConversationSession::where('session_id', $threadId)->first();
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sesión no encontrada'
+            ], 404);
+        }
+        
+        $metadata = json_decode($session->metadata ?? '{}', true);
+        $oldRunId = $metadata['last_run_id'] ?? null;
+        $oldStatus = $metadata['last_run_status'] ?? null;
+        
+        // Forzar status a completed sin datos para detener polling
+        $metadata['last_run_status'] = 'completed';
+        $session->metadata = json_encode($metadata);
+        $session->save();
+        
+        \Log::info('🚨 EMERGENCY STOP ejecutado', [
+            'thread_id' => $threadId,
+            'old_run_id' => $oldRunId,
+            'old_status' => $oldStatus
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Run detenido forzadamente',
+            'old_run_id' => $oldRunId,
+            'old_status' => $oldStatus,
+            'new_status' => 'completed',
+            'action' => 'Por favor recarga la página'
+        ]);
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // TEST ENDPOINT - Arcangel sin autenticación (temporal)
@@ -104,6 +151,13 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 Route::get('/get/product/{product_name}', [ApiProductController::class => 'getProduct']);
+
+// ═══════════════════════════════════════════════════════════════
+// MCP (Model Context Protocol) - Búsqueda inteligente de productos
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('mcp')->group(function () {
+    Route::post('/search-products', [App\Http\Controllers\Api\ProductController::class, 'search']);
+});
 
 Route::post('/get-multiple-data', [DataColumnController::class, 'getMultipleData']);
 

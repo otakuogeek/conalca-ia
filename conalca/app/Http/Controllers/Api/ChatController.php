@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\QuoteAssistantService;
+use App\Services\MCPAssistantService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -144,6 +145,7 @@ class ChatController extends Controller
             'message' => 'required|string|min:1',
             'thread_id' => 'nullable|string',
             'client_id' => 'required|integer',
+            'group_id' => 'nullable|integer', // 🆕 Validar group_id
             'type_business' => 'required|string'
         ]);
 
@@ -164,34 +166,34 @@ class ChatController extends Controller
                 ], 404);
             }
 
-            // Obtener o crear thread
+            // Obtener o crear thread usando MCP Assistant
             $threadId = $request->thread_id;
             
             try {
                 if (!$threadId) {
-                    $threadId = QuoteAssistantService::getThread($client);
+                    $threadId = MCPAssistantService::getThread($client);
                 }
                 
                 if (!$threadId) {
                     throw new \Exception('No se pudo crear/obtener el thread de conversación');
                 }
-            } catch (\Exception $openaiError) {
-                Log::warning('OpenAI no disponible para chat quote', [
-                    'error' => $openaiError->getMessage(),
+            } catch (\Exception $mcpError) {
+                Log::warning('MCP Assistant no disponible para chat quote', [
+                    'error' => $mcpError->getMessage(),
                     'client_id' => $client->id
                 ]);
                 
                 return response()->json([
                     'success' => false,
                     'error' => 'Servicio de chat temporalmente no disponible. Intenta nuevamente en unos momentos.',
-                    'error_type' => 'openai_unavailable'
+                    'error_type' => 'mcp_unavailable'
                 ], 503);
             }
 
             // Verificar si hay un run activo antes de crear el mensaje
             if ($request->thread_id && $client->openai_current_run) {
                 try {
-                    $runStatus = QuoteAssistantService::checkRunStatus($threadId, $client->openai_current_run);
+                    $runStatus = MCPAssistantService::checkRunStatus($threadId, $client->openai_current_run);
                     
                     // Si checkRunStatus retorna null, el run aún está activo
                     if ($runStatus === null || in_array($runStatus, ['queued', 'in_progress', 'requires_action'])) {
@@ -254,7 +256,7 @@ class ChatController extends Controller
             // Crear el mensaje del usuario
             // Agregar instrucción para ignorar validaciones de estado del cliente
             $enhancedMessage = $request->message . "\n\nNOTA IMPORTANTE: Ignora cualquier validación de estado del cliente (activo/inactivo). Todos los clientes están autorizados para crear cotizaciones independientemente de su estado.";
-            $userMessage = QuoteAssistantService::createMessage($threadId, $enhancedMessage);
+            $userMessage = MCPAssistantService::createMessage($threadId, $enhancedMessage, $request->group_id); // 🆕 Pasar group_id
             
             // Caso especial: el thread ya no existe en OpenAI
             if ($userMessage === 'THREAD_NOT_FOUND') {
@@ -263,16 +265,13 @@ class ChatController extends Controller
                     'client_id' => $client->id
                 ]);
                 
-                // Limpiar thread del cliente y cancelar runs si existía
-                if ($client->openai_thread_id) {
-                    QuoteAssistantService::cancelActiveRuns($client->openai_thread_id);
-                }
+                // Limpiar thread del cliente
                 $client->openai_thread_id = null;
                 $client->openai_current_run = null;
                 $client->save();
                 
                 // Crear nuevo thread
-                $newThreadId = QuoteAssistantService::getThread($client);
+                $newThreadId = MCPAssistantService::getThread($client);
                 if (!$newThreadId) {
                     return response()->json([
                         'success' => false,
@@ -293,7 +292,7 @@ class ChatController extends Controller
                 sleep(2);
                 
                 // Intentar crear mensaje en el nuevo thread
-                $userMessage = QuoteAssistantService::createMessage($newThreadId, $request->message);
+                $userMessage = MCPAssistantService::createMessage($newThreadId, $request->message);
                 $threadId = $newThreadId;
                 
                 // Si aún falla después del reintento, devolver error
@@ -343,10 +342,48 @@ class ChatController extends Controller
             }
 
             // Ejecutar el asistente
-            $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
+            $run = MCPAssistantService::runAssistant($threadId, $request->type_business, $request->group_id); // 🆕 Pasar group_id
+            
+            // Caso especial: el thread ya no existe en OpenAI
+            if ($run === 'THREAD_NOT_FOUND') {
+                Log::warning('🔄 Thread no encontrado al ejecutar asistente, recreando...', [
+                    'old_thread_id' => $threadId,
+                    'client_id' => $client->id
+                ]);
+                
+                // Limpiar thread del cliente
+                $client->openai_thread_id = null;
+                $client->openai_current_run = null;
+                $client->save();
+                
+                // Crear nuevo thread
+                $newThreadId = MCPAssistantService::getThread($client);
+                if (!$newThreadId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo recrear el thread de conversación',
+                        'data' => [
+                            'messages' => []
+                        ]
+                    ], 500);
+                }
+                
+                return response()->json([
+                    'success' => false,
+                    'error' => 'thread_recreated',
+                    'message' => 'Se ha creado una nueva conversación. Por favor, envía tu mensaje nuevamente.',
+                    'data' => [
+                        'thread_id' => $newThreadId,
+                        'should_retry' => true,
+                        'retry_after' => 2,
+                        'messages' => []
+                    ]
+                ], 409); // Conflict - requiere reintento con nuevo thread
+            }
+            
             if (!$run || !isset($run['id'])) {
-                // Si OpenAI falla, implementar fallback
-                Log::warning('OpenAI assistant falló, implementando fallback', [
+                // Si MCP falla, implementar fallback
+                Log::warning('MCP assistant falló, implementando fallback', [
                     'client_id' => $request->client_id,
                     'thread_id' => $threadId
                 ]);
@@ -372,11 +409,12 @@ class ChatController extends Controller
             Log::info('Cliente actualizado con run activo:', [
                 'client_id' => $client->id,
                 'run_id' => $run['id'],
-                'thread_id' => $threadId
+                'thread_id' => $threadId,
+                'has_extracted_data' => isset($run['extracted_data'])
             ]);
 
             // Obtener todos los mensajes actualizados
-            $messages = QuoteAssistantService::getMessages($threadId);
+            $messages = MCPAssistantService::getMessages($threadId);
 
             return response()->json([
                 'success' => true,
@@ -384,7 +422,8 @@ class ChatController extends Controller
                     'thread_id' => $threadId,
                     'run_id' => $run['id'],
                     'user_message' => $userMessage,
-                    'messages' => $messages
+                    'messages' => $messages,
+                    'extracted_data' => $run['extracted_data'] ?? null  // NUEVO: enviar datos extraídos
                 ]
             ]);
 
@@ -405,19 +444,23 @@ class ChatController extends Controller
         }
     }
 
-    public function getMessages($threadId)
+    public function getMessages(Request $request, $threadId)
     {
         try {
+            $groupId = $request->query('group_id');
+            
             Log::info('Get messages request', [
-                'thread_id' => $threadId
+                'thread_id' => $threadId,
+                'group_id' => $groupId
             ]);
 
-            $messages = QuoteAssistantService::getMessages($threadId);
+            $messages = MCPAssistantService::getMessages($threadId, $groupId);
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'thread_id' => $threadId,
+                    'group_id' => $groupId,
                     'messages' => $messages
                 ]
             ]);
@@ -443,7 +486,7 @@ class ChatController extends Controller
                 'run_id' => $runId
             ]);
 
-            $runData = QuoteAssistantService::checkRunStatus($threadId, $runId);
+            $runData = MCPAssistantService::checkRunStatus($threadId, $runId);
             
             // Función helper para limpiar el run activo del cliente
             $clearClientActiveRun = function() use ($runId) {
@@ -462,12 +505,18 @@ class ChatController extends Controller
             if ($runData && is_array($runData)) {
                 // Si hay datos extraídos del tool call
                 $clearClientActiveRun();
+                
+                // Separar quote_data de extracted_data si vienen en el runData
+                $extractedData = $runData['extracted_data'] ?? null;
+                $quoteData = $runData['quote_data'] ?? $runData;
+                
                 return response()->json([
                     'success' => true,
                     'data' => [
                         'thread_id' => $threadId,
                         'run_id' => $runId,
-                        'quote_data' => $runData,
+                        'quote_data' => $quoteData,
+                        'extracted_data' => $extractedData,  // NUEVO: incluir datos extraídos
                         'status' => 'completed_with_data'
                     ]
                 ]);

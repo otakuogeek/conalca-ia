@@ -148,16 +148,19 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           const hasPricings = cotizaciones.some(cot => cot.pricing_id);
           if (hasPricings) {
             console.log('Cotización con precios encontrada, abriendo PricingModal');
+            // NO limpiar mensajes - mantener conversación
             setShowPricingModal(true);
             setStep(2);
           } else {
             console.log('Cotización sin precios, abriendo ChatModal');
+            // NO limpiar mensajes - continuar conversación existente
             setShowChatModal(true);
             setStep(1);
           }
         } else {
           // No hay rutas, empezar desde el chat
           console.log('Grupo sin rutas, abriendo ChatModal');
+          // NO limpiar mensajes - puede ser continuación de conversación
           setShowChatModal(true);
           setStep(1);
         }
@@ -208,11 +211,20 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
   // Handlers
   const handleOpenModal = (modalType, data = {}) => {
+    const { isNewConversation = false } = data; // Flag para saber si es nueva conversación
+    
     switch (modalType) {
       case 'create':
         setShowCreateModal(true);
         break;
       case 'chat':
+        // Solo limpiar mensajes si es una conversación NUEVA
+        if (isNewConversation) {
+          console.log('🧽 Nueva conversación - Limpiando mensajes de chat anterior');
+          setMessages([]);
+        } else {
+          console.log('💬 Continuando conversación - Manteniendo mensajes');
+        }
         setShowChatModal(true);
         setStep(1);
         break;
@@ -234,13 +246,21 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     }
   };
 
-  const handleCloseModal = (modalType) => {
+  const handleCloseModal = (modalType, options = {}) => {
+    const { clearMessages = false } = options; // Solo limpiar si se indica explícitamente
+    
     switch (modalType) {
       case 'create':
         setShowCreateModal(false);
         // No resetear datos al cerrar modal de creación, solo al cancelar completamente
         break;
       case 'chat':
+        if (clearMessages) {
+          console.log('🧹 Limpiando mensajes al cerrar ChatModal');
+          setMessages([]); // Limpiar solo si se pide explícitamente
+        } else {
+          console.log('💬 Cerrando ChatModal SIN limpiar mensajes (continúa flujo)');
+        }
         setShowChatModal(false);
         break;
       case 'editRoutes':
@@ -393,6 +413,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   };
 
   const handleCancelCreate = async () => {
+    // Al cancelar, limpiar mensajes explícitamente
     handleCloseModal('create');
     await resetCreateFlow();
   };
@@ -471,7 +492,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         
         // Continuar al siguiente paso
         handleCloseModal('create');
-        handleOpenModal('chat');
+        handleOpenModal('chat', { isNewConversation: true }); // Nueva conversación
       } else {
         console.error('Error creando grupo:', result.error);
         
@@ -514,26 +535,36 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   // };
 
   const handleNextStep = (stepNumber) => {
+    console.log('🔄 handleNextStep llamado con step:', stepNumber);
+    
     switch (stepNumber) {
       case 1:
         // From Chat to EditRoutes
+        console.log('📋 Cerrando ChatModal y abriendo EditRoutesModal');
         handleCloseModal('chat');
         handleOpenModal('editRoutes');
+        setStep(2);
         break;
       case 2:
         // From EditRoutes to Pricing
+        console.log('💰 Cerrando EditRoutesModal y abriendo PricingModal');
         handleCloseModal('editRoutes');
         handleOpenModal('pricing');
+        setStep(3);
         break;
       case 3:
         // From Pricing to Preview
+        console.log('👁️ Cerrando PricingModal y abriendo PreviewModal');
         handleCloseModal('pricing');
         handleOpenModal('preview');
+        setStep(4);
         break;
       case 4:
         // From Preview to Success
+        console.log('✅ Cerrando PreviewModal y abriendo SuccessModal');
         handleCloseModal('preview');
         handleOpenModal('success');
+        setStep(5);
         break;
       default:
         break;
@@ -593,7 +624,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
       {showChatModal && (
         <ChatModal
-          onClose={() => handleCloseModal('chat')}
+          onClose={() => handleCloseModal('chat', { clearMessages: true })} // Limpiar al cancelar
           onNext={() => handleNextStep(1)}
           messages={messages}
           inputMessage={inputMessage}

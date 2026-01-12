@@ -719,6 +719,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::get('/cities', [CityController::class, 'index']);
     Route::get('/packings', [PackingController::class, 'index']);
     Route::get('/products', [ProductController::class, 'index']);
+    Route::post('/mcp/search-products', [ProductController::class, 'search']);
 
     Route::post('/pricings-solutions',  [PricingController::class,'store']);
     Route::put ('/pricings-solutions/{id}', [PricingController::class,'update']);

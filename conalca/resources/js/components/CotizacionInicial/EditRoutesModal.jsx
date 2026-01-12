@@ -15,116 +15,293 @@ const EditRoutesModal = ({
   setQuoteData,
   clientData
 }) => {
-  const [localRoutes, setLocalRoutes] = useState(quoteData || []);
+  // Normalizar quoteData: puede venir como array (recuperación) u objeto (chat)
+  const normalizedRoutes = React.useMemo(() => {
+    if (!quoteData) return [];
+    if (Array.isArray(quoteData)) return quoteData;
+    // Si es objeto, convertir a array
+    return [quoteData];
+  }, [quoteData]);
+  
+  const [localRoutes, setLocalRoutes] = useState(normalizedRoutes);
   const [cities, setCities] = useState([]);
   const [packings, setPackings] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [catalogsLoaded, setCatalogsLoaded] = useState(false);
 
-  // Load routes if empty
+  // 1️⃣ PRIMERO: Cargar cities, packings, products EN PARALELO
   useEffect(() => {
-    const loadRoutes = async () => {
-      if (!groupId || (quoteData && quoteData.length)) return;
+    const loadCatalogs = async () => {
       setLoading(true);
       try {
-        const resp = await fetch(`/api/chat/quote/routes/${groupId}`, {
-          headers: { Accept: 'application/json' },
-        });
-        const data = await resp.json();
-        if (data.success && data.data?.routes) {
-          setLocalRoutes(data.data.routes);
-          setQuoteData(data.data.routes);
+        const [citiesResp, packingsResp, productsResp] = await Promise.all([
+          fetchCities(),
+          fetchPackings(),
+          fetchProducts()
+        ]);
+        
+        if (citiesResp.data.success) {
+          console.log('🌍 Ciudades cargadas:', citiesResp.data.data.length);
+          setCities(citiesResp.data.data || []);
         } else {
-          setError('Unable to load routes');
+          setError('Error cargando ciudades');
         }
+        
+        if (packingsResp.data.success) {
+          console.log('📦 Embalajes cargados:', packingsResp.data.data.length);
+          console.log('Muestra:', packingsResp.data.data.slice(0, 5));
+          setPackings(packingsResp.data.data || []);
+        } else {
+          setError('Error cargando embalajes');
+        }
+        
+        if (productsResp.data.success) {
+          console.log('📊 Productos cargados:', productsResp.data.data.length);
+          setProducts(productsResp.data.data || []);
+        } else {
+          setError('Error cargando productos');
+        }
+        
+        // Marcar catálogos como cargados
+        setCatalogsLoaded(true);
+        console.log('✅ Todos los catálogos cargados - listo para cargar rutas');
+        
       } catch (err) {
-        setError('Network error loading routes');
+        console.error('❌ Error cargando catálogos:', err);
+        setError('Error de red al cargar catálogos');
       } finally {
         setLoading(false);
       }
     };
-    loadRoutes();
-  }, [groupId, quoteData, setQuoteData]);
-
-  // Load cities, packings, products
-  useEffect(() => {
-    const loadCities = async () => {
-      try {
-        const resp = await fetchCities();
-        const data = resp.data;
-        if (data.success) setCities(data.data || []);
-        else setError('Unable to load cities');
-      } catch {
-        setError('Network error loading cities');
-      }
-    };
-    const loadPackings = async () => {
-      try {
-        const resp = await fetchPackings();
-        const data = resp.data;
-        if (data.success) setPackings(data.data || []);
-        else setError('Unable to load packings');
-      } catch {
-        setError('Network error loading packings');
-      }
-    };
-    const loadProducts = async () => {
-      try {
-        const resp = await fetchProducts();
-        const data = resp.data;
-        if (data.success) setProducts(data.data || []);
-        else setError('Unable to load products');
-      } catch {
-        setError('Network error loading products');
-      }
-    };
-    loadCities();
-    loadPackings();
-    loadProducts();
+    
+    loadCatalogs();
   }, []);
+
+  // 2️⃣ SEGUNDO: Cargar rutas desde BD SOLO cuando catalogsLoaded sea true
+  useEffect(() => {
+    if (!catalogsLoaded) {
+      console.log('⏳ Esperando a que se carguen los catálogos...');
+      return;
+    }
+    
+    const loadRoutes = async () => {
+      if (!groupId) {
+        console.warn('⚠️ EditRoutesModal: No groupId provided');
+        return;
+      }
+      
+      console.log('💾 Cargando rutas desde BD para group_id:', groupId);
+      setLoading(true);
+      
+      try {
+        const resp = await fetch(`/api/chat/quote/routes/${groupId}`, {
+          headers: { 
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+          },
+        });
+        
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        }
+        
+        const data = await resp.json();
+        console.log('✅ Rutas recuperadas desde BD:', data);
+        
+        if (data.success && data.data?.routes) {
+          const routes = data.data.routes;
+          console.log(`📦 ${routes.length} ruta(s) encontrada(s)`);
+          
+          // Debug: verificar tipo_embajale
+          routes.forEach((r, i) => {
+            console.log(`Ruta ${i + 1} - tipo_embajale:`, r.tipo_embajale);
+          });
+          
+          setLocalRoutes(routes);
+          setQuoteData(routes);
+        } else {
+          console.warn('⚠️ No se encontraron rutas guardadas');
+          // Si no hay rutas en BD, usar quoteData pasado como prop
+          if (normalizedRoutes.length > 0) {
+            console.log('🔄 Usando rutas desde props (recién creadas)');
+            setLocalRoutes(normalizedRoutes);
+          } else {
+            setError('No se encontraron rutas para este grupo');
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error cargando rutas:', err);
+        setError('Error de red al cargar rutas: ' + err.message);
+        // Fallback: usar normalizedRoutes si hay error
+        if (normalizedRoutes.length > 0) {
+          setLocalRoutes(normalizedRoutes);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadRoutes();
+  }, [catalogsLoaded, groupId]); // Depende de catalogsLoaded Y groupId
+
+  // Función auxiliar para normalizar texto (quitar tildes, mayúsculas, espacios)
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text
+      .toString()
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar tildes/acentos
+      .trim();
+  };
 
   // Helpers to preselect if route has code or name
   const resolveCityCode = (routeValue) => {
     if (!routeValue) return '';
+    
+    // Buscar por código exacto
     const byCode = cities.find(c => String(c.ciudad_codigo) === String(routeValue));
     if (byCode) return byCode.ciudad_codigo;
 
+    // Buscar por nombre normalizado (sin tildes, sin case-sensitive)
+    const normalizedRoute = normalizeText(routeValue);
     const byName = cities.find(c => {
-      const name = c.ciudad_nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      return normalizedCity === normalizedRoute;
     });
-    return byName ? byName.ciudad_codigo : '';
+    
+    if (byName) {
+      console.log(`✅ Ciudad encontrada: "${routeValue}" → código ${byName.ciudad_codigo} (${byName.ciudad_nombre})`);
+      return byName.ciudad_codigo;
+    }
+    
+    console.warn(`⚠️ Ciudad NO encontrada: "${routeValue}" (normalizado: "${normalizedRoute}")`);
+    return '';
   };
 
   const resolvePackingCode = (routeValue) => {
-    if (!routeValue) return '';
-    const byCode = packings.find(p => String(p.Codigo) === String(routeValue));
-    if (byCode) return byCode.Codigo;
-
-    const byName = packings.find(p => {
-      const name = p.Nombre || p.nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+    if (!routeValue) {
+      console.log('📦 resolvePackingCode: valor vacío');
+      return '';
+    }
+    
+    console.log('🔍 resolvePackingCode:', {
+      routeValue,
+      packingsLength: packings.length,
+      packingsSample: packings.slice(0, 3)
     });
-    return byName ? byName.Codigo : '';
+    
+    // Buscar por código
+    const byCode = packings.find(p => String(p.Codigo) === String(routeValue));
+    if (byCode) {
+      console.log('✅ Embalaje encontrado por código:', byCode);
+      return byCode.Codigo;
+    }
+
+    // Buscar por nombre normalizado
+    const normalizedRoute = normalizeText(routeValue);
+    const byName = packings.find(p => {
+      const name = p.Nombre || p.nombre || p.nome || '';
+      return normalizeText(name) === normalizedRoute;
+    });
+    
+    if (byName) {
+      console.log('✅ Embalaje encontrado por nombre:', byName);
+      return byName.Codigo;
+    }
+    
+    console.warn('⚠️ Embalaje NO encontrado para:', routeValue, 'en', packings.length, 'opciones');
+    return '';
   };
 
   const resolveProductCode = (routeValue) => {
-    if (!routeValue) return '';
+    if (!routeValue) {
+      console.log('📦 resolveProductCode: valor vacío');
+      return '';
+    }
+    
+    console.log('🔍 resolveProductCode:', {
+      routeValue,
+      productsLength: products.length,
+      productsSample: products.slice(0, 3)
+    });
+    
+    // Buscar por código
     const byCode = products.find(p => String(p.producto_codigo) === String(routeValue));
-    if (byCode) return byCode.producto_codigo;
+    if (byCode) {
+      console.log('✅ Producto encontrado por código:', byCode);
+      return byCode.producto_codigo;
+    }
 
+    // Buscar por nombre normalizado
+    const normalizedRoute = normalizeText(routeValue);
     const byName = products.find(p => {
       const name = p.producto_nombre || p.nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+      return normalizeText(name) === normalizedRoute;
     });
-    return byName ? byName.producto_codigo : '';
+    
+    if (byName) {
+      console.log('✅ Producto encontrado por nombre:', byName);
+      return byName.producto_codigo;
+    }
+    
+    console.warn('⚠️ Producto NO encontrado en BD:', routeValue, '- usaré el valor como texto personalizado');
+    // Si no se encuentra, retornar el valor original (producto personalizado)
+    return routeValue;
+  };
+
+  // Tabla de capacidades de vehículos (kg) - tomada de vehiculos_pricing
+  const vehicleCapacities = {
+    'CAMIONETA': 2000,
+    'TURBO': 4000,
+    'SENCILLO': 9000,
+    'PATINETA2': 20000,
+    'PATINETA3': 25000,
+    'TRACTOMULA 2': 30000,
+    'TRACTOMULA 3': 34000
+  };
+
+  // Función para recomendar vehículo basado en peso
+  const recommendVehicle = (weight) => {
+    if (!weight || weight <= 0) return 'SENCILLO';
+    
+    const weightNum = parseFloat(weight);
+    
+    // Ordenar por capacidad ascendente y seleccionar el primero que pueda llevar el peso
+    const sortedVehicles = Object.entries(vehicleCapacities)
+      .sort((a, b) => a[1] - b[1]);
+    
+    for (const [vehicle, capacity] of sortedVehicles) {
+      if (weightNum <= capacity) {
+        console.log(`🚚 Recomendando ${vehicle} para ${weightNum} kg (capacidad: ${capacity} kg)`);
+        return vehicle;
+      }
+    }
+    
+    // Si excede todas las capacidades, retornar el más grande
+    console.log(`⚠️ Peso ${weightNum} kg excede todas las capacidades, recomendando TRACTOMULA 3`);
+    return 'TRACTOMULA 3';
   };
 
   const handleChange = (index, field, value) => {
     setLocalRoutes(prev =>
-      prev.map((r, i) => (i === index ? { ...r, [field]: value } : r))
+      prev.map((r, i) => {
+        if (i !== index) return r;
+        
+        const updated = { ...r, [field]: value };
+        
+        // Si cambió el peso, auto-recomendar vehículo
+        if (field === 'peso_mercancia' && value) {
+          const recommendedVehicle = recommendVehicle(value);
+          updated.vehiculo_requerido = recommendedVehicle;
+          console.log(`🔄 Peso actualizado a ${value} kg, vehículo recomendado: ${recommendedVehicle}`);
+        }
+        
+        return updated;
+      })
     );
   };
 
@@ -154,6 +331,7 @@ const EditRoutesModal = ({
         throw new Error(data.error || 'Server error saving routes');
       }
 
+      // Actualizar IDs en localRoutes
       if (data.data?.routes) {
         setLocalRoutes(prev =>
           prev.map((r, i) => ({
@@ -161,13 +339,16 @@ const EditRoutesModal = ({
             id: data.data.routes[i]?.id || r.id || null,
           }))
         );
-        setQuoteData(prev =>
-          prev.map((r, i) => ({
-            ...r,
-            id: data.data.routes[i]?.id || r.id || null,
-          }))
-        );
+        
+        // IMPORTANTE: Actualizar quoteData completo para que PricingModal tenga los datos correctos
+        setQuoteData(localRoutes.map((r, i) => ({
+          ...r,
+          id: data.data.routes[i]?.id || r.id || null,
+        })));
+        
+        console.log('✅ quoteData actualizado con rutas editadas:', localRoutes);
       }
+      
       onNext && onNext();
     } catch (err) {
       setError(err.message);
@@ -184,7 +365,7 @@ const EditRoutesModal = ({
 
   const packingOptions = packings.map(p => ({
     value: p.Codigo,
-    label: p.Nombre || p.nombre || p.Codigo,
+    label: p.Nombre || p.nombre || p.nome || p.Codigo,
   }));
 
   const productOptions = products.map(prod => ({
@@ -193,9 +374,22 @@ const EditRoutesModal = ({
   }));
 
   const addRoute = () => {
-    setLocalRoutes(prev => [
-      ...prev,
-      {
+    setLocalRoutes(prev => {
+      // Copiar datos de la última ruta si existe
+      const lastRoute = prev.length > 0 ? prev[prev.length - 1] : null;
+      
+      const newRoute = lastRoute ? {
+        id: null,
+        ciudad_origen: '', // NO copiar ciudades
+        ciudad_destino: '', // NO copiar ciudades
+        peso_mercancia: lastRoute.peso_mercancia || '',
+        cantidad: lastRoute.cantidad || '',
+        tipo_embajale: lastRoute.tipo_embajale || '',
+        tipo_producto: lastRoute.tipo_producto || '',
+        producto_codigo: lastRoute.producto_codigo || '',
+        vehiculo_requerido: lastRoute.vehiculo_requerido || '',
+        valor_declarado: lastRoute.valor_declarado || '',
+      } : {
         id: null,
         ciudad_origen: '',
         ciudad_destino: '',
@@ -205,8 +399,12 @@ const EditRoutesModal = ({
         tipo_producto: '',
         vehiculo_requerido: '',
         valor_declarado: '',
-      },
-    ]);
+      };
+      
+      console.log('➕ Nueva ruta agregada con datos copiados:', newRoute);
+      
+      return [...prev, newRoute];
+    });
   };
 
   const removeRoute = (index) => {
@@ -230,6 +428,13 @@ const EditRoutesModal = ({
               const selectedDestinationCode = resolveCityCode(route.ciudad_destino);
               const selectedPackingCode = resolvePackingCode(route.tipo_embajale);
               const selectedProductCode = resolveProductCode(route.tipo_producto);
+              
+              console.log(`📋 Ruta ${index + 1} - Valores resueltos:`, {
+                origen: { valor: route.ciudad_origen, codigo: selectedOriginCode },
+                destino: { valor: route.ciudad_destino, codigo: selectedDestinationCode },
+                embalaje: { valor: route.tipo_embajale, codigo: selectedPackingCode },
+                producto: { valor: route.tipo_producto, codigo: selectedProductCode }
+              });
 
               return (
                 <div key={index} className="border p-4 rounded-lg bg-gray-50 relative">
@@ -301,10 +506,17 @@ const EditRoutesModal = ({
                         classNamePrefix="rs"
                         placeholder="Seleccione producto"
                         options={productOptions}
-                        value={productOptions.find(o => String(o.value) === String(selectedProductCode)) || null}
+                        value={
+                          selectedProductCode
+                            ? productOptions.find(o => String(o.value) === String(selectedProductCode)) ||
+                              // Si no se encuentra en las opciones, crear opción personalizada
+                              { value: selectedProductCode, label: `${selectedProductCode} (personalizado)` }
+                            : null
+                        }
                         onChange={(opt) => {
                           const product = products.find(p => String(p.producto_codigo) === String(opt?.value));
-                          handleChange(index, 'tipo_producto', product ? product.producto_codigo : '');
+                          // Si es un producto de la BD, guardar código; si es personalizado, guardar texto
+                          handleChange(index, 'tipo_producto', product ? product.producto_codigo : (opt?.value || ''));
                         }}
                         isClearable
                       />
@@ -329,11 +541,33 @@ const EditRoutesModal = ({
                       />
                     </div>
                     <div>
-                      <label className="text-xs uppercase text-gray-500">Vehículo Requerido</label>
-                      <input
-                        className="w-full border rounded px-2 py-1 text-sm"
-                        value={route.vehiculo_requerido || ''}
-                        onChange={(e) => handleChange(index, 'vehiculo_requerido', e.target.value)}
+                      <label className="text-xs uppercase text-gray-500">
+                        Vehículo Requerido
+                        {route.peso_mercancia && (
+                          <span className="text-green-600 ml-2 text-xs normal-case">
+                            (Recomendado: {recommendVehicle(route.peso_mercancia)})
+                          </span>
+                        )}
+                      </label>
+                      <Select
+                        classNamePrefix="rs"
+                        placeholder="Seleccione vehículo"
+                        options={[
+                          { value: 'CAMIONETA', label: 'CAMIONETA (hasta 2,000 kg)' },
+                          { value: 'TURBO', label: 'TURBO (hasta 4,000 kg)' },
+                          { value: 'SENCILLO', label: 'SENCILLO (hasta 9,000 kg)' },
+                          { value: 'PATINETA2', label: 'PATINETA2 (hasta 20,000 kg)' },
+                          { value: 'PATINETA3', label: 'PATINETA3 (hasta 25,000 kg)' },
+                          { value: 'TRACTOMULA 2', label: 'TRACTOMULA 2 (hasta 30,000 kg)' },
+                          { value: 'TRACTOMULA 3', label: 'TRACTOMULA 3 (hasta 34,000 kg)' },
+                        ]}
+                        value={
+                          route.vehiculo_requerido
+                            ? { value: route.vehiculo_requerido, label: route.vehiculo_requerido }
+                            : null
+                        }
+                        onChange={(opt) => handleChange(index, 'vehiculo_requerido', opt?.value || '')}
+                        isClearable
                       />
                     </div>
                     <div>
@@ -354,9 +588,13 @@ const EditRoutesModal = ({
         <div className="flex items-center justify-between mt-4">
           <button
             onClick={addRoute}
-            className="px-3 py-2 bg-gray-100 border rounded text-sm"
+            className="px-4 py-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 hover:bg-blue-100 transition-colors flex items-center space-x-2"
+            title="Agrega una nueva ruta copiando los datos de la ruta anterior (excepto origen/destino)"
           >
-            + Add Route
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            <span>+ Add Route {localRoutes.length > 0 && '(copiar datos anteriores)'}</span>
           </button>
 
           <div className="space-x-2">

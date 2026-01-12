@@ -697,6 +697,30 @@ class QuoteAssistantService
                     foreach ($tool_calls as $tool_call) {
                         $call_id = $tool_call['id'];
                         $arguments = json_decode($tool_call['function']['arguments'], true);
+                        
+                        // LOG DETALLADO para debug
+                        Log::info('Tool call procesado:', [
+                            'call_id' => $call_id,
+                            'function_name' => $tool_call['function']['name'] ?? 'unknown',
+                            'arguments_raw' => $tool_call['function']['arguments'],
+                            'arguments_decoded' => $arguments,
+                            'tiene_tipo_producto' => isset($arguments['tipo_producto']) ? 'SI' : 'NO',
+                            'tiene_producto' => isset($arguments['producto']) ? 'SI' : 'NO',
+                            'keys_disponibles' => array_keys($arguments)
+                        ]);
+                        
+                        // NORMALIZAR: Si viene 'producto' en lugar de 'tipo_producto', copiarlo
+                        if (isset($arguments['producto']) && !isset($arguments['tipo_producto'])) {
+                            $arguments['tipo_producto'] = $arguments['producto'];
+                            Log::info('Campo producto normalizado a tipo_producto:', ['valor' => $arguments['producto']]);
+                        }
+                        
+                        // NORMALIZAR: Si viene 'product' en lugar de 'tipo_producto', copiarlo
+                        if (isset($arguments['product']) && !isset($arguments['tipo_producto'])) {
+                            $arguments['tipo_producto'] = $arguments['product'];
+                            Log::info('Campo product normalizado a tipo_producto:', ['valor' => $arguments['product']]);
+                        }
+                        
                         $tool_outputs[] = [
                             'tool_call_id' => $call_id,
                             'output' => json_encode($arguments) // Convertir array a string JSON

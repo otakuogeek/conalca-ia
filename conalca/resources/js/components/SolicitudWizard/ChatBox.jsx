@@ -4,7 +4,6 @@ import EventEmitter from 'eventemitter3';
 import { searchVendedores, searchCiudades, searchClientes } from '../../api/solicitud';
 
 export const chatBus = new EventEmitter();
-
 /* ---------- instancia OpenAI ---------- */
 // IMPORTANTE: La clave API se lee desde variable de entorno
 // Configurar en .env como: VITE_OPENAI_API_KEY=sk-proj-...

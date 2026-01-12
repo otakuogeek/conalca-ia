@@ -1,0 +1,50 @@
+{
+  "playwright-mcp": {
+    "description": "Servidor MCP de Playwright para automatización de pruebas web y API",
+    "url": "http://localhost:8931/mcp",
+    "type": "http",
+    "port": 8931,
+    "status": "running",
+    "service": "playwright-mcp.service",
+    "capabilities": [
+      "navigate_to",
+      "screenshot",
+      "click",
+      "fill",
+      "playwright_evaluate",
+      "playwright_fill",
+      "playwright_select",
+      "playwright_hover",
+      "playwright_click",
+      "playwright_navigate",
+      "playwright_screenshot"
+    ],
+    "examples": {
+      "navigate": {
+        "method": "tools/call",
+        "params": {
+          "name": "playwright_navigate",
+          "arguments": {
+            "url": "https://example.com"
+          }
+        }
+      },
+      "screenshot": {
+        "method": "tools/call",
+        "params": {
+          "name": "playwright_screenshot",
+          "arguments": {}
+        }
+      },
+      "click": {
+        "method": "tools/call",
+        "params": {
+          "name": "playwright_click",
+          "arguments": {
+            "selector": "button.submit"
+          }
+        }
+      }
+    }
+  }
+}
