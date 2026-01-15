@@ -57,6 +57,14 @@ class GroupCotization extends Model
         return $this->belongsTo(Client::class);
     }
 
+    /**
+     * 🆕 Relación con mensajes de conversación del grupo
+     */
+    public function messages()
+    {
+        return $this->hasMany(ConversationMessage::class, 'group_cotization_id');
+    }
+
     public function tieneAceptada()
     {
         return $this->cotizaciones()->where('decision_cliente', 'aceptada')->exists();

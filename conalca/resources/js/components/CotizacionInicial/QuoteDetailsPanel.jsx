@@ -13,8 +13,32 @@ const QuoteDetailsPanel = ({
   onCreateQuote = null,
   canCreate = false,
   selectedRouteIndex = null,  // 🆕 Índice de ruta seleccionada para edición
-  onSelectRoute = null        // 🆕 Callback cuando se selecciona una ruta
+  onSelectRoute = null,       // 🆕 Callback cuando se selecciona una ruta
+  isCreating = false          // 🔒 Indica si se está guardando la cotización
 }) => {
+  
+  // 🆕 Función para detectar campos faltantes críticos
+  const getMissingFields = (route) => {
+    const missing = [];
+    
+    if (!route.ciudadOrigen && !route.ciudad_origen) missing.push('origen');
+    if (!route.ciudadDestino && !route.ciudad_destino) missing.push('destino');
+    if (!route.pesoMercancia && !route.peso_mercancia) missing.push('peso');
+    if (!route.producto && !route.tipo_producto && !selectedProduct) missing.push('producto');
+    
+    return missing;
+  };
+
+  // 🆕 Función para obtener mensaje de campo faltante
+  const getMissingFieldLabel = (field) => {
+    const labels = {
+      'origen': 'Origen',
+      'destino': 'Destino',
+      'peso': 'Peso',
+      'producto': 'Producto'
+    };
+    return labels[field] || field;
+  };
   
   // Debug: verificar qué llega
   console.log('🔍 QuoteDetailsPanel recibió:', {
@@ -152,10 +176,10 @@ const QuoteDetailsPanel = ({
             {/* Header de la ruta con color */}
             <div className={`bg-gradient-to-r ${colorScheme.bg} px-5 py-3`}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 flex-1">
                   {/* 🆕 Checkbox de selección */}
                   <div 
-                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-200
+                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0
                       ${isSelected 
                         ? 'bg-white text-green-600' 
                         : 'bg-white/20 text-white hover:bg-white/40'
@@ -180,20 +204,41 @@ const QuoteDetailsPanel = ({
                     {isSelected && <span className="ml-2 text-xs font-normal bg-white/30 px-2 py-0.5 rounded-full">Editando</span>}
                   </span>
                 </div>
-                <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
-                  {route.pesoMercancia ? `${parseFloat(route.pesoMercancia).toLocaleString('es-CO')} kg` : 'Sin peso'}
-                </span>
+                <div className="flex items-center space-x-2">
+                  {/* 🆕 Indicador de campos faltantes */}
+                  {getMissingFields(route).length > 0 && (
+                    <div className="bg-yellow-400 text-yellow-900 text-xs font-bold px-2 py-1 rounded-full flex items-center space-x-1">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      <span>{getMissingFields(route).length} campos</span>
+                    </div>
+                  )}
+                  <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
+                    {(route.pesoMercancia || route.peso_mercancia) ? `${parseFloat(route.pesoMercancia || route.peso_mercancia).toLocaleString('es-CO')} kg` : 'Sin peso'}
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Origen y Destino destacados */}
-            <div className="px-5 py-4 bg-gray-50 border-b border-gray-100">
+            <div className={`px-5 py-4 bg-gray-50 border-b border-gray-100 ${
+              getMissingFields(route).includes('origen') || getMissingFields(route).includes('destino')
+                ? 'ring-1 ring-yellow-300 bg-yellow-50'
+                : ''
+            }`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3 flex-1">
-                  <div className={`w-3 h-3 rounded-full ${colorScheme.icon} bg-current`}></div>
+                  <div className={`w-3 h-3 rounded-full ${
+                    route.ciudadOrigen || route.ciudad_origen ? colorScheme.icon : 'text-red-500'
+                  } bg-current`}></div>
                   <div className="flex-1">
                     <p className="text-xs text-gray-500 uppercase tracking-wide">Origen</p>
-                    <p className="text-sm font-bold text-gray-900">{route.ciudadOrigen || '-'}</p>
+                    <p className={`text-sm font-bold ${
+                      route.ciudadOrigen || route.ciudad_origen ? 'text-gray-900' : 'text-red-500'
+                    }`}>
+                      {route.ciudadOrigen || route.ciudad_origen || '❌ Faltante'}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center px-4">
@@ -204,9 +249,15 @@ const QuoteDetailsPanel = ({
                 <div className="flex items-center space-x-3 flex-1 justify-end text-right">
                   <div className="flex-1">
                     <p className="text-xs text-gray-500 uppercase tracking-wide">Destino</p>
-                    <p className="text-sm font-bold text-gray-900">{route.ciudadDestino || '-'}</p>
+                    <p className={`text-sm font-bold ${
+                      route.ciudadDestino || route.ciudad_destino ? 'text-gray-900' : 'text-red-500'
+                    }`}>
+                      {route.ciudadDestino || route.ciudad_destino || '❌ Faltante'}
+                    </p>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${colorScheme.icon} bg-current`}></div>
+                  <div className={`w-3 h-3 rounded-full ${
+                    route.ciudadDestino || route.ciudad_destino ? colorScheme.icon : 'text-red-500'
+                  } bg-current`}></div>
                 </div>
               </div>
             </div>
@@ -215,15 +266,25 @@ const QuoteDetailsPanel = ({
             <div className="p-5">
               <div className="grid grid-cols-2 gap-4">
                 {/* Peso */}
-                <div className="bg-gray-50 rounded-lg p-3">
+                <div className={`rounded-lg p-3 ${
+                  getMissingFields(route).includes('peso') 
+                    ? 'bg-red-50 ring-1 ring-red-300' 
+                    : 'bg-gray-50'
+                }`}>
                   <div className="flex items-center space-x-2 mb-1">
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className={`w-4 h-4 ${
+                      getMissingFields(route).includes('peso') ? 'text-red-400' : 'text-gray-400'
+                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path>
                     </svg>
-                    <span className="text-xs text-gray-500 uppercase">Peso</span>
+                    <span className={`text-xs uppercase ${
+                      getMissingFields(route).includes('peso') ? 'text-red-600 font-bold' : 'text-gray-500'
+                    }`}>Peso</span>
                   </div>
-                  <p className="text-lg font-bold text-gray-900">
-                    {route.pesoMercancia ? `${parseFloat(route.pesoMercancia).toLocaleString('es-CO')} kg` : '-'}
+                  <p className={`text-lg font-bold ${
+                    (route.pesoMercancia || route.peso_mercancia) ? 'text-gray-900' : 'text-red-500'
+                  }`}>
+                    {(route.pesoMercancia || route.peso_mercancia) ? `${parseFloat(route.pesoMercancia || route.peso_mercancia).toLocaleString('es-CO')} kg` : '❌ Faltante'}
                   </p>
                 </div>
 
@@ -236,7 +297,7 @@ const QuoteDetailsPanel = ({
                     <span className="text-xs text-gray-500 uppercase">Cantidad</span>
                   </div>
                   <p className="text-lg font-bold text-gray-900">
-                    {route.cantidadMercancia || '-'}
+                    {route.cantidadMercancia || route.cantidad || '-'}
                   </p>
                 </div>
 
@@ -262,30 +323,40 @@ const QuoteDetailsPanel = ({
                     <span className="text-xs text-gray-500 uppercase">Vehículo</span>
                   </div>
                   <p className="text-sm font-bold text-gray-900">
-                    {route.claseVehiculo || '-'}
+                    {route.claseVehiculo || route.vehiculo_requerido || '-'}
                   </p>
                 </div>
               </div>
 
               {/* Producto - Fila completa */}
-              <div className="mt-3 bg-gray-50 rounded-lg p-3">
+              <div className={`mt-3 rounded-lg p-3 ${
+                getMissingFields(route).includes('producto')
+                  ? 'bg-red-50 ring-1 ring-red-300'
+                  : 'bg-gray-50'
+              }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className={`w-4 h-4 ${
+                      getMissingFields(route).includes('producto') ? 'text-red-400' : 'text-gray-400'
+                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
                     </svg>
-                    <span className="text-xs text-gray-500 uppercase">
+                    <span className={`text-xs uppercase ${
+                      getMissingFields(route).includes('producto') ? 'text-red-600 font-bold' : 'text-gray-500'
+                    }`}>
                       Tipo Producto
                     </span>
                   </div>
-                  <p className="text-sm font-bold text-gray-900">
-                    {productoMostrar || '-'}
+                  <p className={`text-sm font-bold ${
+                    productoMostrar ? 'text-gray-900' : 'text-red-500'
+                  }`}>
+                    {productoMostrar || '❌ Faltante'}
                   </p>
                 </div>
               </div>
 
               {/* Valor Declarado */}
-              {route.valorMercancia && (
+              {(route.valorMercancia || route.valor_declarado) && (
                 <div className="mt-3 bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
@@ -295,7 +366,7 @@ const QuoteDetailsPanel = ({
                       <span className="text-xs text-gray-500 uppercase">Valor Declarado</span>
                     </div>
                     <p className="text-lg font-bold text-gray-900">
-                      ${parseInt(route.valorMercancia).toLocaleString('es-CO')}
+                      ${parseInt(route.valorMercancia || route.valor_declarado).toLocaleString('es-CO')}
                     </p>
                   </div>
                 </div>
@@ -310,19 +381,31 @@ const QuoteDetailsPanel = ({
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
           <button
             onClick={onCreateQuote}
-            disabled={!canCreate}
+            disabled={!canCreate || isCreating}
             className={`w-full py-4 px-4 rounded-lg font-bold text-white transition-all duration-200 flex items-center justify-center space-x-2 text-lg
-              ${canCreate 
+              ${(canCreate && !isCreating)
                 ? 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 active:scale-95 cursor-pointer shadow-lg hover:shadow-xl' 
                 : 'bg-gray-300 cursor-not-allowed opacity-60'
               }`}
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <span>Crear Cotización{routes.length > 1 ? ` (${routes.length} rutas)` : ''}</span>
+            {isCreating ? (
+              <>
+                <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                </svg>
+                <span>Guardando...</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span>Crear Cotización{routes.length > 1 ? ` (${routes.length} rutas)` : ''}</span>
+              </>
+            )}
           </button>
-          {!canCreate && (
+          {!canCreate && !isCreating && (
             <p className="text-xs text-gray-500 text-center mt-2">
               Complete todos los campos requeridos para continuar
             </p>

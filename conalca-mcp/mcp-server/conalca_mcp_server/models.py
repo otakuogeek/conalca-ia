@@ -385,6 +385,25 @@ class DatabaseRepository:
     
     async def create_cotizacion(self, cotizacion_data: Dict[str, Any]) -> int:
         """Crea una nueva cotización en la base de datos"""
+        # 🆕 NORMALIZAR CIUDADES ANTES DE GUARDAR
+        if 'ciudad_origen' in cotizacion_data and cotizacion_data['ciudad_origen']:
+            city_info = await self.search_city_by_name(cotizacion_data['ciudad_origen'])
+            if city_info:
+                cotizacion_data['ciudad_origen'] = city_info['ciudad_nombre']
+                cotizacion_data['ciudad_origen_dane'] = city_info['ciudad_codigodane']
+                logger.info(f"🏙️ Ciudad origen normalizada: {city_info['ciudad_nombre']} (DANE: {city_info['ciudad_codigodane']})")
+            else:
+                logger.warning(f"⚠️ No se encontró ciudad origen en BD: {cotizacion_data['ciudad_origen']}")
+        
+        if 'ciudad_destino' in cotizacion_data and cotizacion_data['ciudad_destino']:
+            city_info = await self.search_city_by_name(cotizacion_data['ciudad_destino'])
+            if city_info:
+                cotizacion_data['ciudad_destino'] = city_info['ciudad_nombre']
+                cotizacion_data['ciudad_destino_dane'] = city_info['ciudad_codigodane']
+                logger.info(f"🏙️ Ciudad destino normalizada: {city_info['ciudad_nombre']} (DANE: {city_info['ciudad_codigodane']})")
+            else:
+                logger.warning(f"⚠️ No se encontró ciudad destino en BD: {cotizacion_data['ciudad_destino']}")
+        
         # Campos disponibles en cotizacion_models
         fields = []
         values = []
@@ -1035,6 +1054,68 @@ class DatabaseRepository:
         except Exception as e:
             logger.error(f"Error en save_driver_decision_new: {e}")
             return False
+    
+    async def search_city_by_name(self, city_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca una ciudad en la BD por nombre (fuzzy search).
+        Retorna ciudad_codigo, ciudad_nombre y ciudad_codigodane
+        """
+        if not city_name or len(city_name) < 3:
+            return None
+        
+        # Normalizar nombre: capitalizar primera letra de cada palabra
+        normalized_name = city_name.strip().upper()
+        
+        try:
+            # Búsqueda 1: Coincidencia exacta
+            query = """
+            SELECT ciudad_codigo, ciudad_nombre, ciudad_codigodane 
+            FROM cities 
+            WHERE UPPER(ciudad_nombre) = %s
+            LIMIT 1
+            """
+            result = await self.db.execute_query(query, (normalized_name,))
+            
+            if result:
+                logger.info(f"✅ Ciudad encontrada (exacta): {result[0]['ciudad_nombre']} (código: {result[0]['ciudad_codigo']})")
+                return result[0]
+            
+            # Búsqueda 2: Coincidencia parcial (LIKE)
+            query = """
+            SELECT ciudad_codigo, ciudad_nombre, ciudad_codigodane 
+            FROM cities 
+            WHERE ciudad_nombre LIKE %s
+            ORDER BY CHAR_LENGTH(ciudad_nombre) ASC
+            LIMIT 1
+            """
+            result = await self.db.execute_query(query, (f"%{normalized_name}%",))
+            
+            if result:
+                logger.info(f"✅ Ciudad encontrada (parcial): {result[0]['ciudad_nombre']} (código: {result[0]['ciudad_codigo']})")
+                return result[0]
+            
+            # Búsqueda 3: Por palabras clave (primeras 2 letras)
+            if len(normalized_name) >= 3:
+                prefix = normalized_name[:3]
+                query = """
+                SELECT ciudad_codigo, ciudad_nombre, ciudad_codigodane 
+                FROM cities 
+                WHERE ciudad_nombre LIKE %s
+                ORDER BY CHAR_LENGTH(ciudad_nombre) ASC
+                LIMIT 1
+                """
+                result = await self.db.execute_query(query, (f"{prefix}%",))
+                
+                if result:
+                    logger.info(f"⚠️ Ciudad encontrada (aproximada): {result[0]['ciudad_nombre']} (código: {result[0]['ciudad_codigo']})")
+                    return result[0]
+            
+            logger.warning(f"❌ No se encontró ciudad para: {city_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error buscando ciudad '{city_name}': {e}")
+            return None
 
 # Instancia global del repositorio
 repository = DatabaseRepository()

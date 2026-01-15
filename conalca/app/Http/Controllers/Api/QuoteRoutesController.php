@@ -75,7 +75,7 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'    => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'tipo_producto'    => mb_substr($routeData['tipo_producto'] ?? 'Mercancía general', 0, 191), // Truncar a 191 caracteres (límite de la columna)
                         'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                         'valor_declarado'  => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'       => $routeData['pricing_id'] ?? null,
@@ -94,7 +94,7 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'       => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'tipo_producto'       => mb_substr($routeData['tipo_producto'] ?? 'Mercancía general', 0, 191), // Truncar a 191 caracteres (límite de la columna)
                         'vehiculo_requerido'  => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                         'valor_declarado'     => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'          => $routeData['pricing_id'] ?? null,

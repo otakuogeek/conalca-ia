@@ -5,11 +5,26 @@
     <title>Responder Cotización</title>
     <style>
         body { font-family: Arial, Helvetica, sans-serif; background: #f7f7f7; }
-        .container { max-width:600px; margin:40px auto; background:#fff; border-radius:8px; box-shadow:0 2px 12px #0001; padding:2em; }
+        .container { max-width:700px; margin:40px auto; background:#fff; border-radius:8px; box-shadow:0 2px 12px #0001; padding:2em; }
         table { width:100%; margin-bottom: 2em; border-collapse:collapse;}
         th, td { padding: 10px; border-bottom: 1px solid #eee; text-align:left;}
-        .actions label { margin-right: 10px; }
+        .actions { white-space: nowrap; }
+        .actions label { 
+            display: inline-flex; 
+            align-items: center; 
+            margin-right: 20px; 
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .actions label:hover { color: #FF7C32; }
+        .actions input[type="radio"] { 
+            margin-right: 6px; 
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
         .submit-btn { display:block; width:100%; background:#FF7C32; color:#fff; font-weight:bold; border:none; border-radius:6px; padding: 12px 0; cursor:pointer;}
+        .submit-btn:hover { background:#e66d28; }
         .submit-btn:disabled { opacity: 0.6; cursor: not-allowed;}
     </style>
 </head>

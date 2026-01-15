@@ -893,7 +893,7 @@ const ChatModal = ({
                 )}
               </div>
               <h4 className="text-base font-600 text-gray-600 product-sans">
-                {currentRunId ? 'Procesando información...' : 'Validando Información'}
+                {currentRunId ? 'Procesando información...' : 'Validando Información aqui'}
               </h4>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
@@ -933,49 +933,49 @@ const ChatModal = ({
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Origen:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.ciudad_origen || '-'}
+                          {route.ciudadOrigen || route.ciudad_origen || '-'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Destino:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.ciudad_destino || '-'}
+                          {route.ciudadDestino || route.ciudad_destino || '-'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Peso:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.peso_mercancia || '0'} kg
+                          {route.pesoMercancia || route.peso_mercancia || '0'} kg
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Cantidad:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.cantidad || '0'}
+                          {route.cantidadMercancia || route.cantidad || '0'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Tipo de embalaje:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.tipo_embajale || '-'}
+                          {route.tipoEmbalaje || route.tipo_embajale || '-'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Tipo producto:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.tipo_producto || '-'}
+                          {route.tipoProducto || route.tipo_producto || '-'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Vehículo requerido:</span>
                         <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.vehiculo_requerido || '-'}
+                          {route.claseVehiculo || route.vehiculo_requerido || '-'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1">
                         <span className="text-sm font-500 text-gray-600 product-sans">Valor declarado:</span>
                         <span className="text-sm font-600 text-green-600 product-sans">
-                          {route.valor_declarado || '-'}
+                          {route.valorMercancia || route.valor_declarado || '-'}
                         </span>
                       </div>
                     </div>

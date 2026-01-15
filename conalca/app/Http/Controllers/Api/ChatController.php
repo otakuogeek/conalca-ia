@@ -5,12 +5,23 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\QuoteAssistantService;
 use App\Services\MCPAssistantService;
+use App\Models\ConversationMessage;
+use App\Models\GroupCotization;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class ChatController extends Controller
 {
+    /**
+     * 🆕 Obtener el servicio de asistente configurado
+     * Puede ser 'mcp' (MCPAssistantService) o 'openai' (QuoteAssistantService)
+     */
+    private function getAssistantService()
+    {
+        return env('ASSISTANT_SERVICE', 'mcp');
+    }
+    
     public function chat(Request $request)
     {
         $request->validate([
@@ -150,11 +161,15 @@ class ChatController extends Controller
         ]);
 
         try {
+            // 🆕 Determinar qué servicio usar
+            $assistantServiceType = $this->getAssistantService();
+            
             Log::info('Quote chat request iniciado', [
                 'client_id' => $request->client_id,
                 'thread_id' => $request->thread_id,
                 'type_business' => $request->type_business,
-                'message_length' => strlen($request->message)
+                'message_length' => strlen($request->message),
+                'assistant_service' => $assistantServiceType
             ]);
 
             // Obtener o crear el thread de OpenAI
@@ -166,6 +181,13 @@ class ChatController extends Controller
                 ], 404);
             }
 
+            // 🆕 USAR SERVICIO SEGÚN CONFIGURACIÓN
+            if ($assistantServiceType === 'openai') {
+                // Usar QuoteAssistantService (Assistant API de OpenAI)
+                return $this->quoteChatWithOpenAIAssistant($request, $client);
+            }
+
+            // Por defecto usar MCP Assistant
             // Obtener o crear thread usando MCP Assistant
             $threadId = $request->thread_id;
             
@@ -342,7 +364,25 @@ class ChatController extends Controller
             }
 
             // Ejecutar el asistente
-            $run = MCPAssistantService::runAssistant($threadId, $request->type_business, $request->group_id); // 🆕 Pasar group_id
+            // 🆕 Pasar índice de ruta seleccionada para edición individual
+            $selectedRouteIndex = $request->input('selected_route_index');
+            $existingRoutesCount = $request->input('existing_routes_count', 0);
+            
+            Log::info('🎯 ChatController: Parámetros de ruta seleccionada', [
+                'selected_route_index_raw' => $request->input('selected_route_index'),
+                'selected_route_index_type' => gettype($selectedRouteIndex),
+                'selected_route_index_value' => $selectedRouteIndex,
+                'is_null' => $selectedRouteIndex === null,
+                'is_zero' => $selectedRouteIndex === 0
+            ]);
+            
+            $run = MCPAssistantService::runAssistant(
+                $threadId, 
+                $request->type_business, 
+                $request->group_id,
+                $selectedRouteIndex,
+                $existingRoutesCount
+            );
             
             // Caso especial: el thread ya no existe en OpenAI
             if ($run === 'THREAD_NOT_FOUND') {
@@ -413,17 +453,80 @@ class ChatController extends Controller
                 'has_extracted_data' => isset($run['extracted_data'])
             ]);
 
-            // Obtener todos los mensajes actualizados
-            $messages = MCPAssistantService::getMessages($threadId);
+            // Obtener todos los mensajes actualizados - FILTRAR POR GROUP_ID si existe
+            $messages = MCPAssistantService::getMessages($threadId, $request->group_id);
+
+            // 🆕 Si usamos MCP síncrono, el run ya está completado - NO enviar run_id para evitar polling innecesario
+            // El polling solo es necesario para runs asíncronos de OpenAI
+            $isCompleted = !empty($messages) && count($messages) > 0;
+            
+            // 🆕 Obtener extracted_data - PRIMERO del grupo específico, luego del run
+            $extractedData = $run['extracted_data'] ?? null;
+            
+            // 🔧 CRÍTICO: Si extracted_data es STRING JSON, decodificar
+            if (is_string($extractedData)) {
+                $extractedData = json_decode($extractedData, true);
+            }
+            
+            // Intentar obtener del GRUPO específico (nueva lógica - evita mezcla entre cotizaciones)
+            if ($request->group_id) {
+                $group = \App\Models\GroupCotization::find($request->group_id);
+                if ($group && $group->extracted_data) {
+                    $groupExtractedData = json_decode($group->extracted_data, true);
+                    if (!empty($groupExtractedData)) {
+                        // 🔧 FIX: NO usar array_merge con rutas numéricas - solo usar datos del grupo
+                        // El grupo ya tiene los datos más actualizados guardados por processToolCalls
+                        $extractedData = $groupExtractedData;
+                        Log::info('📦 extracted_data obtenido del GRUPO (sin merge)', [
+                            'group_id' => $request->group_id,
+                            'fields' => array_keys($extractedData)
+                        ]);
+                    }
+                }
+            }
+            
+            // 🔧 SEGURIDAD: Convertir a array si es necesario (puede ser objeto o null)
+            if (is_object($extractedData)) {
+                $extractedData = (array) $extractedData;
+            } elseif (!is_array($extractedData)) {
+                $extractedData = [];
+            }
+            
+            Log::info('Respuesta final del chat', [
+                'is_completed' => $isCompleted,
+                'messages_count' => count($messages),
+                'will_send_run_id' => !$isCompleted,
+                'has_extracted_data' => !empty($extractedData),
+                'extracted_data_keys' => !empty($extractedData) ? array_keys($extractedData) : [],
+                'group_id' => $request->group_id
+            ]);
+
+            // 🆕 Obtener productos pendientes de selección (si existen)
+            $productosPendientes = null;
+            if ($threadId) {
+                // Buscar en la metadata de la sesión usando session_id (que almacena el thread_id)
+                $session = \App\Models\ConversationSession::where('session_id', $threadId)->first();
+                if ($session && $session->metadata) {
+                    $metadata = json_decode($session->metadata, true);
+                    if (isset($metadata['productos_pendientes'])) {
+                        $productosPendientes = $metadata['productos_pendientes'];
+                        Log::info('📦 Productos pendientes encontrados para selección', [
+                            'count' => count($productosPendientes)
+                        ]);
+                    }
+                }
+            }
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'thread_id' => $threadId,
-                    'run_id' => $run['id'],
+                    'run_id' => $isCompleted ? null : $run['id'],
+                    'completed' => $isCompleted,
                     'user_message' => $userMessage,
                     'messages' => $messages,
-                    'extracted_data' => $run['extracted_data'] ?? null  // NUEVO: enviar datos extraídos
+                    'extracted_data' => $extractedData,
+                    'productos_pendientes' => $productosPendientes // 🆕 Productos para mostrar como opciones
                 ]
             ]);
 
@@ -612,6 +715,160 @@ class ChatController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Limpiar mensajes de un grupo específico para empezar chat limpio
+     */
+    public function clearGroupMessages(Request $request)
+    {
+        try {
+            $groupId = $request->group_id;
+            
+            if (!$groupId) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'group_id es requerido'
+                ], 400);
+            }
+
+            $deleted = ConversationMessage::where('group_cotization_id', $groupId)->delete();
+            
+            Log::info('Mensajes del grupo eliminados', [
+                'group_id' => $groupId,
+                'messages_deleted' => $deleted
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Se eliminaron {$deleted} mensajes del grupo {$groupId}",
+                'deleted_count' => $deleted
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error limpiando mensajes del grupo', [
+                'error' => $e->getMessage(),
+                'group_id' => $request->group_id ?? 'unknown'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Error al limpiar mensajes'
+            ], 500);
+        }
+    }
+    
+    /**
+     * 🆕 CHAT USANDO ASSISTANT API DE OPENAI
+     * Usa el asistente asst_MnJ08tJG6NKOjbqFLvsYMqEp con herramientas configuradas
+     */
+    private function quoteChatWithOpenAIAssistant(Request $request, $client)
+    {
+        try {
+            Log::info('🤖 Usando OpenAI Assistant Service', [
+                'client_id' => $client->id,
+                'type_business' => $request->type_business
+            ]);
+            
+            // Obtener o crear thread - VALIDAR formato correcto (debe empezar con 'thread_')
+            $threadId = $request->thread_id;
+            
+            // 🆕 Si el thread_id no tiene formato válido de OpenAI, ignorarlo y crear uno nuevo
+            if ($threadId && !str_starts_with($threadId, 'thread_')) {
+                Log::warning('⚠️ Thread ID inválido para OpenAI Assistant, creando nuevo', [
+                    'invalid_thread_id' => $threadId
+                ]);
+                $threadId = null;
+                // Limpiar thread del cliente también
+                $client->openai_thread_id = null;
+                $client->save();
+            }
+            
+            if (!$threadId) {
+                $threadId = QuoteAssistantService::getThread($client);
+            }
+            
+            if (!$threadId) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo crear el thread de conversación'
+                ], 500);
+            }
+            
+            // Crear mensaje del usuario
+            $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
+            
+            if ($userMessage === 'THREAD_NOT_FOUND') {
+                // Recrear thread
+                $client->openai_thread_id = null;
+                $client->save();
+                $threadId = QuoteAssistantService::getThread($client);
+                
+                if (!$threadId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo recrear el thread'
+                    ], 500);
+                }
+                
+                $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
+            }
+            
+            if (!$userMessage) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo crear el mensaje'
+                ], 500);
+            }
+            
+            // Ejecutar el asistente
+            $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
+            
+            if (!$run || !isset($run['id'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo ejecutar el asistente'
+                ], 500);
+            }
+            
+            // Guardar run_id
+            $client->openai_current_run = $run['id'];
+            $client->save();
+            
+            // Esperar respuesta (con timeout)
+            $extractedData = QuoteAssistantService::waitForRunAndExtractData($threadId, $run['id'], 60);
+            
+            Log::info('📊 Datos extraídos del Assistant', [
+                'has_data' => !empty($extractedData),
+                'data_preview' => is_array($extractedData) ? array_keys($extractedData[0] ?? []) : 'not_array'
+            ]);
+            
+            // Obtener mensajes actualizados
+            $messages = QuoteAssistantService::getMessages($threadId);
+            
+            // Formatear respuesta
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'thread_id' => $threadId,
+                    'run_id' => $run['id'],
+                    'messages' => $messages,
+                    'extracted_data' => $extractedData,
+                    'assistant_service' => 'openai'
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error en quoteChatWithOpenAIAssistant', [
+                'error' => $e->getMessage(),
+                'client_id' => $client->id
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Error procesando mensaje: ' . $e->getMessage()
             ], 500);
         }
     }

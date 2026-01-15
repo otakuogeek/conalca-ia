@@ -57,6 +57,15 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    'groq' => [
+        'api_key' => env('GROQ_API_KEY'),
+        'model' => env('GROQ_MODEL', 'qwen/qwen3-32b'),
+    ],
+
+    'chat' => [
+        'provider' => env('CHAT_PROVIDER', 'openai'),
+    ],
+
     'mcp' => [
         'base_url' => env('MCP_BASE_URL', 'https://conalcaia.conalca.com.co/mcp/'),
         'websocket_url' => env('MCP_WEBSOCKET_URL', 'wss://conalcaia.conalca.com.co/ws'),

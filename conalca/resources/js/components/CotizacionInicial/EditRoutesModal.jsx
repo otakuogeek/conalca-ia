@@ -23,7 +23,8 @@ const EditRoutesModal = ({
     return [quoteData];
   }, [quoteData]);
   
-  const [localRoutes, setLocalRoutes] = useState(normalizedRoutes);
+  // 🔥 FIX: Inicializar vacío para evitar duplicación - se llenará desde BD
+  const [localRoutes, setLocalRoutes] = useState([]);
   const [cities, setCities] = useState([]);
   const [packings, setPackings] = useState([]);
   const [products, setProducts] = useState([]);
@@ -94,6 +95,8 @@ const EditRoutesModal = ({
       }
       
       console.log('💾 Cargando rutas desde BD para group_id:', groupId);
+      console.log('📊 Estado inicial de localRoutes:', localRoutes.length, 'ruta(s)');
+      console.log('📊 Estado inicial de quoteData:', Array.isArray(quoteData) ? quoteData.length : (quoteData ? 1 : 0), 'ruta(s)');
       setLoading(true);
       
       try {

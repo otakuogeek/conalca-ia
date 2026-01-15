@@ -393,6 +393,11 @@ Route::prefix('chat')->group(function () {
     Route::post('/quote', [App\Http\Controllers\Api\ChatController::class, 'quoteChat'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.quote');
+    
+    // 🆕 Ruta para extracción inteligente de datos con IA
+    Route::post('/extract-quote-data', [App\Http\Controllers\Api\DataExtractionController::class, 'chatExtractData'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.extract.quote.data');
         
     Route::post('/clear-stuck-runs', [App\Http\Controllers\Api\ChatController::class, 'clearStuckRuns'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
@@ -424,6 +429,11 @@ Route::prefix('chat')->group(function () {
     Route::post('/clear-thread', [App\Http\Controllers\Api\QuoteCreationController::class, 'clearThread'])
         ->middleware('auth')
         ->name('api.chat.clear.thread');
+    
+    // 🆕 Ruta para limpiar mensajes de un grupo específico
+    Route::post('/chat/clear-group', [App\Http\Controllers\Api\ChatController::class, 'clearGroupMessages'])
+        ->middleware('auth')
+        ->name('api.chat.clear.group');
     
     // Ruta para guardar group_id en sesión (puente React → Livewire)
     Route::post('/quote/set-session-group', [App\Http\Controllers\Api\QuoteSessionController::class, 'setGroupInSession'])
@@ -468,6 +478,11 @@ Route::prefix('chat')->group(function () {
         ->middleware('auth')
         ->name('api.quote.save.from.chat');
 });
+
+// 🆕 Rutas para extracción de datos con IA
+Route::post('/extract-quote-data', [App\Http\Controllers\Api\DataExtractionController::class, 'extractData'])
+    ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+    ->name('api.extract.quote.data');
 
 // Ruta para enviar emails de cotización
 Route::post('/send-quote-email', [App\Http\Controllers\Api\QuoteEmailController::class, 'sendQuoteEmail'])

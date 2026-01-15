@@ -175,7 +175,8 @@ class SolicitudTransporteController extends Controller
                 
                 // Filtrar campos que no existen en la tabla
                 $allowedFields = [
-                    'origen', 'destino', 'ciudad_intermedia', 'cantidad_mercancia', 'peso', 'peso_despachado',
+                    'origen', 'destino', 'ciudad_intermedia', 'lugar_recogida_contenedor', 'tipo_carga',
+                    'cantidad_mercancia', 'peso', 'peso_despachado',
                     'producto', 'empaque', 'cantidad_vehiculos', 'cantidad_vehiculos_despachadas', 'clase_vehiculo',
                     'carroceria', 'minimo_modelo', 'tipo_flete', 'flete_conductor', 'flete_ministerio',
                     'tipo_tarifa', 'tarifa_cliente', 'tipo_documento', 'numero_documento', 'valor_mercancia',
