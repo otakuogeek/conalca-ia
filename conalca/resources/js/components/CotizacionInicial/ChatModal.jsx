@@ -1,9 +1,65 @@
 // resources/js/components/CotizacionInicial/ChatModal.jsx
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import SpeechRecognition from './ui/SpeechRecognition';
 import QuoteDetailsPanel from './QuoteDetailsPanel';
+import { stripMarkdown, formatMessageTime, detectRouteFromMessage, getCsrfToken } from './utils/chatUtils';
+import { prepareRoutesForPanel, hasAllRequiredData as checkHasAllRequiredData, mapBackendRouteToQuote, createDataHash } from './utils/quoteDataMapper';
+
+// 🆕 Palabras que NUNCA pueden ser ciudades válidas (evita bugs de extracción)
+const INVALID_CITY_WORDS = [
+  // Meses del año
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  // Palabras de tiempo/hora
+  'las', 'los', 'del', 'dia', 'dias', 'hora', 'horas', 'manana', 'mañana', 'tarde', 'noche',
+  'am', 'pm', 'hoy', 'ayer', 'semana', 'mes', 'ano', 'año',
+  // Campos de formulario
+  'producto', 'peso', 'valor', 'empaque', 'embalaje', 'cantidad', 'origen', 'destino',
+  // Acciones
+  'cambia', 'cambiar', 'nota', 'importante'
+];
+
+/**
+ * Valida si una ciudad es válida (no es una palabra de fecha/hora/campo)
+ */
+const isValidCity = (city) => {
+  if (!city || typeof city !== 'string') return false;
+  const cityLower = city.toLowerCase().trim();
+  if (cityLower.length < 3) return false;
+  return !INVALID_CITY_WORDS.includes(cityLower);
+};
+
+/**
+ * Filtra datos de ruta para evitar ciudades inválidas
+ * Mantiene el valor existente si el nuevo es inválido
+ */
+const sanitizeRouteData = (newRoute, existingRoute = {}) => {
+  const sanitized = { ...newRoute };
+  
+  // Validar ciudadOrigen/origen
+  const newOrigen = newRoute.ciudadOrigen || newRoute.origen || newRoute.ciudad_origen;
+  const existingOrigen = existingRoute.ciudadOrigen || existingRoute.origen || existingRoute.ciudad_origen;
+  if (!isValidCity(newOrigen) && isValidCity(existingOrigen)) {
+    sanitized.ciudadOrigen = existingOrigen;
+    sanitized.origen = existingOrigen;
+    sanitized.ciudad_origen = existingOrigen;
+    console.warn('⚠️ Ciudad origen inválida detectada:', newOrigen, '- manteniendo:', existingOrigen);
+  }
+  
+  // Validar ciudadDestino/destino
+  const newDestino = newRoute.ciudadDestino || newRoute.destino || newRoute.ciudad_destino;
+  const existingDestino = existingRoute.ciudadDestino || existingRoute.destino || existingRoute.ciudad_destino;
+  if (!isValidCity(newDestino) && isValidCity(existingDestino)) {
+    sanitized.ciudadDestino = existingDestino;
+    sanitized.destino = existingDestino;
+    sanitized.ciudad_destino = existingDestino;
+    console.warn('⚠️ Ciudad destino inválida detectada:', newDestino, '- manteniendo:', existingDestino);
+  }
+  
+  return sanitized;
+};
 
 const ChatModal = ({
   onClose,
@@ -16,77 +72,30 @@ const ChatModal = ({
   setQuoteData,
   clientData,
   loading,
-  typeBusiness = 'dta', // Añadir typeBusiness con valor por defecto
-  onUpdateMessages // Callback para actualizar mensajes desde API
+  typeBusiness = 'dta',
+  onUpdateMessages
 }) => {
   const conversationRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
   const [threadId, setThreadId] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [currentRunId, setCurrentRunId] = useState(null);
-  const [pollingInterval, setPollingInterval] = useState(null);
-  const [processingMessage, setProcessingMessage] = useState(null); // Mensaje de "Pensando..."
-  const [processingProgress, setProcessingProgress] = useState(0); // Progreso 0-100
-  const sendingRef = useRef(false); // Ref adicional para bloqueo
-  const isSavingQuote = useRef(false); // 🔒 Ref para evitar doble guardado de cotizaciones
-  const [isCreatingQuote, setIsCreatingQuote] = useState(false); // 🔒 State para deshabilitar botón
+  const pollingIntervalRef = useRef(null);
+  const [processingMessage, setProcessingMessage] = useState(null);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const sendingRef = useRef(false);
+  const isSavingQuote = useRef(false);
+  const [isCreatingQuote, setIsCreatingQuote] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedEmpaque, setSelectedEmpaque] = useState(null);
-  const [selectedRouteIndex, setSelectedRouteIndex] = useState(null); // 🆕 Índice de ruta seleccionada para edición
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
+  const selectedRouteIndexRef = useRef(null);
+  const lastProcessedDataHashRef = useRef(null);
 
-  const stripMarkdown = (text = '') => {
-    return text
-      // remove headings like ### Title
-      .replace(/^#{1,6}\s*/gm, '')
-      // bold / italic (**text**, __text__, *text*, _text_)
-      .replace(/(\*\*|__)(.*?)\1/g, '$2')
-      .replace(/(\*|_)(.*?)\1/g, '$2')
-      // inline code `code`
-      .replace(/`([^`]+)`/g, '$1')
-      // links [label](url)
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      // collapse multiple spaces (but keep newlines intact)
-      .replace(/[ \t]{2,}/g, ' ')
-      // optional: limit extra blank lines if needed
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  };
-
-  // 🆕 Función para detectar número de ruta mencionada en el mensaje
-  const detectRouteFromMessage = (messageText) => {
-    if (!messageText) return null;
-
-    const lower = messageText.toLowerCase();
-
-    // Patrones para detectar ruta específica
-    const patterns = [
-      /(?:ruta|route)\s*(?:n[uú]mero|#|num\.?)?\s*(\d+)/i,
-      /(?:cambiar?|editar?|modificar?|actualizar?)\s+(?:la\s+)?(?:ruta|route)\s*(\d+)/i,
-      /(?:en\s+la\s+)?ruta\s*(\d+)/i,
-      /(?:para\s+la\s+)?ruta\s*(\d+)/i,
-      /(?:de\s+la\s+)?ruta\s*(\d+)/i,
-      /ruta\s+(\d+)/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = lower.match(pattern);
-      if (match && match[1]) {
-        const routeNum = parseInt(match[1], 10);
-        console.log(`🎯 Detectada mención a Ruta ${routeNum} en mensaje:`, messageText);
-        return routeNum - 1; // Convertir a índice base 0
-      }
-    }
-
-    return null;
-  };
-
-  // 🆕 Función para manejar selección de ruta
-  const handleSelectRoute = (index) => {
-    console.log(`🔄 Seleccionando ruta para edición:`, index !== null ? `Ruta ${index + 1}` : 'Ninguna');
+  // Función para manejar selección de ruta
+  const handleSelectRoute = useCallback((index) => {
     setSelectedRouteIndex(index);
-
-    // Notificar al usuario en el chat
     if (onUpdateMessages && index !== null) {
       onUpdateMessages(prev => [
         ...prev,
@@ -97,53 +106,24 @@ const ChatModal = ({
         }
       ]);
     }
-  };
+  }, [onUpdateMessages]);
 
-  // Debug: Log clientData para verificar qué información llega
+  // Sincronizar selectedRouteIndexRef con el estado
   useEffect(() => {
-    console.log('🔍 ChatModal - clientData completo:', clientData);
-    console.log('🆔 clientData.clientId:', clientData.clientId);
-    console.log('📋 clientData.clientName:', clientData.clientName);
-    console.log('📄 clientData.documentClient:', clientData.documentClient);
-    console.log('🏢 clientData.clientLocation:', clientData.clientLocation);
-    console.log('📧 clientData.clientEmail:', clientData.clientEmail);
-    console.log('👤 clientData.clientContact:', clientData.clientContact);
-  }, [clientData]);
+    selectedRouteIndexRef.current = selectedRouteIndex;
+  }, [selectedRouteIndex]);
 
-  // 🆕 MONITOREAR CAMBIOS EN QUOTEDATA
+  // Monitorear cambios en quoteData (solo en desarrollo)
   useEffect(() => {
-    console.log('');
-    console.log('╔════════════════════════════════════════════════════╗');
-    console.log('║ useEffect: quoteData CAMBIÓ                        ║');
-    console.log('╚════════════════════════════════════════════════════╝');
-    console.log('quoteData:', quoteData);
-    console.log('Es array?', Array.isArray(quoteData));
-    console.log('Longitud:', Array.isArray(quoteData) ? quoteData.length : 'N/A');
-
-    if (Array.isArray(quoteData) && quoteData.length > 0) {
-      console.log('CONTENIDO DE quoteData[0]:');
-      console.log('  ciudadOrigen:', quoteData[0].ciudadOrigen);
-      console.log('  ciudadDestino:', quoteData[0].ciudadDestino);
-      console.log('  pesoMercancia:', quoteData[0].pesoMercancia);
-      console.log('  contenedor:', quoteData[0].contenedor);
-      console.log('  producto:', quoteData[0].producto);
-      console.log('  valorMercancia:', quoteData[0].valorMercancia);
-      console.log('  Todas las claves:', Object.keys(quoteData[0]));
+    if (process.env.NODE_ENV === 'development' && Array.isArray(quoteData) && quoteData.length > 0) {
+      console.log('📊 quoteData actualizado:', quoteData.length, 'ruta(s)');
     }
-    console.log('');
   }, [quoteData]);
 
 
   useEffect(() => {
     const resetConversation = async () => {
       if (!clientData.clientId) return;
-
-      console.log('🧽 Iniciando reseteo de conversación para nuevo chat');
-      console.log('🎯 GroupId actual:', clientData.groupId);
-      console.log('🔗 ThreadId actual:', clientData.threadId);
-
-      // SIEMPRE limpiar al cambiar de grupo para evitar mezcla de datos
-      console.log('🆕 Cambio de grupo/cliente detectado - limpiando estado');
 
       // Limpiar mensajes del chat
       if (onUpdateMessages) {
@@ -155,23 +135,19 @@ const ChatModal = ({
         setQuoteData({});
       }
 
-      // 🆕 Limpiar hash de datos procesados para evitar falsos positivos
-      window._lastProcessedDataHash = null;
+      // Limpiar hash de datos procesados para evitar falsos positivos
+      lastProcessedDataHashRef.current = null;
 
       // Resetear selección de producto y empaque
       setSelectedProduct(null);
       setSelectedEmpaque(null);
 
       // Usar threadId existente si hay, sino null
-      if (clientData.threadId) {
-        setThreadId(clientData.threadId);
-      } else {
-        setThreadId(null);
-      }
+      setThreadId(clientData.threadId || null);
     };
 
     resetConversation();
-  }, [clientData.clientId, clientData.groupId]); // 🔴 Ejecutar cuando cambia cliente O grupo
+  }, [clientData.clientId, clientData.groupId]); // Ejecutar cuando cambia cliente O grupo
 
   // Auto-enviar mensaje inicial con datos del formulario si existen
   useEffect(() => {
@@ -182,8 +158,6 @@ const ChatModal = ({
       quoteData.pesoMercancia || quoteData.valorMercancia;
 
     if (hasData) {
-      console.log('📝 Detectados datos en formulario, construyendo mensaje automático...');
-
       // Construir mensaje con los datos disponibles
       let mensaje = "He completado los siguientes datos del formulario:\n\n";
 
@@ -220,14 +194,11 @@ const ChatModal = ({
 
       mensaje += "\n¿Hay algo más que deba completar o modificar?";
 
-      console.log('✅ Mensaje construido:', mensaje);
-
       // Establecer el mensaje en el input y simular envío
       setInputMessage(mensaje);
 
       // Enviar después de un breve delay para que el componente se monte completamente
       setTimeout(() => {
-        console.log('🚀 Enviando mensaje automático...');
         onSendMessage(mensaje);
       }, 500);
     }
@@ -244,30 +215,30 @@ const ChatModal = ({
       isSending,
       messagesLength: messages.length
     });
-
+  
     // Verificar si tenemos todos los datos mínimos necesarios
     const hasAllRequiredData = 
       selectedProduct && 
       selectedEmpaque;
-
+  
     console.log('✅ Verificación de datos:', {
       hasAllRequiredData,
       hasProduct: !!selectedProduct,
       hasEmpaque: !!selectedEmpaque
     });
-
+  
     // Solo procesar si tenemos datos completos y no estamos ya procesando
     if (hasAllRequiredData && !isSending && messages.length > 0) {
       // Verificar si ya se envió el mensaje de creación (para evitar duplicados)
       const yaEnvioCreacion = messages.some(msg => 
         msg.text && msg.text.includes('Por favor crea la cotización con estos datos completos')
       );
-
+  
       if (yaEnvioCreacion) {
         console.log('⏭️ Cotización ya solicitada, evitando duplicado');
         return;
       }
-
+  
       console.log('✅ Todos los datos completos. Procesando cotización automáticamente...');
       console.log('📦 Datos para cotización:', {
         producto: selectedProduct.nombre,
@@ -275,13 +246,13 @@ const ChatModal = ({
         empaque: selectedEmpaque.nome || selectedEmpaque.nombre,
         empaqueId: selectedEmpaque.id
       });
-
+  
       // Enviar mensaje al asistente para crear la cotización
       const nombreEmpaque = selectedEmpaque.nome || selectedEmpaque.nombre;
       const mensajeCreacion = `Por favor crea la cotización con estos datos completos. 
-Tipo de embalaje: ${nombreEmpaque}
-Producto: ${selectedProduct.nombre}`;
-
+  Tipo de embalaje: ${nombreEmpaque}
+  Producto: ${selectedProduct.nombre}`;
+  
       // Pequeño delay para evitar doble procesamiento
       setTimeout(() => {
         if (!isSending) {
@@ -311,11 +282,12 @@ Producto: ${selectedProduct.nombre}`;
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
     };
-  }, [pollingInterval]);
+  }, []); // Sin dependencias - solo cleanup al desmontar
 
   // Validar si tenemos todos los datos necesarios para crear cotización
   const hasAllRequiredData = useMemo(() => {
@@ -333,6 +305,47 @@ Producto: ${selectedProduct.nombre}`;
       (data.cantidadMercancia || data.cantidad)
     );
   }, [selectedProduct, selectedEmpaque, quoteData]);
+
+  // Calcular routesData para QuoteDetailsPanel (memoizado para evitar recálculos innecesarios)
+  const routesData = useMemo(() => {
+    // Caso 1: quoteData es array (multi-ruta)
+    if (Array.isArray(quoteData) && quoteData.length > 0) {
+      return quoteData.map((route, index) => {
+        return {
+          ...route,
+          // Priorizar el producto de la ruta sobre selectedProduct global
+          producto: route.producto || route.tipo_producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+          producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
+          tipo_producto: route.tipo_producto || route.producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+          // Priorizar el empaque de la ruta sobre selectedEmpaque global
+          empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
+          tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
+        };
+      });
+    }
+    // Caso 2: quoteData es objeto con datos
+    else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
+      return [{
+        ...quoteData,
+        producto: selectedProduct?.nombre || quoteData.producto || quoteData.tipo_producto,
+        producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
+        tipo_producto: selectedProduct?.nombre || quoteData.tipo_producto || quoteData.producto,
+        empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
+        tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
+      }];
+    }
+    // Caso 3: NO hay quoteData pero SÍ hay selectedProduct o selectedEmpaque
+    else if (selectedProduct || selectedEmpaque) {
+      return [{
+        producto: selectedProduct?.nombre,
+        producto_codigo: selectedProduct?.codigo,
+        tipo_producto: selectedProduct?.nombre,
+        empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre,
+        tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
+      }];
+    }
+    return [];
+  }, [quoteData, selectedProduct, selectedEmpaque]);
 
   // Helper para limpiar estado de procesamiento
   const clearProcessingState = () => {
@@ -430,11 +443,13 @@ Producto: ${selectedProduct.nombre}`;
     let isPollingActive = true;
 
     const stopPolling = (reason = '') => {
-      console.log(`🛑 Deteniendo polling: ${reason}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🛑 Deteniendo polling: ${reason}`);
+      }
       isPollingActive = false;
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
       setCurrentRunId(null);
       setProcessingMessage(null);
@@ -565,15 +580,12 @@ Producto: ${selectedProduct.nombre}`;
 
     // Configurar intervalo
     const interval = setInterval(pollRun, 2000);
-    setPollingInterval(interval);
+    pollingIntervalRef.current = interval;
   };
 
-  // 🆕 Función para procesar mensaje con IA y extraer datos
+  // Función para procesar mensaje con IA y extraer datos
   const processMessageWithAI = async (messageText) => {
     try {
-      console.log('========== INICIANDO processMessageWithAI ==========');
-      console.log('Mensaje a procesar:', messageText.substring(0, 100));
-
       let currentData = {};
       if (Array.isArray(quoteData) && quoteData.length > 0) {
         currentData = quoteData[0];
@@ -581,10 +593,8 @@ Producto: ${selectedProduct.nombre}`;
         currentData = quoteData;
       }
 
-      console.log('Datos actuales:', currentData);
       const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-      console.log('🚀 Llamando a /api/chat/extract-quote-data');
       const response = await fetch('/api/chat/extract-quote-data', {
         method: 'POST',
         headers: {
@@ -600,49 +610,16 @@ Producto: ${selectedProduct.nombre}`;
         })
       });
 
-      console.log('✅ Respuesta recibida. HTTP Status:', response.status);
-
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const result = await response.json();
 
-      console.log('╔════════════════════════════════════════════════════╗');
-      console.log('║ RESPUESTA DEL BACKEND - JSON COMPLETO             ║');
-      console.log('╚════════════════════════════════════════════════════╝');
-      console.log('JSON COMPLETO:', JSON.stringify(result, null, 2));
-
-      console.log('\n🔍 ANÁLISIS ESTRUCTURA:');
-      console.log('  result.success:', result.success);
-      console.log('  result.data existe?', !!result.data);
-      console.log('  result.data.extracted existe?', !!result.data?.extracted);
-      console.log('  typeof result.data.extracted:', typeof result.data?.extracted);
-
-      if (result.data?.extracted) {
-        console.log('  ¿Es objeto vacío?', Object.keys(result.data.extracted).length === 0);
-        console.log('  Claves de extracted:', Object.keys(result.data.extracted));
-        console.log('  Contenido de extracted:', result.data.extracted);
-
-        // VERIFICAR CADA CAMPO INDIVIDUALMENTE
-        console.log('\n📋 CAMPOS EXTRAÍDOS INDIVIDUALES:');
-        console.log('    origen:', result.data.extracted.origen);
-        console.log('    destino:', result.data.extracted.destino);
-        console.log('    peso:', result.data.extracted.peso);
-        console.log('    contenedor:', result.data.extracted.contenedor);
-        console.log('    cantidad:', result.data.extracted.cantidad);
-        console.log('    producto:', result.data.extracted.producto);
-        console.log('    valor:', result.data.extracted.valor);
-        console.log('    observaciones:', result.data.extracted.observaciones);
-      } else {
-        console.warn('⚠️ result.data.extracted NO EXISTE o es undefined/null');
-      }
-
       // PROCESAR DATOS EXTRAÍDOS
+      // 🔴 CRÍTICO: NO sobrescribir si ya hay múltiples rutas detectadas
       if (result.data?.extracted && Object.keys(result.data.extracted).length > 0) {
         const extractedData = result.data.extracted;
-        console.log('\n✅ PROCESANDO DATOS EXTRAÍDOS...');
-        console.log('CAMPOS EXTRAIDOS:', extractedData);
 
         const mappedData = {
           ciudadOrigen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
@@ -665,24 +642,18 @@ Producto: ${selectedProduct.nombre}`;
           observaciones: extractedData.observaciones || currentData.observaciones || null
         };
 
-        console.log('\n📊 DATOS MAPEADOS:');
-        console.log(JSON.stringify(mappedData, null, 2));
-
-        console.log('\n🔴 LLAMANDO setQuoteData([mappedData])');
-        console.log('ANTES de setQuoteData - quoteData actual:', quoteData);
-
-        setQuoteData([mappedData]);
-
-        console.log('DESPUÉS de setQuoteData (será efectivo en próximo render)');
-        console.log('El valor que acabamos de setear:', mappedData);
-      } else {
-        console.warn('⚠️⚠️⚠️ NO HAY DATOS EXTRAIDOS PARA PROCESAR');
-        console.warn('  result.data?.extracted:', result.data?.extracted);
-        console.warn('  Está vacío?', !result.data?.extracted || Object.keys(result.data?.extracted || {}).length === 0);
+        // 🆕 NO sobrescribir si ya hay múltiples rutas (evitar perder multi-ruta)
+        setQuoteData(prev => {
+          if (Array.isArray(prev) && prev.length > 1) {
+            console.log('⚠️ processMessageWithAI: Ya hay', prev.length, 'rutas - NO sobrescribiendo');
+            return prev; // Mantener las rutas existentes
+          }
+          console.log('✅ processMessageWithAI: Actualizando con nuevos datos extraídos');
+          return [mappedData];
+        });
       }
 
       if (result.data?.message && onUpdateMessages) {
-        console.log('📝 Agregando mensaje del asistente:', result.data.message);
         setTimeout(() => {
           onUpdateMessages(prev => [...prev, { role: 'assistant', text: result.data.message, created_at: new Date().toLocaleTimeString() }]);
         }, 200);
@@ -937,17 +908,18 @@ Producto: ${selectedProduct.nombre}`;
                           className="block w-full text-left px-4 py-3 rounded-lg bg-gray-50 hover:bg-orange-100 border border-gray-200 hover:border-orange-300 transition-all duration-200"
                           onClick={() => {
                             console.log('✅ Producto seleccionado:', prod);
-                            console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
+                            console.log('📍 selectedRouteIndex actual:', selectedRouteIndexRef.current);
 
                             // Actualizar quoteData con el producto seleccionado
-                            // 🆕 FIX: Solo actualizar la ruta seleccionada si existe
+                            // FIX: Usar ref para obtener el valor actual (evitar closure obsoleto)
+                            const currentRouteIndex = selectedRouteIndexRef.current;
                             setQuoteData(prev => {
                               if (Array.isArray(prev) && prev.length > 0) {
                                 // Si hay una ruta seleccionada, actualizar SOLO esa
-                                if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
-                                  console.log(`🎯 Actualizando SOLO ruta ${selectedRouteIndex + 1}`);
+                                if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
+                                  console.log(`🎯 Actualizando SOLO ruta ${currentRouteIndex + 1}`);
                                   return prev.map((route, routeIdx) => {
-                                    if (routeIdx === selectedRouteIndex) {
+                                    if (routeIdx === currentRouteIndex) {
                                       return {
                                         ...route,
                                         producto: prod.nombre,
@@ -959,7 +931,6 @@ Producto: ${selectedProduct.nombre}`;
                                   });
                                 }
                                 // Si no hay ruta seleccionada, aplicar a todas (comportamiento original)
-                                console.log('⚠️ Sin ruta seleccionada, aplicando a todas');
                                 return prev.map(route => ({
                                   ...route,
                                   producto: prod.nombre,
@@ -1082,27 +1053,50 @@ Producto: ${selectedProduct.nombre}`;
             valor: extractedData
           });
 
-          // 🆕 GARANTIZAR QUE SEA UN ARRAY
+          // 🆕 GARANTIZAR QUE SEA UN ARRAY DE RUTAS
           let routesArray = [];
 
-          if (Array.isArray(extractedData)) {
-            // Ya es un array
-            routesArray = extractedData;
-            console.log('✅ extracted_data es ARRAY con', extractedData.length, 'ruta(s)');
-          } else if (extractedData && typeof extractedData === 'object' && Object.keys(extractedData).length > 0) {
-            // 🆕 DETECTAR SI ES UN OBJETO CON CLAVES NUMÉRICAS (MULTI-RUTA)
-            // Ejemplo: {0: {...ruta1...}, 1: {...ruta2...}, producto: "...", tipo_producto: "..."}
-            const keys = Object.keys(extractedData);
-            const numericKeys = keys.filter(k => !isNaN(parseInt(k)));
+          console.log('🔍 Analizando estructura de extracted_data...');
+          console.log('  - Tipo:', typeof extractedData);
+          console.log('  - Es Array:', Array.isArray(extractedData));
+          console.log('  - Keys:', extractedData ? Object.keys(extractedData) : 'N/A');
+          console.log('  - Valor:', JSON.stringify(extractedData, null, 2));
 
-            if (numericKeys.length >= 1 && typeof extractedData[numericKeys[0]] === 'object') {
-              // Es un objeto con rutas indexadas - extraer solo las rutas numéricas
-              console.log('✅ extracted_data es OBJETO con rutas indexadas:', numericKeys.length, 'ruta(s)');
-              routesArray = numericKeys.sort((a, b) => parseInt(a) - parseInt(b)).map(k => extractedData[k]);
-            } else {
-              // Es un objeto único - convertir a array
+          if (Array.isArray(extractedData) && extractedData.length > 0) {
+            // Ya es un array nativo
+            routesArray = extractedData.filter(item => item && typeof item === 'object');
+            console.log('✅ extracted_data es ARRAY nativo con', routesArray.length, 'ruta(s)');
+          } else if (extractedData && typeof extractedData === 'object') {
+            const keys = Object.keys(extractedData);
+            
+            // 🆕 DETECTAR MULTI-RUTA: Buscar claves que sean objetos con datos de ruta
+            const routeKeys = keys.filter(k => {
+              const val = extractedData[k];
+              return val && typeof val === 'object' && 
+                     (val.origen || val.destino || val.ciudad_origen || val.ciudad_destino || val.peso);
+            });
+
+            if (routeKeys.length > 0) {
+              // Es multi-ruta (ej: {"0": {...ruta1}, "1": {...ruta2}, "producto": "..."})
+              console.log('✅ Detectadas', routeKeys.length, 'rutas en objeto:', routeKeys);
+              
+              // Ordenar por clave numérica si son números, o por orden de aparición
+              routeKeys.sort((a, b) => {
+                const numA = parseInt(a);
+                const numB = parseInt(b);
+                if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                return 0;
+              });
+              
+              routesArray = routeKeys.map(k => extractedData[k]);
+              console.log('📊 Rutas extraídas:', routesArray);
+            } else if (extractedData.origen || extractedData.destino || extractedData.ciudad_origen || extractedData.ciudad_destino) {
+              // Es un único objeto de ruta
+              console.log('✅ extracted_data es OBJETO único de ruta');
               routesArray = [extractedData];
-              console.log('✅ extracted_data es OBJETO único - convertido a ARRAY');
+            } else {
+              console.warn('⚠️ extracted_data no contiene datos de ruta válidos:', keys);
+              routesArray = [];
             }
           } else if (typeof extractedData === 'string' && extractedData.trim().length > 0) {
             // Por si acaso es un STRING JSON
@@ -1115,8 +1109,13 @@ Producto: ${selectedProduct.nombre}`;
               routesArray = [];
             }
           } else {
-            console.warn('⚠️ extracted_data está vacío o es inválido:', extractedData);
+            console.warn('⚠️ extracted_data está vacío o es inválido');
             routesArray = [];
+          }
+
+          console.log(`🛣️ TOTAL: ${routesArray.length} ruta(s) para procesar`);
+          if (routesArray.length > 1) {
+            console.log('🎯 MULTI-RUTA DETECTADA');
           }
 
           console.log(`🛣️ Procesando ${routesArray.length} ruta(s) extraídas:`, routesArray);
@@ -1169,10 +1168,10 @@ Producto: ${selectedProduct.nombre}`;
           if (mappedRoutes.length > 0) {
             console.log('🚀 Llamando setQuoteData con merge:', mappedRoutes);
             setQuoteData(prev => {
-              // Si no hay datos previos, usar los nuevos directamente
+              // Si no hay datos previos, usar los nuevos directamente (sanitizados)
               if (!prev || (Array.isArray(prev) && prev.length === 0) || (typeof prev === 'object' && Object.keys(prev).length === 0)) {
-                console.log('🆕 No hay datos previos, usando nuevos directamente');
-                return mappedRoutes;
+                console.log('🆕 No hay datos previos, usando nuevos directamente (sanitizados)');
+                return mappedRoutes.map(route => sanitizeRouteData(route, {}));
               }
 
               // Si hay datos previos, hacer merge campo por campo
@@ -1180,18 +1179,22 @@ Producto: ${selectedProduct.nombre}`;
 
               const merged = mappedRoutes.map((newRoute, idx) => {
                 const existingRoute = prevArray[idx] || {};
+                
+                // 🆕 PRIMERO: Sanitizar la ruta nueva para evitar ciudades inválidas
+                const sanitizedNewRoute = sanitizeRouteData(newRoute, existingRoute);
+                
                 const mergedRoute = { ...existingRoute };
 
-                // Solo sobrescribir campos que tienen valor en los nuevos datos
-                Object.keys(newRoute).forEach(key => {
-                  if (newRoute[key] !== null && newRoute[key] !== undefined && newRoute[key] !== '') {
-                    mergedRoute[key] = newRoute[key];
+                // Solo sobrescribir campos que tienen valor en los nuevos datos (sanitizados)
+                Object.keys(sanitizedNewRoute).forEach(key => {
+                  if (sanitizedNewRoute[key] !== null && sanitizedNewRoute[key] !== undefined && sanitizedNewRoute[key] !== '') {
+                    mergedRoute[key] = sanitizedNewRoute[key];
                   }
                 });
 
                 console.log(`📍 Ruta ${idx + 1} mergeada:`, {
                   prev: existingRoute,
-                  new: newRoute,
+                  new: sanitizedNewRoute,
                   merged: mergedRoute
                 });
 
@@ -1206,16 +1209,18 @@ Producto: ${selectedProduct.nombre}`;
             console.warn('⚠️ No hay rutas mapeadas para actualizar');
           }
 
-          // 🔴 CRÍTICO: Evitar procesamiento duplicado
-          // Crear un hash simple de los datos para comparar - INCLUIR PRODUCTO
+          // Evitar procesamiento duplicado
+          // Crear un hash simple de los datos para comparar
           const dataHash = JSON.stringify(routesArray.map(r => `${r.origen || r.ciudad_origen}-${r.destino || r.ciudad_destino}-${r.peso_kg}-${r.producto || r.producto_nombre || ''}`));
-          if (window._lastProcessedDataHash === dataHash) {
-            console.log('⚠️ Datos ya procesados, saltando duplicación');
+          if (lastProcessedDataHashRef.current === dataHash) {
+            if (process.env.NODE_ENV === 'development') {
+              console.log('⚠️ Datos ya procesados, saltando duplicación');
+            }
             return; // No procesar los mismos datos dos veces
           }
-          window._lastProcessedDataHash = dataHash;
+          lastProcessedDataHashRef.current = dataHash;
 
-          // 🆕 MEJORADO: Auto-buscar producto de CADA ruta (no solo la primera)
+          // Auto-buscar producto de CADA ruta (no solo la primera)
           // Recopilar todos los productos únicos de las rutas
           const productosUnicos = [...new Set(routesArray.map(r => r.producto).filter(Boolean))];
           console.log('🔍 Productos únicos en rutas:', productosUnicos);
@@ -1253,17 +1258,16 @@ Producto: ${selectedProduct.nombre}`;
                       });
                     }
 
-                    // 🆕 CRÍTICO: Si hay ruta seleccionada, actualizar SOLO esa. 
+                    // Si hay ruta seleccionada, actualizar SOLO esa. 
                     // Si no, actualizar rutas que tenían ESTE producto original
+                    // FIX: Usar ref para obtener valor actual (evitar closure obsoleto)
+                    const currentRouteIndex = selectedRouteIndexRef.current;
                     setQuoteData(prev => {
-                      console.log(`🔄 Actualizando rutas con producto "${productoTexto}" -> "${producto.nombre}". selectedRouteIndex:`, selectedRouteIndex);
-
                       if (Array.isArray(prev) && prev.length > 0) {
-                        // 🆕 Si hay ruta seleccionada para edición, actualizar SOLO esa ruta
-                        if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
+                        // Si hay ruta seleccionada para edición, actualizar SOLO esa ruta
+                        if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
                           const updated = prev.map((route, idx) => {
-                            if (idx === selectedRouteIndex) {
-                              console.log(`  ✏️ Actualizando producto SOLO en Ruta ${idx + 1} (seleccionada)`);
+                            if (idx === currentRouteIndex) {
                               return {
                                 ...route,
                                 producto: producto.nombre,
@@ -1331,16 +1335,14 @@ Producto: ${selectedProduct.nombre}`;
                                       });
 
                                       // 2. Actualizar routes con el producto seleccionado
-                                      // 🆕 Si hay una ruta seleccionada, actualizar SOLO esa ruta
+                                      // FIX: Usar ref para obtener valor actual (evitar closure obsoleto)
+                                      const currentRouteIndex = selectedRouteIndexRef.current;
                                       setQuoteData(prev => {
-                                        console.log('🔄 Actualizando quoteData (sugerencia). prev:', prev, 'selectedRouteIndex:', selectedRouteIndex);
-
                                         if (Array.isArray(prev) && prev.length > 0) {
-                                          // 🆕 Si hay ruta seleccionada, actualizar SOLO esa ruta
-                                          if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
+                                          // Si hay ruta seleccionada, actualizar SOLO esa ruta
+                                          if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
                                             const updated = prev.map((route, idx) => {
-                                              if (idx === selectedRouteIndex) {
-                                                console.log(`✏️ Actualizando producto SOLO en Ruta ${idx + 1}`);
+                                              if (idx === currentRouteIndex) {
                                                 return {
                                                   ...route,
                                                   producto: prod.nombre,
@@ -1350,7 +1352,6 @@ Producto: ${selectedProduct.nombre}`;
                                               }
                                               return route;
                                             });
-                                            console.log('✅ Ruta específica actualizada:', updated);
                                             return updated;
                                           }
                                           // Sin ruta seleccionada - actualizar todas
@@ -1360,7 +1361,6 @@ Producto: ${selectedProduct.nombre}`;
                                             producto_codigo: prod.codigo,
                                             tipo_producto: prod.nombre
                                           }));
-                                          console.log('✅ Todas las rutas actualizadas:', updated);
                                           return updated;
                                         } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
                                           const updated = {
@@ -1435,32 +1435,41 @@ Producto: ${selectedProduct.nombre}`;
           }
 
           // 🆕 Si el backend ya procesó una edición de ruta individual, usar directamente los datos
+          // PERO sanitizar para evitar ciudades inválidas (ej: "ENERO", "LAS" de fechas)
           if (backendIndicaSingleEdit && routesArray.length > 1) {
-            console.log('✅ Backend ya procesó edición individual - usando datos directamente');
-            setQuoteData(routesArray.map((route, idx) => ({
-              ciudadOrigen: route.origen || route.ciudad_origen || null,
-              ciudad_origen: route.origen || route.ciudad_origen || null,
-              ciudadDestino: route.destino || route.ciudad_destino || null,
-              ciudad_destino: route.destino || route.ciudad_destino || null,
-              pesoMercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
-              peso_mercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
-              cantidadMercancia: route.cantidad || route.cantidad_unidades || null,
-              cantidad: route.cantidad || route.cantidad_unidades || null,
-              contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
-              tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
-              producto: route.producto || route.tipo_producto || null,
-              tipo_producto: route.producto || route.tipo_producto || null,
-              producto_codigo: route.producto_codigo || null,
-              valorMercancia: route.valor || route.valor_mercancia || route.valor_declarado || null,
-              valor_declarado: route.valor || route.valor_mercancia || route.valor_declarado || null,
-              vehiculo: route.vehiculo || null,
-              claseVehiculo: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
-              vehiculo_requerido: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
-              incoterm: route.incoterm || null,
-              observaciones: route.observaciones || null,
-              empaque: route.empaque || null,
-              empaque_id: route.empaque_id || null
-            })));
+            console.log('✅ Backend ya procesó edición individual - usando datos directamente (con sanitización)');
+            setQuoteData(prev => {
+              const prevArray = Array.isArray(prev) ? prev : [];
+              return routesArray.map((route, idx) => {
+                const existingRoute = prevArray[idx] || {};
+                const newRoute = {
+                  ciudadOrigen: route.origen || route.ciudad_origen || null,
+                  ciudad_origen: route.origen || route.ciudad_origen || null,
+                  ciudadDestino: route.destino || route.ciudad_destino || null,
+                  ciudad_destino: route.destino || route.ciudad_destino || null,
+                  pesoMercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
+                  peso_mercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
+                  cantidadMercancia: route.cantidad || route.cantidad_unidades || null,
+                  cantidad: route.cantidad || route.cantidad_unidades || null,
+                  contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
+                  tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
+                  producto: route.producto || route.tipo_producto || null,
+                  tipo_producto: route.producto || route.tipo_producto || null,
+                  producto_codigo: route.producto_codigo || null,
+                  valorMercancia: route.valor || route.valor_mercancia || route.valor_declarado || null,
+                  valor_declarado: route.valor || route.valor_mercancia || route.valor_declarado || null,
+                  vehiculo: route.vehiculo || null,
+                  claseVehiculo: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
+                  vehiculo_requerido: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
+                  incoterm: route.incoterm || null,
+                  observaciones: route.observaciones || null,
+                  empaque: route.empaque || null,
+                  empaque_id: route.empaque_id || null
+                };
+                // 🆕 Sanitizar para evitar ciudades inválidas como "ENERO", "LAS"
+                return sanitizeRouteData(newRoute, existingRoute);
+              });
+            });
             return; // No continuar con la lógica normal
           }
 
@@ -2062,8 +2071,8 @@ Producto: ${selectedProduct.nombre}`;
                     <div
                       key={idx}
                       className={`border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm ${isSelected
-                          ? 'bg-orange-100 border-orange-500 shadow-md'
-                          : 'bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400'
+                        ? 'bg-orange-100 border-orange-500 shadow-md'
+                        : 'bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400'
                         }`}
                       onClick={() => {
                         setSelectedProduct(producto);
@@ -2077,8 +2086,8 @@ Producto: ${selectedProduct.nombre}`;
                     >
                       <div className="flex items-start gap-3">
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${isSelected
-                            ? 'border-orange-600 bg-orange-600'
-                            : 'border-orange-400'
+                          ? 'border-orange-600 bg-orange-600'
+                          : 'border-orange-400'
                           }`}>
                           {isSelected && (
                             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -2131,8 +2140,8 @@ Producto: ${selectedProduct.nombre}`;
                     <div
                       key={idx}
                       className={`border-2 rounded-lg p-3 transition-all text-center cursor-pointer shadow-sm ${isSelected
-                          ? 'bg-blue-100 border-blue-500 shadow-md'
-                          : 'bg-blue-50 border-blue-300 hover:bg-blue-100 hover:border-blue-400'
+                        ? 'bg-blue-100 border-blue-500 shadow-md'
+                        : 'bg-blue-50 border-blue-300 hover:bg-blue-100 hover:border-blue-400'
                         }`}
                       onClick={() => {
                         setSelectedEmpaque(empaque);
@@ -2146,8 +2155,8 @@ Producto: ${selectedProduct.nombre}`;
                     >
                       <div className="flex flex-col items-center gap-1">
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected
-                            ? 'border-blue-600 bg-blue-600'
-                            : 'border-blue-400'
+                          ? 'border-blue-600 bg-blue-600'
+                          : 'border-blue-400'
                           }`}>
                           {isSelected && (
                             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -2495,8 +2504,8 @@ Producto: ${selectedProduct.nombre}`;
               <div className="p-6 space-y-2">
                 {/* 1. Origen */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.ciudadOrigen
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.ciudadOrigen ? 'bg-green-500' : 'bg-gray-300'
@@ -2520,8 +2529,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 2. Destino */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.ciudadDestino
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.ciudadDestino ? 'bg-green-500' : 'bg-gray-300'
@@ -2545,8 +2554,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 3. Peso */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.pesoMercancia
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.pesoMercancia ? 'bg-green-500' : 'bg-gray-300'
@@ -2570,8 +2579,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 4. Cantidad */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.cantidadMercancia
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.cantidadMercancia ? 'bg-green-500' : 'bg-gray-300'
@@ -2595,8 +2604,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 5. Embalaje */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${selectedEmpaque
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${selectedEmpaque ? 'bg-green-500' : 'bg-gray-300'
@@ -2620,8 +2629,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 6. Producto */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${selectedProduct
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${selectedProduct ? 'bg-green-500' : 'bg-gray-300'
@@ -2645,8 +2654,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 7. Vehículo */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.claseVehiculo || quoteData?.vehiculoRequerido
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? 'bg-green-500' : 'bg-gray-300'
@@ -2670,8 +2679,8 @@ Producto: ${selectedProduct.nombre}`;
 
                 {/* 8. Valor */}
                 <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.valorMercancia
-                    ? 'bg-green-50 border-green-300'
-                    : 'bg-gray-50 border-gray-200'
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
                   }`}>
                   <div className="flex items-center gap-2">
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.valorMercancia ? 'bg-green-500' : 'bg-gray-300'
@@ -2743,91 +2752,17 @@ Producto: ${selectedProduct.nombre}`;
           )}
 
           {/* Panel de Detalles de Cotización - React Component */}
-          {(() => {
-            // 🔍 DEBUG: Log para verificar qué contiene quoteData
-            console.log('');
-            console.log('╔════════════════════════════════════════════════════╗');
-            console.log('║ RENDERIZADO QuoteDetailsPanel                      ║');
-            console.log('╚════════════════════════════════════════════════════╝');
-            console.log('quoteData completo:', quoteData);
-            console.log('Es array?', Array.isArray(quoteData));
-            if (Array.isArray(quoteData) && quoteData.length > 0) {
-              console.log('quoteData[0]:', quoteData[0]);
-              console.log('  - ciudadOrigen:', quoteData[0].ciudadOrigen);
-              console.log('  - ciudadDestino:', quoteData[0].ciudadDestino);
-              console.log('  - pesoMercancia:', quoteData[0].pesoMercancia);
-            }
-
-            // Construir routesData SIEMPRE con datos disponibles
-            let routesData = [];
-
-            // Caso 1: quoteData es array (multi-ruta)
-            if (Array.isArray(quoteData) && quoteData.length > 0) {
-              console.log('CASO 1: quoteData es ARRAY con', quoteData.length, 'rutas');
-              routesData = quoteData.map((route, index) => {
-                // 🆕 IMPORTANTE: Respetar el producto específico de cada ruta
-                // Solo usar selectedProduct como fallback si la ruta NO tiene producto definido
-                const routeHasProduct = route.producto || route.tipo_producto || route.producto_nombre;
-                const routeHasEmpaque = route.empaque || route.tipo_embalaje;
-
-                return {
-                  ...route,
-                  // Priorizar el producto de la ruta sobre selectedProduct global
-                  producto: route.producto || route.tipo_producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
-                  producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
-                  tipo_producto: route.tipo_producto || route.producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
-                  // Priorizar el empaque de la ruta sobre selectedEmpaque global
-                  empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
-                  tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
-                };
-              });
-            }
-            // Caso 2: quoteData es objeto con datos
-            else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
-              routesData = [{
-                ...quoteData,
-                producto: selectedProduct?.nombre || quoteData.producto || quoteData.tipo_producto,
-                producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
-                tipo_producto: selectedProduct?.nombre || quoteData.tipo_producto || quoteData.producto,
-                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
-                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
-              }];
-            }
-            // Caso 3: NO hay quoteData pero SÍ hay selectedProduct o selectedEmpaque
-            else if (selectedProduct || selectedEmpaque) {
-              routesData = [{
-                producto: selectedProduct?.nombre,
-                producto_codigo: selectedProduct?.codigo,
-                tipo_producto: selectedProduct?.nombre,
-                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre,
-                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
-              }];
-            }
-
-            console.log('🎯 Datos pasados a QuoteDetailsPanel:', {
-              quoteDataOriginal: quoteData,
-              selectedProduct,
-              selectedEmpaque,
-              routesData,
-              routesLength: routesData.length,
-              hasAllRequiredData,
-              selectedRouteIndex
-            });
-
-            return (
-              <QuoteDetailsPanel
-                routes={routesData}
-                selectedProduct={selectedProduct}
-                selectedEmpaque={selectedEmpaque}
-                isLoading={!!processingMessage && (!quoteData || (Array.isArray(quoteData) ? quoteData.length === 0 : !quoteData.ciudadOrigen))}
-                onCreateQuote={handleCreateQuote}
-                canCreate={hasAllRequiredData && !isCreatingQuote}
-                selectedRouteIndex={selectedRouteIndex}
-                onSelectRoute={handleSelectRoute}
-                isCreating={isCreatingQuote}
-              />
-            );
-          })()}
+          <QuoteDetailsPanel
+            routes={routesData}
+            selectedProduct={selectedProduct}
+            selectedEmpaque={selectedEmpaque}
+            isLoading={!!processingMessage && (!quoteData || (Array.isArray(quoteData) ? quoteData.length === 0 : !quoteData.ciudadOrigen))}
+            onCreateQuote={handleCreateQuote}
+            canCreate={hasAllRequiredData && !isCreatingQuote}
+            selectedRouteIndex={selectedRouteIndex}
+            onSelectRoute={handleSelectRoute}
+            isCreating={isCreatingQuote}
+          />
 
           {/* ELIMINADO: Panel antiguo Livewire/Detalles editables que causaba errores */}
           {false && (
@@ -2892,8 +2827,8 @@ Producto: ${selectedProduct.nombre}`;
                                 <div
                                   key={idx}
                                   className={`border-2 rounded-lg p-3 transition-all cursor-pointer ${isSelected
-                                      ? 'bg-orange-100 border-orange-500'
-                                      : 'bg-white border-gray-300 hover:border-orange-400'
+                                    ? 'bg-orange-100 border-orange-500'
+                                    : 'bg-white border-gray-300 hover:border-orange-400'
                                     }`}
                                   onClick={() => {
                                     setSelectedProduct(productoData);
@@ -3151,8 +3086,8 @@ Producto: ${selectedProduct.nombre}`;
                     className={`mb-4 ${message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} chat-message`}
                   >
                     <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm ${message.role === 'user'
-                        ? 'bg-orange-400 text-white rounded-br-sm'
-                        : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
+                      ? 'bg-orange-400 text-white rounded-br-sm'
+                      : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
                       }`}>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs opacity-75 product-sans">
@@ -3286,9 +3221,9 @@ Producto: ${selectedProduct.nombre}`;
                         console.log('🔄 Cancelando procesamiento y reiniciando chat...');
 
                         // Detener polling si existe
-                        if (pollingInterval) {
-                          clearInterval(pollingInterval);
-                          setPollingInterval(null);
+                        if (pollingIntervalRef.current) {
+                          clearInterval(pollingIntervalRef.current);
+                          pollingIntervalRef.current = null;
                         }
 
                         // Limpiar todos los estados
@@ -3377,9 +3312,9 @@ Producto: ${selectedProduct.nombre}`;
                         onClick={async () => {
                           console.log('🔄 Cancelando procesamiento...');
 
-                          if (pollingInterval) {
-                            clearInterval(pollingInterval);
-                            setPollingInterval(null);
+                          if (pollingIntervalRef.current) {
+                            clearInterval(pollingIntervalRef.current);
+                            pollingIntervalRef.current = null;
                           }
 
                           clearProcessingState();
@@ -3460,10 +3395,10 @@ Producto: ${selectedProduct.nombre}`;
                             : "Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
                       }
                       className={`w-full px-4 py-3 pr-20 border rounded-xl resize-none focus:outline-none transition-all duration-200 product-sans ${isSending || currentRunId || processingMessage
-                          ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium'
-                          : selectedRouteIndex !== null
-                            ? 'bg-yellow-50 border-yellow-400 text-gray-800 placeholder-yellow-600 focus:ring-2 focus:ring-yellow-400 focus:border-transparent'
-                            : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
+                        ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium'
+                        : selectedRouteIndex !== null
+                          ? 'bg-yellow-50 border-yellow-400 text-gray-800 placeholder-yellow-600 focus:ring-2 focus:ring-yellow-400 focus:border-transparent'
+                          : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
                         }`}
                       rows="2"
                       disabled={isSending || currentRunId || processingMessage}
@@ -3521,12 +3456,18 @@ ChatModal.propTypes = {
   inputMessage: PropTypes.string.isRequired,
   setInputMessage: PropTypes.func.isRequired,
   onSendMessage: PropTypes.func.isRequired,
-  quoteData: PropTypes.array.isRequired,
+  quoteData: PropTypes.oneOfType([PropTypes.array, PropTypes.object]).isRequired, // Puede ser array (multi-ruta) u objeto (ruta única)
   setQuoteData: PropTypes.func.isRequired,
   clientData: PropTypes.object.isRequired,
   loading: PropTypes.bool,
   typeBusiness: PropTypes.string,
   onUpdateMessages: PropTypes.func
+};
+
+ChatModal.defaultProps = {
+  loading: false,
+  typeBusiness: 'dta',
+  onUpdateMessages: null
 };
 
 export default ChatModal;

@@ -1086,6 +1086,69 @@ class MCPAssistantService
             }
         }
 
+        // 🚀 OPTIMIZACIÓN: Si se detectaron múltiples rutas completas con Regex, retornar inmediatamente
+        // Esto evita llamar a OpenAI cuando ya tenemos la estructura clara
+        // 🔧 FIX: Verificar directamente si extractedData tiene múltiples rutas con array indexado
+        $hasMultipleRoutes = isset($extractedData[0]) && is_array($extractedData[0]) && count($extractedData) >= 2;
+        $isFirstTimeMultiRoute = empty($previousExtractedData) || !isset($previousExtractedData[0]);
+        
+        if ($hasMultipleRoutes && $isFirstTimeMultiRoute) {
+            Log::info('🚀 Optimización Multi-Ruta: Retornando sin llamar a OpenAI', [
+                'count' => count($extractedData),
+                'rutas' => array_map(fn($r) => ($r['origen'] ?? '?') . ' → ' . ($r['destino'] ?? '?'), $extractedData)
+            ]);
+            
+            $respuesta = "¡Entendido! He identificado " . count($extractedData) . " rutas para tu cotización:\n\n";
+            
+            foreach ($extractedData as $idx => $ruta) {
+                $num = $idx + 1;
+                $respuesta .= "**Ruta {$num}:**\n";
+                if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . ucfirst($ruta['origen']) . "\n";
+                if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . ucfirst($ruta['destino']) . "\n";
+                if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . ucfirst($ruta['vehiculo']) . "\n";
+                if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+                if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . ucfirst($ruta['producto']) . "\n";
+                $respuesta .= "\n";
+            }
+            
+            $respuesta .= "¿Es correcta esta información? Puedes pedirme modificar algún dato o crear la cotización.";
+            
+            ConversationMessage::create([
+                'session_id' => $session->id,
+                'group_cotization_id' => $groupId,
+                'role' => 'assistant',
+                'content' => $respuesta,
+                'timestamp' => now()
+            ]);
+            
+            $runId = 'run_multi_route_' . time();
+            
+            // Guardar metadata
+            $metadata = json_decode($session->metadata ?? '{}', true);
+            $metadata['last_run_id'] = $runId;
+            $metadata['last_run_status'] = 'completed';
+            $metadata['extracted_data'] = $extractedData;
+            // 🆕 SINCRONIZAR quote_data
+            $metadata['quote_data'] = $extractedData;
+            $session->metadata = json_encode($metadata);
+            $session->save();
+            
+            // Guardar en grupo
+            if ($groupId) {
+                $group = GroupCotization::find($groupId);
+                if ($group) {
+                    $group->extracted_data = json_encode($extractedData);
+                    $group->save();
+                }
+            }
+
+            return [
+                'id' => $runId,
+                'status' => 'completed_with_data',
+                'extracted_data' => $extractedData
+            ];
+        }
+
         // 🚀 OPTIMIZACIÓN: Detectar ediciones simples y responder sin llamar al API
         // Si el mensaje es una corrección simple de un campo, no necesitamos IA
         $esEdicionSimple = false;
@@ -2920,10 +2983,85 @@ class MCPAssistantService
     {
         $routes = [];
         
+        // 🆕 PREPROCESAR TEXTO: Separar palabras pegadas antes de analizar
+        $text = TextPreprocessorService::preprocess($text);
+        
         Log::info('🔍 Detectando múltiples rutas en texto', [
             'text_preview' => substr($text, 0, 500),
             'text_length' => strlen($text)
         ]);
+        
+        // 🆕 NUEVO: Detectar si el texto tiene separadores de múltiples cotizaciones
+        // Separadores: "adicional", "también", "además", "aparte", "y también", saltos de línea
+        $separadores = [
+            'adicional', 'también', 'ademas', 'aparte', 'y también', 'y ademas', 
+            'segunda cotización', 'otra cotización', 'la segunda', 'la tercera',
+            'segunda ruta', 'tercera ruta'
+        ];
+        $tieneSeparador = false;
+        $tieneSaltoLinea = false;
+        $textLower = mb_strtolower($text);
+        
+        // Detectar separadores ordinales (primera, segunda, tercera...)
+        if (preg_match('/\b(primera|segunda|tercera|cuarta|quinta)\s+(?:ruta|cotizaci|viaje|opci)/ui', $text) || 
+            preg_match('/\b(la\s+)?(primera|segunda|tercera)\s+(?:vamos|haremos|es|son)/ui', $text)) {
+            $tieneSeparador = true;
+            Log::info('🔄 Separador ordinal detectado (primera, segunda, etc)');
+        }
+        
+        // Detectar si hay saltos de línea que separan múltiples cotizaciones
+        if (preg_match('/\n\s*cotizaci[oó]n/ui', $text)) {
+            $tieneSaltoLinea = true;
+            Log::info('🔄 Salto de línea con "cotización" detectado como separador');
+        }
+        
+        foreach ($separadores as $sep) {
+            if (strpos($textLower, $sep) !== false) {
+                $tieneSeparador = true;
+                Log::info('🔄 Separador de múltiples rutas detectado', ['separador' => $sep]);
+                break;
+            }
+        }
+        
+        // 🆕 PATRÓN PARA RUTAS SEPARADAS POR "ADICIONAL/TAMBIÉN", ORDINALES O SALTOS DE LÍNEA
+        // Ej: "cotización de Bogotá a Buenaventura de 13 toneladas... adicional requiero cotización de Cali a Cartagena..."
+        if ($tieneSeparador || $tieneSaltoLinea) {
+            // Dividir por los separadores - usa \s* para permitir texto pegado (ej: "cajasadicional")
+            // También incluye saltos de línea seguidos de "cotización"
+            $regexSplit = '/(?:\s*(?:adicional(?:mente)?|también|ademas|aparte|y\s+también|y\s+ademas|(?:\b(?:la\s+|el\s+)?(?:primer[ao]|segund[ao]|tercer[ao]|cuart[ao]|quint[ao])(?:\s+(?:ruta|cotizaci[oó]n|viaje|opci[oó]n))?))\s*(?:requiero?|necesito|solicito|pido|vamos\s+a\s+hacer|es|son)?\s*|\n\s*(?=cotizaci[oó]n))/ui';
+            
+            $partes = preg_split($regexSplit, $text, -1, PREG_SPLIT_NO_EMPTY);
+            
+            Log::info('📦 Texto dividido por separadores', [
+                'partes' => count($partes),
+                'previews' => array_map(function($p) { return substr(trim($p), 0, 100); }, $partes)
+            ]);
+            
+            if (count($partes) >= 2) {
+                $validRouteCount = 0;
+                foreach ($partes as $parte) {
+                    // Usamos un índice temporal, luego reasignaremos
+                    $routeData = self::extractRouteDataFromText($parte, 999);
+                    
+                    if ($routeData && (($routeData['origen'] ?? null) || ($routeData['destino'] ?? null))) {
+                        $validRouteCount++;
+                        $routeData['ruta_numero'] = $validRouteCount; // Reasignar índice secuencial
+                        $routes[] = $routeData;
+                        
+                        Log::info("✅ Ruta #$validRouteCount extraída de parte separada", [
+                            'origen' => $routeData['origen'] ?? 'N/A',
+                            'destino' => $routeData['destino'] ?? 'N/A',
+                            'peso' => $routeData['peso_kg'] ?? 'N/A'
+                        ]);
+                    }
+                }
+                
+                if (count($routes) >= 2) {
+                    Log::info('✅ Múltiples rutas detectadas con separador (Total: ' . count($routes) . ')');
+                    return $routes;
+                }
+            }
+        }
         
         // 🆕 NUEVO PATRÓN: "Una cotización de X a Y, son N kg/toneladas de PRODUCTO..."
         // Formato: "Necesito una cotización de distribución nacionalizada de Medellín a Bogota, son 7 mil kilogramos de vacas..."
@@ -3982,9 +4120,18 @@ class MCPAssistantService
         // Terminador: número, "toneladas", "kg", "con", "en un", coma, punto, etc.
         $terminadorRuta = '(?=\s*(?:\d|toneladas?|kg|kilos?|con\s|en\s+un|,|\.|;|$))';
         if (preg_match('/(?:de|desde)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s+(?:a|hasta)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,1})' . $terminadorRuta . '/ui', $text, $matches)) {
-            // 🆕 Palabras que NUNCA pueden ser ciudades (incluye campos de formulario y acciones)
-            $forbiddenWords = ['producto', 'peso', 'valor', 'empaque', 'embalaje', 'cantidad', 'origen', 'destino', 
-                               'cambia', 'cambiar', 'cambialo', 'cambiale', 'modifica', 'actualiza', 'nota', 'importante'];
+            // 🆕 Palabras que NUNCA pueden ser ciudades (incluye campos de formulario, acciones, meses, tiempo)
+            $forbiddenWords = [
+                // Campos de formulario y acciones
+                'producto', 'peso', 'valor', 'empaque', 'embalaje', 'cantidad', 'origen', 'destino', 
+                'cambia', 'cambiar', 'cambialo', 'cambiale', 'modifica', 'actualiza', 'nota', 'importante',
+                // 🆕 MESES DEL AÑO (evita confundir fechas con rutas)
+                'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 
+                'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+                // 🆕 PALABRAS DE TIEMPO/HORA (evita "de enero a las 9")
+                'las', 'los', 'del', 'dia', 'dias', 'hora', 'horas', 'manana', 'mañana', 'tarde', 'noche',
+                'am', 'pm', 'hoy', 'ayer', 'semana', 'mes', 'ano', 'año'
+            ];
             $commonWords = ['importación', 'exportación', 'nacionalizada', 'internacional', 'terrestre', 'marítima', 'aérea', 'carga', 'general'];
             $origen = trim($matches[1]);
             $destino = trim($matches[2]);
@@ -4061,9 +4208,20 @@ class MCPAssistantService
             $destino = trim($matches[2]);
             
             // 🆕 Palabras prohibidas que NUNCA pueden ser ciudades
-            $forbiddenWords = ['producto', 'peso', 'valor', 'empaque', 'embalaje', 'cantidad', 'origen', 'destino', 
-                               'cambia', 'cambiar', 'cambialo', 'cambiale', 'modifica', 'actualiza', 'nota', 'importante',
-                               'tomates', 'maiz', 'arroz', 'cafe', 'azucar', 'miel']; // Nombres de productos comunes
+            // Incluye: campos de formulario, acciones, productos comunes, meses del año, palabras de tiempo/hora
+            $forbiddenWords = [
+                // Campos de formulario y acciones
+                'producto', 'peso', 'valor', 'empaque', 'embalaje', 'cantidad', 'origen', 'destino', 
+                'cambia', 'cambiar', 'cambialo', 'cambiale', 'modifica', 'actualiza', 'nota', 'importante',
+                // Nombres de productos comunes
+                'tomates', 'maiz', 'arroz', 'cafe', 'azucar', 'miel',
+                // 🆕 MESES DEL AÑO (evita confundir fechas con rutas)
+                'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 
+                'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+                // 🆕 PALABRAS DE TIEMPO/HORA (evita "de enero a las 9")
+                'las', 'los', 'del', 'dia', 'dias', 'hora', 'horas', 'manana', 'mañana', 'tarde', 'noche',
+                'am', 'pm', 'hoy', 'ayer', 'semana', 'mes', 'ano', 'año'
+            ];
             $commonWords = ['necesito', 'quiero', 'solicito', 'cotización', 'importación', 'exportación', 'nacionalizada', 'carga'];
             
             // Verificar palabras prohibidas
@@ -4113,6 +4271,233 @@ class MCPAssistantService
     }
     
     /**
+     * 🆕 EXTRAER DATOS DE UNA RUTA DESDE UN FRAGMENTO DE TEXTO
+     * Usado para procesar partes separadas por "adicional", "también", etc.
+     */
+    private static function extractRouteDataFromText($text, $rutaNumero = 1)
+    {
+        $route = [
+            'ruta_numero' => $rutaNumero,
+            'origen' => null,
+            'destino' => null,
+            'peso_kg' => null,
+            'cantidad' => null,
+            'producto' => null,
+            'valor_declarado' => null,
+            'empaque' => null,
+            'empaque_id' => null,
+            'incluye_tara' => false
+        ];
+        
+        // 🆕 PREPROCESAR TEXTO: Separar palabras pegadas antes de extraer
+        $text = TextPreprocessorService::preprocess(trim($text));
+        $textLower = mb_strtolower($text);
+        
+        // 🆕 PATRÓN: "de ORIGEN a DESTINO" o "desde ORIGEN hasta DESTINO"
+        // Más flexible para capturar ciudades con espacios
+        if (preg_match('/(?:cotizaci[oó]n\s+)?(?:de|desde|-)\s+([a-záéíóúñ\s]+?)\s+(?:a|hasta|hacia|-)\s+([a-záéíóúñ]+)/ui', $text, $ciudadesMatch)) {
+            $route['origen'] = self::normalizeCityName(trim($ciudadesMatch[1]));
+            $route['destino'] = self::normalizeCityName(trim($ciudadesMatch[2]));
+        }
+        
+        // 🆕 PATRÓN: "ORIGEN <sep> DESTINO"
+        // Corregido: Validar secuencialmente para evitar falsos positivos (como "vamos a cargar")
+        if (!$route['origen'] && !$route['destino']) {
+            // Caso 1: Separador con espacios obligatorios (para " a ")
+            if (preg_match('/([a-záéíóúñ]+)\s+(?:a|hacia|hasta)\s+([a-záéíóúñ]+)/ui', $text, $ciudadesMatch2)) {
+                $o = self::normalizeCityName(trim($ciudadesMatch2[1]));
+                $d = self::normalizeCityName(trim($ciudadesMatch2[2]));
+                if ($o && $d) {
+                    $route['origen'] = $o;
+                    $route['destino'] = $d;
+                }
+            }
+        }
+            
+        if (!$route['origen'] && !$route['destino']) {
+            // Caso 2: Separador guión (puede no tener espacios)
+            if (preg_match('/([a-záéíóúñ]+)\s*(?:-|–)\s*([a-záéíóúñ]+)/ui', $text, $ciudadesMatch3)) {
+                $o = self::normalizeCityName(trim($ciudadesMatch3[1]));
+                $d = self::normalizeCityName(trim($ciudadesMatch3[2]));
+                if ($o && $d) {
+                    $route['origen'] = $o;
+                    $route['destino'] = $d;
+                }
+            }
+        }
+            
+        if (!$route['origen'] && !$route['destino']) {
+            // Caso 3: Ciudades pegadas solo por espacio (ej: "Bucaramanga Bogotá vamos a cargar")
+            // Muy común en speech-to-text donde el usuario no dice "a" entre ciudades
+            // Lista de ciudades comunes para validación
+            $ciudadesComunes = [
+                'bogota', 'bogotá', 'medellin', 'medellín', 'cali', 'barranquilla', 'cartagena', 
+                'bucaramanga', 'pereira', 'cucuta', 'cúcuta', 'ibague', 'ibagué', 'manizales',
+                'santa marta', 'villavicencio', 'pasto', 'monteria', 'montería', 'neiva', 
+                'valledupar', 'armenia', 'popayan', 'popayán', 'sincelejo', 'tunja', 'riohacha',
+                'buenaventura', 'girardot', 'floridablanca', 'soacha', 'bello', 'soledad',
+                'palmira', 'envigado', 'itagui', 'itagüí', 'dosquebradas', 'tulua', 'tuluá',
+                'apartado', 'apartadó', 'cartago', 'barrancabermeja', 'yopal', 'florencia'
+            ];
+            
+            // Patrón: CIUDAD CIUDAD (vamos|para|a cargar|haremos) - ciudades contiguas
+            if (preg_match('/(?:(?:ruta|hacer)\s+)?([a-záéíóúñ]+)\s+([a-záéíóúñ]+)\s+(?:vamos|llevaremos|cargaremos|para|haremos)/ui', $text, $ciudadesMatch4)) {
+                 $o = self::normalizeCityName(trim($ciudadesMatch4[1]));
+                 $d = self::normalizeCityName(trim($ciudadesMatch4[2]));
+                 if ($o && $d) {
+                    $route['origen'] = $o;
+                    $route['destino'] = $d;
+                 }
+            }
+            
+            // 🆕 NUEVO: Buscar dos ciudades conocidas consecutivas
+            if (!$route['origen'] && !$route['destino']) {
+                $textWords = preg_split('/\s+/', $textLower);
+                for ($i = 0; $i < count($textWords) - 1; $i++) {
+                    $word1 = trim($textWords[$i]);
+                    $word2 = trim($textWords[$i + 1]);
+                    
+                    // Verificar si ambas palabras son ciudades conocidas
+                    if (in_array($word1, $ciudadesComunes) && in_array($word2, $ciudadesComunes)) {
+                        $route['origen'] = self::normalizeCityName($word1);
+                        $route['destino'] = self::normalizeCityName($word2);
+                        Log::info('🆕 Ciudades detectadas por cercanía', [
+                            'origen' => $route['origen'],
+                            'destino' => $route['destino']
+                        ]);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // 🆕 PESO: "N toneladas" o "N kg" o "N kilos" - incluir "de/por" como prefijo opcional
+        // 🆕 Soporte para palabras numéricas: "dos toneladas" = 2000 kg
+        $numerosEscrito = [
+            'una' => 1, 'un' => 1, 'dos' => 2, 'tres' => 3, 'cuatro' => 4, 'cinco' => 5,
+            'seis' => 6, 'siete' => 7, 'ocho' => 8, 'nueve' => 9, 'diez' => 10,
+            'once' => 11, 'doce' => 12, 'trece' => 13, 'catorce' => 14, 'quince' => 15,
+            'veinte' => 20, 'treinta' => 30, 'cuarenta' => 40, 'cincuenta' => 50
+        ];
+        
+        // Patrón numérico primero
+        if (preg_match('/(?:de|por)?\s*(\d+)\s*(?:toneladas?|ton(?:eladas)?)/ui', $text, $pesoMatch)) {
+            $route['peso_kg'] = (int)$pesoMatch[1] * 1000;
+        } elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)/ui', $text, $pesoMatch)) {
+            $route['peso_kg'] = (int)str_replace(['.', ','], '', $pesoMatch[1]);
+        }
+        // 🆕 Patrón con números escritos: "dos toneladas", "tres kilos"
+        elseif (preg_match('/(una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|veinte|treinta|cuarenta|cincuenta)\s*(?:toneladas?|ton)/ui', $textLower, $pesoEscritoMatch)) {
+            $numPalabra = strtolower($pesoEscritoMatch[1]);
+            if (isset($numerosEscrito[$numPalabra])) {
+                $route['peso_kg'] = $numerosEscrito[$numPalabra] * 1000;
+            }
+        }
+        
+        // 🆕 TARA
+        if (strpos($textLower, 'no incluye tara') !== false || strpos($textLower, 'sin tara') !== false) {
+            $route['incluye_tara'] = false;
+        } elseif (strpos($textLower, 'incluye tara') !== false || strpos($textLower, 'con tara') !== false) {
+            $route['incluye_tara'] = true;
+        }
+        
+        // 🆕 PRODUCTO: múltiples patrones para mayor flexibilidad
+        // Patrón 1: "se transportan/transportar/llevar/cargar PRODUCTO"
+        if (preg_match('/(?:se\s+transporta[rn]?|transportar|transportando|llevar|cargar|con)\s+([a-záéíóúñ\s]+?)(?:\s*(?:por|con|en|empaquetados?|son|\d|vamos|$))/ui', $text, $productoMatch)) {
+            $producto = trim($productoMatch[1]);
+            // Limpiar palabras no válidas
+            $producto = preg_replace('/\b(empaquetados?|en\s+cajas?|una|un|dos|tres|ruta|viaje|cotizaci[oó]n|en\s+sacos?)\b/ui', '', $producto);
+            // Validar que no sea "valor", "peso", "toneladas"
+             if (!preg_match('/\b(valor|peso|toneladas?|millones?|medida|cantidad|vamos)\b/ui', $producto) && strlen(trim($producto)) >= 3) {
+                $route['producto'] = strtoupper(trim($producto));
+            }
+        }
+        
+        // Patrón 2: "N toneladas de PRODUCTO" (muy común)
+        if (empty($route['producto']) && preg_match('/\d+\s*(?:toneladas?|ton|kg|kilos?)\s+(?:de\s+)?([a-záéíóúñ]+)/ui', $text, $productoMatch2)) {
+            $prod = trim($productoMatch2[1]);
+             if (!preg_match('/\b(valor|peso|incluye|tara)\b/ui', $prod)) {
+                $route['producto'] = strtoupper($prod);
+            }
+        }
+        
+        // Patrón 3: Producto pegado sin espacio (ej: "neumáticospor") - extrae palabra antes de "por"
+        if (empty($route['producto']) && preg_match('/([a-záéíóúñ]{4,})por\s+un?\s*valor/ui', $text, $productoMatch3)) {
+            $route['producto'] = strtoupper(trim($productoMatch3[1]));
+        }
+        
+        // 🆕 VALOR DECLARADO: "valor declarado de N millones" o "por N millones"
+        if (preg_match('/(?:valor\s+(?:declarado\s+)?(?:de\s+)?|por\s+un\s+valor\s+(?:de\s+)?)(\d+)\s*(?:millones?|mill?)/ui', $text, $valorMatch)) {
+            $route['valor_declarado'] = (int)$valorMatch[1] * 1000000;
+        }
+        
+        // 🆕 CANTIDAD: "N unidades" o "son N unidades"
+        if (preg_match('/(?:son\s+)?(\d+)\s*(?:unidades?|uds?)/ui', $text, $cantidadMatch)) {
+            $route['cantidad'] = (int)$cantidadMatch[1];
+        }
+        
+        // 🆕 EMPAQUE: "en cajas", "en sacos", "contenedor", etc.
+        $empaqueMap = [
+            'cajas' => ['nombre' => 'CAJAS', 'id' => 2],
+            'caja' => ['nombre' => 'CAJAS', 'id' => 2],
+            'sacos' => ['nombre' => 'SACOS', 'id' => 4],
+            'saco' => ['nombre' => 'SACOS', 'id' => 4],
+            'bultos' => ['nombre' => 'BULTOS', 'id' => 5],
+            'bulto' => ['nombre' => 'BULTOS', 'id' => 5],
+            'pallets' => ['nombre' => 'ESTIBAS / PALLET', 'id' => 7],
+            'pallet' => ['nombre' => 'ESTIBAS / PALLET', 'id' => 7],
+            'estibas' => ['nombre' => 'ESTIBAS / PALLET', 'id' => 7],
+            'contenedor' => ['nombre' => 'CONTENEDOR', 'id' => 9],
+            'contenedores' => ['nombre' => 'CONTENEDOR', 'id' => 9],
+            'contenido' => ['nombre' => 'CONTENEDOR', 'id' => 9], // typo común de speech-to-text
+            'granel' => ['nombre' => 'GRANEL', 'id' => 6],
+        ];
+        
+        foreach ($empaqueMap as $keyword => $info) {
+            if (preg_match('/\b(en\s+)?' . $keyword . '\b/ui', $textLower)) {
+                $route['empaque'] = $info['nombre'];
+                $route['empaque_id'] = $info['id'];
+                break;
+            }
+        }
+        
+        // 🆕 VEHÍCULO: detectar tipo
+        if (stripos($text, 'dobletroque') !== false) {
+            $route['vehiculo'] = 'DOBLETROQUE';
+        } elseif (stripos($text, 'tractocamion') !== false || stripos($text, 'tractocamión') !== false) {
+            $route['vehiculo'] = 'TRACTOCAMION';
+        } elseif (stripos($text, 'patineta') !== false) {
+            $route['vehiculo'] = 'PATINETA';
+        } elseif (stripos($text, 'sencillo') !== false) {
+            $route['vehiculo'] = 'SENCILLO';
+        } elseif (stripos($text, 'minimula') !== false) {
+            $route['vehiculo'] = 'MINIMULA';
+        } elseif (stripos($text, 'turbo') !== false) {
+            $route['vehiculo'] = 'TURBO';
+        }
+        
+        // Limpiar campos vacíos
+        foreach ($route as $key => $value) {
+            if ($value === null || $value === '') {
+                unset($route[$key]);
+            }
+        }
+        
+        // Mantener ruta_numero siempre
+        $route['ruta_numero'] = $rutaNumero;
+        
+        Log::info('📦 extractRouteDataFromText resultado', [
+            'ruta_numero' => $rutaNumero,
+            'origen' => $route['origen'] ?? 'N/A',
+            'destino' => $route['destino'] ?? 'N/A',
+            'peso' => $route['peso_kg'] ?? 'N/A',
+            'producto' => $route['producto'] ?? 'N/A'
+        ]);
+        
+        return $route;
+    }
+    
+    /**
      * 🆕 NORMALIZAR NOMBRE DE CIUDAD
      * Convierte a formato estándar compatible con BD
      */
@@ -4120,6 +4505,20 @@ class MCPAssistantService
     {
         // Eliminar acentos y convertir a mayúsculas
         $cityName = trim($cityName);
+        
+        // 🆕 LISTA NEGRA: Palabras que NO son ciudades (verbos, conectores, etc.)
+        $blackList = [
+            'vamos', 'hacer', 'llevar', 'cargar', 'transportar', 'viajar', 'ir', 'ruta', 'viaje', 
+            'cotizacion', 'cotización', 'necesito', 'quiero', 'requiero', 'solicito', 'pido',
+            'peso', 'valor', 'tara', 'toneladas', 'kilos', 'unidades', 'cajas', 'maíz', 'maiz',
+            'llantas', 'contenedor', 'contenido', 'detalle', 'informacion', 'dato', 'datos',
+            'estoy', 'esta', 'está', 'hola', 'como', 'estas', 'estás'
+        ];
+        
+        if (in_array(mb_strtolower($cityName), $blackList)) {
+            Log::info('🚫 Palabra bloqueada como ciudad', ['palabra' => $cityName]);
+            return null;
+        }
         
         // 🆕 Eliminar palabras de cortesía y frases comunes
         $cityName = preg_replace('/\b(por\s+favor|gracias|porfavor|ok|bien|nota|importante)\b/ui', '', $cityName);

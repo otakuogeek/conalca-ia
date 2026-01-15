@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Services\QuoteAssistantService;
 use App\Services\MCPAssistantService;
+use App\Services\TextPreprocessorService;
 use App\Models\ConversationMessage;
 use App\Models\GroupCotization;
 use Illuminate\Http\Request;
@@ -161,6 +162,19 @@ class ChatController extends Controller
         ]);
 
         try {
+            // 🆕 PREPROCESAR MENSAJE: Separar palabras pegadas y normalizar texto
+            $originalMessage = $request->message;
+            $processedMessage = TextPreprocessorService::preprocess($originalMessage);
+            
+            if ($originalMessage !== $processedMessage) {
+                Log::info('🔧 Mensaje preprocesado para quoteChat', [
+                    'original' => substr($originalMessage, 0, 150),
+                    'processed' => substr($processedMessage, 0, 150)
+                ]);
+                // Reemplazar el mensaje en el request
+                $request->merge(['message' => $processedMessage]);
+            }
+            
             // 🆕 Determinar qué servicio usar
             $assistantServiceType = $this->getAssistantService();
             
@@ -492,12 +506,30 @@ class ChatController extends Controller
                 $extractedData = [];
             }
             
+            // 🆕 CRÍTICO: Si es multi-ruta con claves numéricas (0, 1, 2...), 
+            // convertir a array indexado para que JSON lo envíe como [...]  no como {"0": ..., "1": ...}
+            if (!empty($extractedData)) {
+                $keys = array_keys($extractedData);
+                $allNumeric = count($keys) > 0 && array_reduce($keys, function($carry, $key) {
+                    return $carry && is_numeric($key);
+                }, true);
+                
+                if ($allNumeric && isset($extractedData[0])) {
+                    // Es multi-ruta - reindexar para asegurar array secuencial
+                    $extractedData = array_values($extractedData);
+                    Log::info('🔄 Multi-ruta convertida a array indexado', [
+                        'rutas' => count($extractedData)
+                    ]);
+                }
+            }
+            
             Log::info('Respuesta final del chat', [
                 'is_completed' => $isCompleted,
                 'messages_count' => count($messages),
                 'will_send_run_id' => !$isCompleted,
                 'has_extracted_data' => !empty($extractedData),
                 'extracted_data_keys' => !empty($extractedData) ? array_keys($extractedData) : [],
+                'is_multi_route' => is_array($extractedData) && isset($extractedData[0]) && is_array($extractedData[0]),
                 'group_id' => $request->group_id
             ]);
 
