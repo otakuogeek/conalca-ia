@@ -131,6 +131,222 @@ class MCPAssistantService
     }
 
     /**
+     * 🆕 Encontrar la primera ruta que no tiene producto validado
+     * @param array $extractedData Datos de las rutas
+     * @return int|null Índice de la ruta sin producto, o null si todas tienen
+     */
+    private static function findNextRouteWithoutProduct($extractedData)
+    {
+        if (!is_array($extractedData) || empty($extractedData)) {
+            return null;
+        }
+        
+        // Verificar si es multi-ruta (array indexado numéricamente)
+        $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
+        
+        if (!$isMultiRoute) {
+            // Ruta única - verificar si tiene producto validado
+            $hasProduct = !empty($extractedData['producto_codigo']) && 
+                         !empty($extractedData['producto']);
+            return $hasProduct ? null : 0;
+        }
+
+        // 🆕 FIX: Asegurar orden secuencial de rutas (0, 1, 2...)
+        ksort($extractedData);
+        
+        // Multi-ruta - buscar primera sin producto validado
+        foreach ($extractedData as $idx => $ruta) {
+            if (!is_numeric($idx) || !is_array($ruta)) continue;
+            
+            $hasProduct = !empty($ruta['producto_codigo']) && 
+                         !empty($ruta['producto']) &&
+                         strtoupper($ruta['producto']) !== 'PERSONALIZADO';
+            
+            if (!$hasProduct) {
+                return $idx;
+            }
+        }
+        
+        return null; // Todas las rutas tienen producto validado
+    }
+    
+    /**
+     * 🆕 Generar resumen definitivo cuando todas las rutas están completas
+     * @param array $extractedData Datos de las rutas
+     * @return string Mensaje de resumen formateado
+     */
+    private static function generateFinalSummary($extractedData)
+    {
+        $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
+        
+        if (!$isMultiRoute) {
+            // Ruta única
+            $ruta = $extractedData;
+            $respuesta = "✅ **¡Cotización lista!**\n\n";
+            $respuesta .= "**Resumen:**\n";
+            if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . strtoupper($ruta['origen']) . "\n";
+            if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . strtoupper($ruta['destino']) . "\n";
+            if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . $ruta['producto'] . "\n";
+            if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+            if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
+            $respuesta .= "\nPuedes **crear la cotización** cuando estés listo.";
+            return $respuesta;
+        }
+        
+        // Multi-ruta
+        $respuesta = "✅ **¡Todas las rutas están completas!**\n\n";
+        $respuesta .= "**RESUMEN DEFINITIVO:**\n\n";
+        
+        foreach ($extractedData as $idx => $ruta) {
+            if (!is_numeric($idx) || !is_array($ruta)) continue;
+            
+            $num = $idx + 1;
+            $origen = strtoupper($ruta['origen'] ?? 'N/A');
+            $destino = strtoupper($ruta['destino'] ?? 'N/A');
+            
+            $respuesta .= "**Ruta {$num}:** {$origen} → {$destino}\n";
+            if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . $ruta['producto'] . "\n";
+            if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+            if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
+            $respuesta .= "\n";
+        }
+        
+        $respuesta .= "Puedes **crear la cotización** cuando estés listo, o solicitar cambios en cualquier ruta.";
+        
+        return $respuesta;
+    }
+    
+    /**
+     * 🆕 Buscar productos para una ruta específica y mostrar opciones
+     * @param ConversationSession $session Sesión de conversación
+     * @param int $groupId ID del grupo de cotización
+     * @param array $extractedData Datos extraídos
+     * @param int $routeIndex Índice de la ruta a buscar
+     * @return array|null Resultado de la búsqueda o null
+     */
+    private static function searchProductForRoute($session, $groupId, &$extractedData, $routeIndex)
+    {
+        $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
+        $ruta = $isMultiRoute ? ($extractedData[$routeIndex] ?? null) : $extractedData;
+        
+        if (!$ruta) return null;
+        
+        // Obtener el término de búsqueda (producto mencionado)
+        $searchTerm = $ruta['producto'] ?? $ruta['producto_mencionado'] ?? null;
+        
+        if (empty($searchTerm) || strtoupper($searchTerm) === 'PERSONALIZADO') {
+            return null; // No hay producto para buscar
+        }
+        
+        $origen = strtoupper($ruta['origen'] ?? 'N/A');
+        $destino = strtoupper($ruta['destino'] ?? 'N/A');
+        $routeNum = $routeIndex + 1;
+        
+        Log::info("🔍 Buscando producto para Ruta {$routeNum}", [
+            'search_term' => $searchTerm,
+            'ruta' => "{$origen} → {$destino}"
+        ]);
+        
+        // Buscar en la tabla products
+        // 🔧 FIX: Usar nombres correctos de columas (producto_codigo, producto_nombre, etc)
+        // y usar alias para mantener compatibilidad con el resto del código
+        $productos = \DB::table('products')
+            ->where('producto_nombre', 'LIKE', "%{$searchTerm}%")
+            ->limit(5)
+            ->get([
+                'producto_codigo as codigo', 
+                'producto_nombre as nombre', 
+                'producto_codigo_ministerio as codigo_ministerio', 
+                'tippro_nombre as tipo_producto', 
+                'natcar_nombre as naturaleza_carga'
+            ])
+            ->toArray();
+        
+        if (count($productos) === 0) {
+            // 🆕 FIX: Si no se encuentra, NO retornar null (rompe el flujo).
+            // Retornar petición manual y guardar estado para que el próximo mensaje sea la búsqueda.
+            
+            $mensaje = "🔍 No encontré productos exactos para '**{$searchTerm}**' en la **Ruta {$routeNum}**.\n\n";
+            $mensaje .= "Por favor, escribe el nombre del producto nuevamente (ej: 'Cemento gris') o selecciona una categoría general.";
+            
+            // Guardar índice de ruta pendiente para que el próximo mensaje se aplique a esta ruta
+            $metadata = json_decode($session->metadata ?? '{}', true);
+            $metadata['producto_pendiente_ruta_index'] = $routeIndex;
+            // Limpiar search term anterior para forzar nueva búsqueda con lo que escriba el usuario
+            unset($metadata['producto_search_term']);
+            unset($metadata['productos_pendientes']);
+            
+            $session->metadata = json_encode($metadata);
+            $session->save();
+            
+            return [
+                'needs_selection' => true, // Tratamos como que necesita selección (acción del usuario)
+                'message' => $mensaje,
+                'productos' => [], // Lista vacía
+                'route_index' => $routeIndex
+            ];
+        }
+        
+        // 🆕 FIX: En multi-ruta, SIEMPRE mostrar opciones aunque haya solo 1 producto
+        // Esto evita que se auto-aplique el mismo producto a todas las rutas
+        // El usuario debe confirmar producto para CADA ruta
+        if (count($productos) === 1 && !$isMultiRoute) {
+            // Solo auto-seleccionar si es ruta ÚNICA
+            $prod = (array)$productos[0];
+            
+            $extractedData['producto'] = $prod['nombre'];
+            $extractedData['producto_codigo'] = $prod['codigo'];
+            $extractedData['producto_nombre'] = $prod['nombre'];
+            $extractedData['tipo_producto'] = $prod['nombre'];
+            
+            Log::info("✅ Producto único auto-seleccionado (ruta única)", [
+                'producto' => $prod['nombre'],
+                'codigo' => $prod['codigo']
+            ]);
+            
+            return ['auto_selected' => true, 'producto' => $prod];
+        }
+        
+        // Múltiples resultados - mostrar opciones
+        $productosArray = [];
+        $opcionesTxt = "📦 **Ruta {$routeNum}** ({$origen} → {$destino})\n\n";
+        $opcionesTxt .= "Selecciona el producto para esta ruta:\n\n";
+        
+        foreach ($productos as $idx => $prod) {
+            $p = (array)$prod;
+            $opcionesTxt .= ($idx + 1) . ". **{$p['nombre']}**\n";
+            $opcionesTxt .= "   - Código: {$p['codigo']}\n";
+            if (!empty($p['naturaleza_carga'])) {
+                $opcionesTxt .= "   - Naturaleza: {$p['naturaleza_carga']}\n";
+            }
+            $opcionesTxt .= "\n";
+            $productosArray[] = $p;
+        }
+        
+        $opcionesTxt .= "Indica cuál opción deseas (ej: 'opción 1').";
+        
+        // Guardar productos pendientes y el índice de ruta en metadata
+        $metadata = json_decode($session->metadata ?? '{}', true);
+        $metadata['productos_pendientes'] = $productosArray;
+        $metadata['producto_search_term'] = $searchTerm;
+        $metadata['producto_pendiente_ruta_index'] = $routeIndex;
+        $session->metadata = json_encode($metadata);
+        $session->save();
+        
+        Log::info("📋 Opciones de producto guardadas para Ruta {$routeNum}", [
+            'count' => count($productosArray),
+            'ruta_index' => $routeIndex
+        ]);
+        
+        return [
+            'needs_selection' => true,
+            'message' => $opcionesTxt,
+            'productos' => $productosArray,
+            'route_index' => $routeIndex
+        ];
+    }
+
+    /**
      * Ejecutar el asistente - procesar mensajes y obtener respuesta
      * @param string $threadId ID del thread de conversación
      * @param string $typeBusiness Tipo de negocio (dta, etc.)
@@ -219,6 +435,52 @@ class MCPAssistantService
             }
         }
         
+        // 🆕 LIMPIAR texto añadido por ChatController ("NOTA IMPORTANTE: Ignora...")
+        // Esto evita que el mensaje del usuario se considere largo cuando no lo es
+        $lastUserMessageForEdit = preg_replace('/\s*NOTA\s+IMPORTANTE:.*$/us', '', $lastUserMessageForEdit);
+        $lastUserMessageForEdit = trim($lastUserMessageForEdit);
+        
+        // 🆕 LIMPIAR PRODUCTOS PENDIENTES si el mensaje NO es sobre productos
+        // Esto evita que aparezcan opciones de producto cuando el usuario edita otro campo
+        $mensajeEsProducto = preg_match('/(?:producto|opci[oó]n\s*\d|selecciono?\s+\d|la\s+\d|el\s+\d|dame\s+(?:la\s+)?opci[oó]n)/ui', $lastUserMessageForEdit);
+        $mensajeEsSeleccionOpcion = preg_match('/(?:opci[oó]n\s*\d|selecciono?\s+\d|la\s+\d|el\s+\d|dame\s+(?:la\s+)?opci[oó]n)/ui', $lastUserMessageForEdit);
+        $mensajeEsNuevaBusquedaProducto = $mensajeEsProducto && !$mensajeEsSeleccionOpcion;
+        
+        $metadata = json_decode($session->metadata ?? '{}', true);
+        
+        if (!$mensajeEsProducto) {
+            // Si el mensaje NO es sobre productos, limpiar todo
+            if (isset($metadata['productos_pendientes'])) {
+                unset($metadata['productos_pendientes']);
+                unset($metadata['producto_search_term']);
+                unset($metadata['producto_pendiente_ruta_index']);
+                $session->metadata = json_encode($metadata);
+                $session->save();
+                Log::info('🧹 Productos pendientes limpiados al inicio (mensaje NO es sobre productos)', [
+                    'mensaje' => substr($lastUserMessageForEdit, 0, 50)
+                ]);
+            }
+        } elseif ($mensajeEsNuevaBusquedaProducto) {
+            // 🆕 Si es una NUEVA búsqueda de producto (no selección), limpiar productos anteriores
+            // Esto evita que búsquedas de rutas diferentes se mezclen
+            if (isset($metadata['productos_pendientes'])) {
+                $rutaAnterior = $metadata['producto_pendiente_ruta_index'] ?? null;
+                // Solo limpiar si la ruta cambió
+                if ($rutaAnterior !== $selectedRouteIndex) {
+                    unset($metadata['productos_pendientes']);
+                    unset($metadata['producto_search_term']);
+                    unset($metadata['producto_pendiente_ruta_index']);
+                    $session->metadata = json_encode($metadata);
+                    $session->save();
+                    Log::info('🧹 Productos pendientes limpiados (nueva búsqueda en ruta diferente)', [
+                        'ruta_anterior' => $rutaAnterior,
+                        'ruta_actual' => $selectedRouteIndex,
+                        'mensaje' => substr($lastUserMessageForEdit, 0, 50)
+                    ]);
+                }
+            }
+        }
+        
         // 🆕 PRE-PROCESAMIENTO: Separar palabras pegadas comunes del speech-to-text
         // Ejemplo: "pesoes900kg" → "peso es 900kg", "destinomedellin" → "destino medellin"
         $lastUserMessageForEdit = preg_replace('/(\w)(es)(\d)/ui', '$1 $2 $3', $lastUserMessageForEdit); // "pesoes900" → "peso es 900"
@@ -287,45 +549,49 @@ class MCPAssistantService
             $esEliminacion = true;
         }
         // Patrones para AGREGAR/CAMBIAR valores (solo en mensajes cortos)
-        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?origen\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?orig(?:en)?\s*(?:' . $palabrasAgregar . '|en)\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+            // 🆕 MEJORADO: Acepta "orig" y "origen", también "en" como conector (ej: "orig en manizales")
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?origen\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?orig(?:en)?\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 NUEVO: "cambia origen a cali" o "modifica el origen a medellín"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?destino\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?dest(?:ino)?\s*(?:' . $palabrasAgregar . '|en)\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+            // 🆕 MEJORADO: Acepta "dest" y "destino", también "en" como conector
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?destino\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?dest(?:ino)?\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
             // 🆕 NUEVO: "cambia destino a cali" o "modifica el destino a medellín"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?orig(?:en)?\s+([a-záéíóúñ]+)$/ui', $lastUserMessageForEdit, $matchOrigenSimple)) {
+            // 🆕 NUEVO: "origen manizales" o "orig bogota" (sin conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'origen';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigenSimple[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?dest(?:ino)?\s+([a-záéíóúñ]+)$/ui', $lastUserMessageForEdit, $matchDestinoSimple)) {
+            // 🆕 NUEVO: "destino manizales" o "dest pereira" (sin conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'destino';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchDestinoSimple[1]));
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?veh[ií]culo\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchVehiculo)) {
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'vehiculo';
-            $vehiculosMap = [
-                'patineta' => 'PATINETA', 'camioneta' => 'CAMIONETA', 'sencillo' => 'SENCILLO',
-                'turbo' => 'TURBO', 'dobletroque' => 'DOBLETROQUE', 'minimula' => 'MINIMULA',
-                'tractomula' => 'TRACTOMULA', 'mula' => 'TRACTOMULA'
-            ];
-            $vehiculoRaw = strtolower(trim($matchVehiculo[1]));
-            $valorEditadoTemprano = $vehiculosMap[$vehiculoRaw] ?? strtoupper($vehiculoRaw);
+            // FIX: Usar vehículo EXACTO que dice el usuario (no mapear)
+            $vehiculoRaw = trim($matchVehiculo[1]);
+            $valorEditadoTemprano = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?veh[ií]culo\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchVehiculo)) {
             // 🆕 NUEVO: "cambia vehículo a tractomula" o "modifica el vehículo a dobletroque"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'vehiculo';
-            $vehiculosMap = [
-                'patineta' => 'PATINETA', 'camioneta' => 'CAMIONETA', 'sencillo' => 'SENCILLO',
-                'turbo' => 'TURBO', 'dobletroque' => 'DOBLETROQUE', 'minimula' => 'MINIMULA',
-                'tractomula' => 'TRACTOMULA', 'mula' => 'TRACTOMULA'
-            ];
-            $vehiculoRaw = strtolower(trim($matchVehiculo[1]));
-            $valorEditadoTemprano = $vehiculosMap[$vehiculoRaw] ?? strtoupper($vehiculoRaw);
+            // FIX: Usar vehículo EXACTO que dice el usuario (no mapear)
+            $vehiculoRaw = trim($matchVehiculo[1]);
+            $valorEditadoTemprano = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?peso\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $matchPeso)) {
             // 🆕 MEJORADO: Permite "peso es 900kg" sin espacio
             $esEdicionSimpleTemprana = true;
@@ -408,10 +674,17 @@ class MCPAssistantService
                 Log::info('🔍 Buscando producto en BD (edición temprana)', ['search_term' => $searchTerm]);
                 
                 // Buscar en la tabla products
+                // 🔧 FIX: Usar nombres correctos de columnas (producto_codigo, producto_nombre, etc)
                 $productos = \DB::table('products')
-                    ->where('nombre', 'LIKE', "%{$searchTerm}%")
+                    ->where('producto_nombre', 'LIKE', "%{$searchTerm}%")
                     ->limit(5)
-                    ->get(['codigo', 'nombre', 'codigo_ministerio', 'tipo_producto', 'naturaleza_carga'])
+                    ->get([
+                        'producto_codigo as codigo', 
+                        'producto_nombre as nombre', 
+                        'producto_codigo_ministerio as codigo_ministerio', 
+                        'tippro_nombre as tipo_producto', 
+                        'natcar_nombre as naturaleza_carga'
+                    ])
                     ->toArray();
                 
                 if (count($productos) === 0) {
@@ -428,15 +701,44 @@ class MCPAssistantService
                     $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
                     
                     if ($isMultiRouteData) {
-                        foreach ($extractedData as $idx => &$ruta) {
-                            if (is_array($ruta)) {
-                                $ruta['producto'] = $prod['nombre'];
-                                $ruta['producto_codigo'] = $prod['codigo'];
-                                $ruta['tipo_producto'] = $prod['nombre'];
-                                $ruta['producto_nombre'] = $prod['nombre'];
+                        // 🔧 FIX: Si hay ruta seleccionada, aplicar SOLO a esa ruta
+                        if ($selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                            $extractedData[$selectedRouteIndex]['producto'] = $prod['nombre'];
+                            $extractedData[$selectedRouteIndex]['producto_codigo'] = $prod['codigo'];
+                            $extractedData[$selectedRouteIndex]['tipo_producto'] = $prod['nombre'];
+                            $extractedData[$selectedRouteIndex]['producto_nombre'] = $prod['nombre'];
+                            
+                            Log::info('🎯 Producto aplicado SOLO a ruta seleccionada (único resultado)', [
+                                'ruta_index' => $selectedRouteIndex,
+                                'producto' => $prod['nombre']
+                            ]);
+                        } else {
+                            // Si no hay ruta seleccionada, aplicar solo a primera ruta sin producto
+                            $rutaSinProducto = null;
+                            foreach ($extractedData as $idx => $ruta) {
+                                if (is_numeric($idx) && is_array($ruta)) {
+                                    $tieneProducto = !empty($ruta['producto']) && 
+                                                     strtoupper($ruta['producto']) !== 'PERSONALIZADO' &&
+                                                     !empty($ruta['producto_codigo']);
+                                    if (!$tieneProducto) {
+                                        $rutaSinProducto = $idx;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if ($rutaSinProducto !== null) {
+                                $extractedData[$rutaSinProducto]['producto'] = $prod['nombre'];
+                                $extractedData[$rutaSinProducto]['producto_codigo'] = $prod['codigo'];
+                                $extractedData[$rutaSinProducto]['tipo_producto'] = $prod['nombre'];
+                                $extractedData[$rutaSinProducto]['producto_nombre'] = $prod['nombre'];
+                                
+                                Log::info('🎯 Producto aplicado a primera ruta sin producto', [
+                                    'ruta_index' => $rutaSinProducto,
+                                    'producto' => $prod['nombre']
+                                ]);
                             }
                         }
-                        unset($ruta);
                     } else {
                         $extractedData['producto'] = $prod['nombre'];
                         $extractedData['producto_codigo'] = $prod['codigo'];
@@ -448,12 +750,30 @@ class MCPAssistantService
                     if ($groupId) {
                         $group = GroupCotization::find($groupId);
                         if ($group) {
+                            Log::info('💾 GUARDANDO extracted_data tras producto único', [
+                                'group_id' => $groupId,
+                                'antes' => json_decode($group->extracted_data ?? '{}', true),
+                                'despues' => $extractedData,
+                                'es_multi_ruta' => $isMultiRouteData,
+                                'selected_route_index' => $selectedRouteIndex
+                            ]);
+                            
                             $group->extracted_data = json_encode($extractedData);
                             $group->save();
+                            
+                            Log::info('✅ extracted_data GUARDADO en BD', [
+                                'group_id' => $groupId,
+                                'datos_guardados' => $extractedData
+                            ]);
                         }
                     }
                     
-                    $respuesta = "¡Perfecto! He seleccionado el producto **{$prod['nombre']}** (Código: {$prod['codigo']}) para tu cotización.";
+                    // 🔧 FIX: Incluir información de ruta en el mensaje
+                    $rutaInfo = '';
+                    if ($isMultiRouteData && $selectedRouteIndex !== null) {
+                        $rutaInfo = " en la **Ruta " . ($selectedRouteIndex + 1) . "**";
+                    }
+                    $respuesta = "¡Perfecto! He seleccionado el producto **{$prod['nombre']}** (Código: {$prod['codigo']}){$rutaInfo}.";
                     
                     ConversationMessage::create([
                         'session_id' => $session->id,
@@ -503,11 +823,19 @@ class MCPAssistantService
                     $opcionesTxt .= "Por favor, indica cuál opción deseas (ejemplo: 'opción 1' o el nombre del producto).";
                     
                     // Guardar productos pendientes en metadata
+                    // 🔧 FIX: SIEMPRE guardar el índice de ruta junto con los productos pendientes
                     $metadata = json_decode($session->metadata ?? '{}', true);
                     $metadata['productos_pendientes'] = $productosArray;
                     $metadata['producto_search_term'] = $searchTerm;
+                    $metadata['producto_pendiente_ruta_index'] = $selectedRouteIndex; // 🆕 CRÍTICO: Guardar ruta activa
                     $session->metadata = json_encode($metadata);
                     $session->save();
+                    
+                    Log::info('🎯 Productos pendientes guardados con ruta', [
+                        'ruta_index' => $selectedRouteIndex,
+                        'search_term' => $searchTerm,
+                        'opciones' => count($productosArray)
+                    ]);
                     
                     ConversationMessage::create([
                         'session_id' => $session->id,
@@ -619,8 +947,24 @@ class MCPAssistantService
             if ($groupId) {
                 $group = GroupCotization::find($groupId);
                 if ($group) {
+                    Log::info('💾 GUARDANDO extracted_data tras edición simple', [
+                        'group_id' => $groupId,
+                        'campo_editado' => $campoEditadoTemprano,
+                        'valor_nuevo' => $valorEditadoTemprano,
+                        'es_eliminacion' => $esEliminacion,
+                        'selected_route_index' => $selectedRouteIndex,
+                        'antes' => json_decode($group->extracted_data ?? '{}', true),
+                        'despues' => $extractedData
+                    ]);
+                    
                     $group->extracted_data = json_encode($extractedData);
                     $group->save();
+                    
+                    Log::info('✅ extracted_data GUARDADO en BD (edición simple)', [
+                        'group_id' => $groupId,
+                        'datos_guardados' => $extractedData
+                    ]);
+                    
                     Log::info('📦 Datos actualizados en GRUPO (edición simple temprana)', [
                         'group_id' => $groupId,
                         'campo' => $campoEditadoTemprano,
@@ -804,20 +1148,37 @@ class MCPAssistantService
         $quitarTara = preg_match('/(?:quita|elimina|remueve|resta|saca|sin)\s+(?:la\s+)?tara/ui', $lastUserMessage);
         
         // 🆕 Si el usuario dice "quita la tara", restar 3400 kg
+        // FIX: Respetar selectedRouteIndex para aplicar solo a la ruta seleccionada
         if ($quitarTara && !$noIncluyeTara) {
             $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
             
             if ($isMultiRouteData) {
-                foreach ($extractedData as $idx => $route) {
+                // 🔧 FIX: Si hay ruta seleccionada, aplicar SOLO a esa
+                if ($selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                    $route = $extractedData[$selectedRouteIndex];
                     if (isset($route['peso_kg']) && isset($route['incluye_tara']) && $route['incluye_tara']) {
                         $pesoAnterior = $route['peso_kg'];
-                        $extractedData[$idx]['peso_kg'] = max(0, $pesoAnterior - 3400);
-                        $extractedData[$idx]['incluye_tara'] = false;
-                        Log::info('📦 TARA removida de ruta (multi)', [
-                            'ruta' => $idx,
+                        $extractedData[$selectedRouteIndex]['peso_kg'] = max(0, $pesoAnterior - 3400);
+                        $extractedData[$selectedRouteIndex]['incluye_tara'] = false;
+                        Log::info('📦 TARA removida de ruta ESPECÍFICA', [
+                            'ruta_seleccionada' => $selectedRouteIndex,
                             'peso_anterior' => $pesoAnterior,
-                            'peso_sin_tara' => $extractedData[$idx]['peso_kg']
+                            'peso_sin_tara' => $extractedData[$selectedRouteIndex]['peso_kg']
                         ]);
+                    }
+                } else {
+                    // Sin ruta seleccionada - aplicar a todas
+                    foreach ($extractedData as $idx => $route) {
+                        if (isset($route['peso_kg']) && isset($route['incluye_tara']) && $route['incluye_tara']) {
+                            $pesoAnterior = $route['peso_kg'];
+                            $extractedData[$idx]['peso_kg'] = max(0, $pesoAnterior - 3400);
+                            $extractedData[$idx]['incluye_tara'] = false;
+                            Log::info('📦 TARA removida de ruta (multi)', [
+                                'ruta' => $idx,
+                                'peso_anterior' => $pesoAnterior,
+                                'peso_sin_tara' => $extractedData[$idx]['peso_kg']
+                            ]);
+                        }
                     }
                 }
             } else {
@@ -835,28 +1196,51 @@ class MCPAssistantService
         }
         
         // 🆕 Agregar tara solo si se pide explícitamente Y no está ya incluida
+        // FIX: Respetar selectedRouteIndex para aplicar solo a la ruta seleccionada
         if ($agregarTara && !$yaIncluyeTara) {
             // Verificar si hay peso en los datos y sumar tara (3400 kg fijo)
             $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
             
             if ($isMultiRouteData) {
-                foreach ($extractedData as $idx => $route) {
-                    // 🔧 Verificar que NO tenga ya la tara incluida en los datos
+                // 🔧 FIX: Si hay ruta seleccionada, aplicar SOLO a esa
+                if ($selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                    $route = $extractedData[$selectedRouteIndex];
                     $yaConTara = isset($route['incluye_tara']) && $route['incluye_tara'] === true;
                     if (isset($route['peso_kg']) && !$yaConTara) {
                         $pesoAnterior = $route['peso_kg'];
-                        $extractedData[$idx]['peso_kg'] = $pesoAnterior + 3400;
-                        $extractedData[$idx]['incluye_tara'] = true;
-                        Log::info('📦 TARA agregada a ruta (multi)', [
-                            'ruta' => $idx,
+                        $extractedData[$selectedRouteIndex]['peso_kg'] = $pesoAnterior + 3400;
+                        $extractedData[$selectedRouteIndex]['incluye_tara'] = true;
+                        Log::info('📦 TARA agregada a ruta ESPECÍFICA', [
+                            'ruta_seleccionada' => $selectedRouteIndex,
                             'peso_anterior' => $pesoAnterior,
-                            'peso_con_tara' => $extractedData[$idx]['peso_kg']
+                            'peso_con_tara' => $extractedData[$selectedRouteIndex]['peso_kg']
                         ]);
                     } else if ($yaConTara) {
-                        Log::info('📦 TARA ya incluida en ruta (multi), no se suma de nuevo', [
-                            'ruta' => $idx,
+                        Log::info('📦 TARA ya incluida en ruta seleccionada, no se suma de nuevo', [
+                            'ruta' => $selectedRouteIndex,
                             'peso_actual' => $route['peso_kg']
                         ]);
+                    }
+                } else {
+                    // Sin ruta seleccionada - aplicar a todas
+                    foreach ($extractedData as $idx => $route) {
+                        // 🔧 Verificar que NO tenga ya la tara incluida en los datos
+                        $yaConTara = isset($route['incluye_tara']) && $route['incluye_tara'] === true;
+                        if (isset($route['peso_kg']) && !$yaConTara) {
+                            $pesoAnterior = $route['peso_kg'];
+                            $extractedData[$idx]['peso_kg'] = $pesoAnterior + 3400;
+                            $extractedData[$idx]['incluye_tara'] = true;
+                            Log::info('📦 TARA agregada a ruta (multi)', [
+                                'ruta' => $idx,
+                                'peso_anterior' => $pesoAnterior,
+                                'peso_con_tara' => $extractedData[$idx]['peso_kg']
+                            ]);
+                        } else if ($yaConTara) {
+                            Log::info('📦 TARA ya incluida en ruta (multi), no se suma de nuevo', [
+                                'ruta' => $idx,
+                                'peso_actual' => $route['peso_kg']
+                            ]);
+                        }
                     }
                 }
             } else {
@@ -973,14 +1357,18 @@ class MCPAssistantService
                 $productosPendientes = $metadata['productos_pendientes'];
                 $indice = $opcionSeleccionada - 1; // Convertir a índice 0-based
                 
-                // 🆕 FIX: Si no viene selectedRouteIndex en el request, usar el guardado en metadata
-                $rutaParaProducto = $selectedRouteIndex;
-                if ($rutaParaProducto === null && isset($metadata['producto_pendiente_ruta_index'])) {
-                    $rutaParaProducto = $metadata['producto_pendiente_ruta_index'];
-                    Log::info('📍 Usando ruta guardada en metadata para producto', [
-                        'ruta_index' => $rutaParaProducto
-                    ]);
-                }
+                // 🔧 FIX CRÍTICO: SIEMPRE usar la ruta guardada en metadata cuando hay productos pendientes
+                // La ruta en metadata es la que HIZO la búsqueda, no la que está seleccionada ahora
+                $rutaParaProducto = isset($metadata['producto_pendiente_ruta_index']) 
+                    ? $metadata['producto_pendiente_ruta_index'] 
+                    : $selectedRouteIndex;
+                
+                Log::info('🎯 Selección de producto - Determinando ruta', [
+                    'ruta_en_metadata' => $metadata['producto_pendiente_ruta_index'] ?? 'NO DEFINIDA',
+                    'ruta_del_request' => $selectedRouteIndex,
+                    'ruta_final_a_usar' => $rutaParaProducto,
+                    'opcion_seleccionada' => $opcionSeleccionada
+                ]);
                 
                 if (isset($productosPendientes[$indice])) {
                     $productoSeleccionado = $productosPendientes[$indice];
@@ -1013,21 +1401,40 @@ class MCPAssistantService
                             'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
                         ]);
                     } elseif ($isMultiRouteData) {
-                        // Si NO hay ruta seleccionada, aplicar a todas
-                        foreach ($extractedData as $idx => &$ruta) {
+                        // 🆕 Si NO hay ruta seleccionada, aplicar SOLO a la primera ruta SIN producto
+                        // NO aplicar a todas las rutas - eso causa el bug de cambiar rutas incorrectas
+                        $rutaSinProducto = null;
+                        foreach ($extractedData as $idx => $ruta) {
                             if (is_numeric($idx) && is_array($ruta)) {
-                                $ruta['producto'] = $productoSeleccionado['nombre'] ?? '';
-                                $ruta['producto_codigo'] = $productoSeleccionado['codigo'] ?? null;
-                                $ruta['producto_nombre'] = $productoSeleccionado['nombre'] ?? '';
-                                $ruta['tipo_producto'] = $productoSeleccionado['tipo'] ?? 'MERCANCIAS VARIAS';
+                                // Verificar si esta ruta NO tiene producto definido
+                                $tieneProducto = !empty($ruta['producto']) && 
+                                                 strtoupper($ruta['producto']) !== 'PERSONALIZADO' &&
+                                                 !empty($ruta['producto_codigo']);
+                                if (!$tieneProducto) {
+                                    $rutaSinProducto = $idx;
+                                    break;
+                                }
                             }
                         }
-                        unset($ruta);
                         
-                        Log::info('🎯 Producto de opción aplicado a TODAS las rutas', [
-                            'producto' => $productoSeleccionado['nombre'],
-                            'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
-                        ]);
+                        if ($rutaSinProducto !== null) {
+                            // Aplicar solo a la primera ruta sin producto
+                            $extractedData[$rutaSinProducto]['producto'] = $productoSeleccionado['nombre'] ?? '';
+                            $extractedData[$rutaSinProducto]['producto_codigo'] = $productoSeleccionado['codigo'] ?? null;
+                            $extractedData[$rutaSinProducto]['producto_nombre'] = $productoSeleccionado['nombre'] ?? '';
+                            $extractedData[$rutaSinProducto]['tipo_producto'] = $productoSeleccionado['tipo'] ?? 'MERCANCIAS VARIAS';
+                            
+                            Log::info('🎯 Producto de opción aplicado a primera ruta sin producto', [
+                                'ruta_index' => $rutaSinProducto,
+                                'producto' => $productoSeleccionado['nombre'],
+                                'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
+                            ]);
+                        } else {
+                            // Si todas las rutas ya tienen producto, no hacer nada
+                            Log::warning('⚠️ Todas las rutas ya tienen producto - selección ignorada', [
+                                'producto_seleccionado' => $productoSeleccionado['nombre']
+                            ]);
+                        }
                     } else {
                         $extractedData['producto'] = $productoSeleccionado['nombre'] ?? '';
                         $extractedData['producto_codigo'] = $productoSeleccionado['codigo'] ?? null;
@@ -1059,8 +1466,18 @@ class MCPAssistantService
                         }
                     }
                     
-                    // Guardar respuesta
-                    $respuestaSeleccion = "¡Perfecto! He seleccionado el producto **{$productoSeleccionado['nombre']}** (Código: {$productoSeleccionado['codigo']}) para tu cotización.";
+                    // 🆕 FLUJO SECUENCIAL: Verificar si hay más rutas sin producto
+                    $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
+                    $nextRouteIndex = self::findNextRouteWithoutProduct($extractedData);
+                    
+                    $rutaInfo = '';
+                    if ($isMultiRouteData && $rutaParaProducto !== null) {
+                        $rutaNum = $rutaParaProducto + 1;
+                        $rutaInfo = " para la **Ruta {$rutaNum}**";
+                    }
+                    
+                    // Mensaje de confirmación
+                    $respuestaSeleccion = "✅ Producto seleccionado{$rutaInfo}: **{$productoSeleccionado['nombre']}** (Código: {$productoSeleccionado['codigo']})";
                     
                     ConversationMessage::create([
                         'session_id' => $session->id,
@@ -1070,10 +1487,75 @@ class MCPAssistantService
                         'timestamp' => now()
                     ]);
                     
+                    // 🆕 Si hay más rutas sin producto, buscar la siguiente
+                    if ($nextRouteIndex !== null && $isMultiRouteData) {
+                        $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
+                        
+                        if ($searchResult && isset($searchResult['needs_selection']) && $searchResult['needs_selection']) {
+                            // Mostrar opciones para la siguiente ruta
+                            ConversationMessage::create([
+                                'session_id' => $session->id,
+                                'group_cotization_id' => $groupId,
+                                'role' => 'assistant',
+                                'content' => $searchResult['message'],
+                                'timestamp' => now()
+                            ]);
+                            
+                            Log::info('📋 Continuando flujo secuencial - opciones para siguiente ruta', [
+                                'route_index' => $nextRouteIndex,
+                                'productos_count' => count($searchResult['productos'])
+                            ]);
+                        } elseif ($searchResult && isset($searchResult['auto_selected'])) {
+                            // Producto auto-seleccionado, verificar si hay más rutas
+                            $nextAfterAuto = self::findNextRouteWithoutProduct($extractedData);
+                            
+                            if ($nextAfterAuto !== null) {
+                                $searchResult2 = self::searchProductForRoute($session, $groupId, $extractedData, $nextAfterAuto);
+                                if ($searchResult2 && isset($searchResult2['needs_selection'])) {
+                                    ConversationMessage::create([
+                                        'session_id' => $session->id,
+                                        'group_cotization_id' => $groupId,
+                                        'role' => 'assistant',
+                                        'content' => $searchResult2['message'],
+                                        'timestamp' => now()
+                                    ]);
+                                }
+                            }
+                        }
+                        
+                        // Actualizar grupo después de posibles auto-selecciones
+                        if ($groupId) {
+                            $group = GroupCotization::find($groupId);
+                            if ($group) {
+                                $group->extracted_data = json_encode($extractedData);
+                                $group->save();
+                            }
+                        }
+                    }
+                    
+                    // Verificar si todas las rutas tienen producto (después de posibles auto-selecciones)
+                    $allRoutesComplete = self::findNextRouteWithoutProduct($extractedData) === null;
+                    
+                    if ($allRoutesComplete && $isMultiRouteData) {
+                        // 🎉 Mostrar resumen definitivo
+                        $resumen = self::generateFinalSummary($extractedData);
+                        ConversationMessage::create([
+                            'session_id' => $session->id,
+                            'group_cotization_id' => $groupId,
+                            'role' => 'assistant',
+                            'content' => $resumen,
+                            'timestamp' => now()
+                        ]);
+                        
+                        Log::info('✅ Flujo secuencial completado - mostrando resumen final');
+                    }
+                    
                     $runId = 'run_product_selection_' . time();
                     
                     $metadata['last_run_id'] = $runId;
                     $metadata['last_run_status'] = 'completed';
+                    $metadata['quote_data'] = $extractedData;
+                    $metadata['extracted_data'] = $extractedData;
                     $session->metadata = json_encode($metadata);
                     $session->save();
                     
@@ -1093,26 +1575,26 @@ class MCPAssistantService
         $isFirstTimeMultiRoute = empty($previousExtractedData) || !isset($previousExtractedData[0]);
         
         if ($hasMultipleRoutes && $isFirstTimeMultiRoute) {
-            Log::info('🚀 Optimización Multi-Ruta: Retornando sin llamar a OpenAI', [
+            Log::info('🚀 Optimización Multi-Ruta: Iniciando validación secuencial de productos', [
                 'count' => count($extractedData),
                 'rutas' => array_map(fn($r) => ($r['origen'] ?? '?') . ' → ' . ($r['destino'] ?? '?'), $extractedData)
             ]);
             
+            // 🆕 PASO 1: Confirmar las rutas detectadas
             $respuesta = "¡Entendido! He identificado " . count($extractedData) . " rutas para tu cotización:\n\n";
             
             foreach ($extractedData as $idx => $ruta) {
                 $num = $idx + 1;
                 $respuesta .= "**Ruta {$num}:**\n";
-                if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . ucfirst($ruta['origen']) . "\n";
-                if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . ucfirst($ruta['destino']) . "\n";
-                if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . ucfirst($ruta['vehiculo']) . "\n";
+                if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . strtoupper($ruta['origen']) . "\n";
+                if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . strtoupper($ruta['destino']) . "\n";
+                if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
                 if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
-                if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . ucfirst($ruta['producto']) . "\n";
+                if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . strtoupper($ruta['producto']) . "\n";
                 $respuesta .= "\n";
             }
             
-            $respuesta .= "¿Es correcta esta información? Puedes pedirme modificar algún dato o crear la cotización.";
-            
+            // Guardar mensaje de confirmación de rutas
             ConversationMessage::create([
                 'session_id' => $session->id,
                 'group_cotization_id' => $groupId,
@@ -1121,6 +1603,63 @@ class MCPAssistantService
                 'timestamp' => now()
             ]);
             
+            // 🆕 PASO 2: Buscar primera ruta sin producto validado e iniciar flujo secuencial
+            $nextRouteIndex = self::findNextRouteWithoutProduct($extractedData);
+            
+            if ($nextRouteIndex !== null) {
+                // Hay rutas sin producto - buscar producto para la primera
+                $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
+                
+                if ($searchResult && isset($searchResult['needs_selection']) && $searchResult['needs_selection']) {
+                    // Mostrar opciones de producto para esta ruta
+                    ConversationMessage::create([
+                        'session_id' => $session->id,
+                        'group_cotization_id' => $groupId,
+                        'role' => 'assistant',
+                        'content' => $searchResult['message'],
+                        'timestamp' => now()
+                    ]);
+                    
+                    Log::info('📋 Mostrando opciones de producto para ruta en flujo secuencial', [
+                        'route_index' => $nextRouteIndex,
+                        'productos_count' => count($searchResult['productos'])
+                    ]);
+                } elseif ($searchResult && isset($searchResult['auto_selected'])) {
+                    // Producto auto-seleccionado, buscar siguiente ruta
+                    $nextRouteIndex = self::findNextRouteWithoutProduct($extractedData);
+                    
+                    if ($nextRouteIndex !== null) {
+                        // Buscar producto para la siguiente ruta
+                        $searchResult2 = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
+                        
+                        if ($searchResult2 && isset($searchResult2['needs_selection'])) {
+                            ConversationMessage::create([
+                                'session_id' => $session->id,
+                                'group_cotization_id' => $groupId,
+                                'role' => 'assistant',
+                                'content' => $searchResult2['message'],
+                                'timestamp' => now()
+                            ]);
+                        }
+                    }
+                }
+            }
+            
+            // Verificar si todas las rutas ya tienen producto (después de auto-selección)
+            $allRoutesComplete = self::findNextRouteWithoutProduct($extractedData) === null;
+            
+            if ($allRoutesComplete) {
+                // Mostrar resumen definitivo
+                $resumen = self::generateFinalSummary($extractedData);
+                ConversationMessage::create([
+                    'session_id' => $session->id,
+                    'group_cotization_id' => $groupId,
+                    'role' => 'assistant',
+                    'content' => $resumen,
+                    'timestamp' => now()
+                ]);
+            }
+            
             $runId = 'run_multi_route_' . time();
             
             // Guardar metadata
@@ -1128,7 +1667,6 @@ class MCPAssistantService
             $metadata['last_run_id'] = $runId;
             $metadata['last_run_status'] = 'completed';
             $metadata['extracted_data'] = $extractedData;
-            // 🆕 SINCRONIZAR quote_data
             $metadata['quote_data'] = $extractedData;
             $session->metadata = json_encode($metadata);
             $session->save();
@@ -1224,6 +1762,19 @@ class MCPAssistantService
                 'existing_routes_count' => $existingRoutesCount
             ]);
             
+        // 🆕 DETECCIÓN EXPLÍCITA DE RUTA EN EL MENSAJE
+        // Ejemplo: "cambiar producto de la ruta 2 a cemento"
+        // Esto debe tener prioridad sobre la ruta seleccionada en el UI
+        if (preg_match('/(?:ruta|opci[oó]n)\s*(\d+)/ui', $lastUserMessage, $rutaMatch)) {
+            $rutaMencionada = intval($rutaMatch[1]) - 1; // Convertir a 0-based
+            if (isset($extractedData[$rutaMencionada])) {
+                $selectedRouteIndex = $rutaMencionada;
+                Log::info('📍 Ruta detectada explícitamente en mensaje', ['ruta_index' => $selectedRouteIndex]);
+            }
+        }
+
+
+            
             // Aplicar el cambio a los datos extraídos
             // 🆕 IMPORTANTE: Actualizar AMBOS nombres de campo para consistencia
             $fieldMappings = [
@@ -1241,31 +1792,72 @@ class MCPAssistantService
             // Si hay una ruta seleccionada y es multi-ruta, aplicar solo a esa ruta
             $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
             
+            // 🆕 PROTECCIÓN MULTI-RUTA:
+            // Si es multi-ruta pero NO hay ruta seleccionada explícita (ni por UI ni por texto),
+            // verificar si hay una ruta PENDIENTE en metadata.
+            if ($isMultiRouteData && $selectedRouteIndex === null) {
+                $metadata = json_decode($session->metadata ?? '{}', true);
+                if (isset($metadata['producto_pendiente_ruta_index'])) {
+                    $selectedRouteIndex = $metadata['producto_pendiente_ruta_index'];
+                    Log::info('📍 Usando ruta pendiente de metadata para edición', ['ruta_index' => $selectedRouteIndex]);
+                }
+            }
+            
             if ($isMultiRouteData && $selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
                 foreach ($fieldNames as $fieldName) {
                     $extractedData[$selectedRouteIndex][$fieldName] = $valorEditado;
                 }
+                
+                // 🆕 LIMPIEZA ESTRICTA: Si se edita producto, limpiar código SIEMPRE para forzar nueva validación
+                if ($campoEditado === 'producto') {
+                    $extractedData[$selectedRouteIndex]['producto_codigo'] = null;
+                    $extractedData[$selectedRouteIndex]['producto_nombre'] = null; // Limpiar nombre oficial
+                    $extractedData[$selectedRouteIndex]['tipo_producto'] = null;
+                }
+                
                 Log::info("✏️ Campos actualizados en ruta {$selectedRouteIndex}", [
                     'campos' => $fieldNames,
                     'valor' => $valorEditado
                 ]);
             } elseif ($isMultiRouteData) {
-                // Sin ruta seleccionada, aplicar a todas
-                foreach ($extractedData as $idx => &$ruta) {
-                    if (is_array($ruta) && is_numeric($idx)) {
-                        foreach ($fieldNames as $fieldName) {
-                            $ruta[$fieldName] = $valorEditado;
-                        }
+                // 🆕 PROTECCIÓN: Si es multi-ruta y NO se especificó ruta, NO aplicar a todas ciegamente.
+                // Preguntar al usuario a cuál se refiere, O aplicar solo a la primera (decisión segura: preguntar).
+                // Por ahora, aplicaremos a la primera ruta para evitar bloqueo, pero SIN aplicar a todas.
+                
+                // ⚠️ SOLO si es edición de producto, evitar aplicar a todas para no sobreescribir confirmados
+                if ($campoEditado === 'producto') {
+                     Log::warning('⚠️ Edición de producto en multi-ruta sin especificar ruta - Se aplicará a la PRIMERA ruta incompleta o la 0');
+                     $targetIdx = self::findNextRouteWithoutProduct($extractedData) ?? 0;
+                     
+                     foreach ($fieldNames as $fieldName) {
+                        $extractedData[$targetIdx][$fieldName] = $valorEditado;
+                     }
+                     // Limpiar códigos
+                     $extractedData[$targetIdx]['producto_codigo'] = null;
+                     $extractedData[$targetIdx]['producto_nombre'] = null;
+                     $extractedData[$targetIdx]['tipo_producto'] = null;
+                     
+                     $selectedRouteIndex = $targetIdx; // Marcar para búsqueda posterior
+                } else {
+                    // Para otros campos (origen, destino, etc) mantenemos comportamiento "bulk" si el usuario no especifica,
+                    // O podríamos restringirlo también. Por seguridad, restringimos también.
+                    Log::warning('⚠️ Edición en multi-ruta sin especificar ruta - Se aplicará a la ruta 0 por defecto');
+                    $targetIdx = 0;
+                    foreach ($fieldNames as $fieldName) {
+                        $extractedData[$targetIdx][$fieldName] = $valorEditado;
                     }
                 }
-                unset($ruta);
-                Log::info("✏️ Campos actualizados en TODAS las rutas", [
-                    'campos' => $fieldNames,
-                    'valor' => $valorEditado
-                ]);
             } else {
+                // Ruta única
                 foreach ($fieldNames as $fieldName) {
                     $extractedData[$fieldName] = $valorEditado;
+                }
+                
+                // Limpiar códigos en ruta única
+                if ($campoEditado === 'producto') {
+                    $extractedData['producto_codigo'] = null;
+                    $extractedData['producto_nombre'] = null;
+                    $extractedData['tipo_producto'] = null;
                 }
             }
             
@@ -1281,17 +1873,10 @@ class MCPAssistantService
                             $extractedData[$selectedRouteIndex]['tipo_producto'] = $productoInfo['tipo'];
                         }
                     } elseif ($isMultiRouteData) {
-                        foreach ($extractedData as $idx => &$ruta) {
-                            if (is_array($ruta) && is_numeric($idx)) {
-                                $ruta['producto_codigo'] = $productoInfo['codigo'];
-                                $ruta['producto_nombre'] = $productoInfo['nombre'];
-                                if ($productoInfo['tipo']) {
-                                    $ruta['tipo_producto'] = $productoInfo['tipo'];
-                                }
-                            }
-                        }
-                        unset($ruta);
+                        // Este bloque ya no debería alcanzarse con la lógica de protección arriba
+                        // pero lo mantenemos por seguridad defensiva
                     } else {
+                        // Ruta única
                         $extractedData['producto_codigo'] = $productoInfo['codigo'];
                         $extractedData['producto_nombre'] = $productoInfo['nombre'];
                         if ($productoInfo['tipo']) {

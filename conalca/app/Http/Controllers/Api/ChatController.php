@@ -534,17 +534,33 @@ class ChatController extends Controller
             ]);
 
             // 🆕 Obtener productos pendientes de selección (si existen)
+            // SOLO enviar si el usuario está buscando productos, NO si edita otros campos
             $productosPendientes = null;
             if ($threadId) {
                 // Buscar en la metadata de la sesión usando session_id (que almacena el thread_id)
                 $session = \App\Models\ConversationSession::where('session_id', $threadId)->first();
                 if ($session && $session->metadata) {
                     $metadata = json_decode($session->metadata, true);
+                    
+                    // 🆕 Verificar si el usuario está pidiendo cambio de producto
+                    $mensajeLower = strtolower($request->message ?? '');
+                    $pideCambioProducto = preg_match('/(?:producto|cambiar\s+producto|opci[oó]n\s*\d|selecciono?\s+\d)/ui', $mensajeLower);
+                    
                     if (isset($metadata['productos_pendientes'])) {
-                        $productosPendientes = $metadata['productos_pendientes'];
-                        Log::info('📦 Productos pendientes encontrados para selección', [
-                            'count' => count($productosPendientes)
-                        ]);
+                        // Solo enviar productos pendientes si el usuario está interactuando con productos
+                        if ($pideCambioProducto) {
+                            $productosPendientes = $metadata['productos_pendientes'];
+                            Log::info('📦 Productos pendientes enviados (usuario pidió producto)', [
+                                'count' => count($productosPendientes)
+                            ]);
+                        } else {
+                            // Limpiar productos pendientes si el usuario está editando otro campo
+                            unset($metadata['productos_pendientes']);
+                            unset($metadata['producto_search_term']);
+                            $session->metadata = json_encode($metadata);
+                            $session->save();
+                            Log::info('🧹 Productos pendientes limpiados (usuario editando otro campo)');
+                        }
                     }
                 }
             }

@@ -393,6 +393,14 @@ Route::prefix('chat')->group(function () {
     Route::post('/quote', [App\Http\Controllers\Api\ChatController::class, 'quoteChat'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.quote');
+        
+    // 🆕 Fallback para GET accidental en navegador
+    Route::get('/quote', function() {
+        return response()->json([
+            'message' => 'Este endpoint es solo para uso interno del chat (POST).',
+            'status' => 'active'
+        ]);
+    });
     
     // 🆕 Ruta para extracción inteligente de datos con IA
     Route::post('/extract-quote-data', [App\Http\Controllers\Api\DataExtractionController::class, 'chatExtractData'])

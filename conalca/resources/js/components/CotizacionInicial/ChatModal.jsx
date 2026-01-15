@@ -37,7 +37,7 @@ const isValidCity = (city) => {
  */
 const sanitizeRouteData = (newRoute, existingRoute = {}) => {
   const sanitized = { ...newRoute };
-  
+
   // Validar ciudadOrigen/origen
   const newOrigen = newRoute.ciudadOrigen || newRoute.origen || newRoute.ciudad_origen;
   const existingOrigen = existingRoute.ciudadOrigen || existingRoute.origen || existingRoute.ciudad_origen;
@@ -47,7 +47,7 @@ const sanitizeRouteData = (newRoute, existingRoute = {}) => {
     sanitized.ciudad_origen = existingOrigen;
     console.warn('⚠️ Ciudad origen inválida detectada:', newOrigen, '- manteniendo:', existingOrigen);
   }
-  
+
   // Validar ciudadDestino/destino
   const newDestino = newRoute.ciudadDestino || newRoute.destino || newRoute.ciudad_destino;
   const existingDestino = existingRoute.ciudadDestino || existingRoute.destino || existingRoute.ciudad_destino;
@@ -57,7 +57,7 @@ const sanitizeRouteData = (newRoute, existingRoute = {}) => {
     sanitized.ciudad_destino = existingDestino;
     console.warn('⚠️ Ciudad destino inválida detectada:', newDestino, '- manteniendo:', existingDestino);
   }
-  
+
   return sanitized;
 };
 
@@ -204,65 +204,7 @@ const ChatModal = ({
     }
   }, []); // Solo ejecutar al montar
 
-  // DESHABILITADO: Auto-procesamiento automático de cotización
-  // Ahora el usuario debe hacer clic en "Crear Cotización" manualmente
-  /*
-  useEffect(() => {
-    console.log('🔍 useEffect auto-procesamiento ejecutado', {
-      selectedProduct,
-      selectedEmpaque,
-      quoteData,
-      isSending,
-      messagesLength: messages.length
-    });
-  
-    // Verificar si tenemos todos los datos mínimos necesarios
-    const hasAllRequiredData = 
-      selectedProduct && 
-      selectedEmpaque;
-  
-    console.log('✅ Verificación de datos:', {
-      hasAllRequiredData,
-      hasProduct: !!selectedProduct,
-      hasEmpaque: !!selectedEmpaque
-    });
-  
-    // Solo procesar si tenemos datos completos y no estamos ya procesando
-    if (hasAllRequiredData && !isSending && messages.length > 0) {
-      // Verificar si ya se envió el mensaje de creación (para evitar duplicados)
-      const yaEnvioCreacion = messages.some(msg => 
-        msg.text && msg.text.includes('Por favor crea la cotización con estos datos completos')
-      );
-  
-      if (yaEnvioCreacion) {
-        console.log('⏭️ Cotización ya solicitada, evitando duplicado');
-        return;
-      }
-  
-      console.log('✅ Todos los datos completos. Procesando cotización automáticamente...');
-      console.log('📦 Datos para cotización:', {
-        producto: selectedProduct.nombre,
-        codigoProducto: selectedProduct.codigo,
-        empaque: selectedEmpaque.nome || selectedEmpaque.nombre,
-        empaqueId: selectedEmpaque.id
-      });
-  
-      // Enviar mensaje al asistente para crear la cotización
-      const nombreEmpaque = selectedEmpaque.nome || selectedEmpaque.nombre;
-      const mensajeCreacion = `Por favor crea la cotización con estos datos completos. 
-  Tipo de embalaje: ${nombreEmpaque}
-  Producto: ${selectedProduct.nombre}`;
-  
-      // Pequeño delay para evitar doble procesamiento
-      setTimeout(() => {
-        if (!isSending) {
-          console.log('🚀 Enviando solicitud de creación de cotización...');
-          onSendMessage(mensajeCreacion);
-        }
-      }, 1000);
-    }
-  }, [selectedProduct, selectedEmpaque, isSending, messages.length]);
-  */
+
 
   // 🆕 Cargar mensajes existentes desde la base de datos cuando hay threadId o groupId
   // DESHABILITADO: Para evitar mezcla de conversaciones, NO cargar mensajes históricos
@@ -1068,18 +1010,18 @@ const ChatModal = ({
             console.log('✅ extracted_data es ARRAY nativo con', routesArray.length, 'ruta(s)');
           } else if (extractedData && typeof extractedData === 'object') {
             const keys = Object.keys(extractedData);
-            
+
             // 🆕 DETECTAR MULTI-RUTA: Buscar claves que sean objetos con datos de ruta
             const routeKeys = keys.filter(k => {
               const val = extractedData[k];
-              return val && typeof val === 'object' && 
-                     (val.origen || val.destino || val.ciudad_origen || val.ciudad_destino || val.peso);
+              return val && typeof val === 'object' &&
+                (val.origen || val.destino || val.ciudad_origen || val.ciudad_destino || val.peso);
             });
 
             if (routeKeys.length > 0) {
               // Es multi-ruta (ej: {"0": {...ruta1}, "1": {...ruta2}, "producto": "..."})
               console.log('✅ Detectadas', routeKeys.length, 'rutas en objeto:', routeKeys);
-              
+
               // Ordenar por clave numérica si son números, o por orden de aparición
               routeKeys.sort((a, b) => {
                 const numA = parseInt(a);
@@ -1087,7 +1029,7 @@ const ChatModal = ({
                 if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
                 return 0;
               });
-              
+
               routesArray = routeKeys.map(k => extractedData[k]);
               console.log('📊 Rutas extraídas:', routesArray);
             } else if (extractedData.origen || extractedData.destino || extractedData.ciudad_origen || extractedData.ciudad_destino) {
@@ -1179,10 +1121,10 @@ const ChatModal = ({
 
               const merged = mappedRoutes.map((newRoute, idx) => {
                 const existingRoute = prevArray[idx] || {};
-                
+
                 // 🆕 PRIMERO: Sanitizar la ruta nueva para evitar ciudades inválidas
                 const sanitizedNewRoute = sanitizeRouteData(newRoute, existingRoute);
-                
+
                 const mergedRoute = { ...existingRoute };
 
                 // Solo sobrescribir campos que tienen valor en los nuevos datos (sanitizados)
@@ -2041,7 +1983,7 @@ const ChatModal = ({
     quoteData.some(route => route.ciudad_origen && route.ciudad_destino);
 
   // Función para formatear mensajes de tool calls
-  const formatToolCallMessage = (text) => {
+  const formatToolCallMessage = (text, message = null, messageIndex = null) => {
     try {
       const data = JSON.parse(text);
 
@@ -2055,6 +1997,20 @@ const ChatModal = ({
 
       if (isSearchProducts && data.result?.productos && Array.isArray(data.result.productos)) {
         const productos = data.result.productos;
+
+        // 🆕 Si ya se seleccionó algo LOCALMENTE en este mensaje, mostrar solo el resumen
+        if (message?.localSelection) {
+          return {
+            isToolCall: true,
+            type: 'productos',
+            content: (
+              <div className="text-sm bg-green-50 border border-green-200 rounded p-3 text-green-800 font-medium transition-all duration-500 ease-in-out">
+                ✅ Producto seleccionado: <span className="font-bold">{message.localSelection.nombre}</span>
+              </div>
+            )
+          };
+        }
+
         console.log('✅ Mostrando productos:', productos.length, productos);
         return {
           isToolCall: true,
@@ -2066,14 +2022,10 @@ const ChatModal = ({
               </div>
               <div className="space-y-2">
                 {productos.map((producto, idx) => {
-                  const isSelected = selectedProduct?.codigo === producto.codigo;
                   return (
                     <div
                       key={idx}
-                      className={`border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm ${isSelected
-                        ? 'bg-orange-100 border-orange-500 shadow-md'
-                        : 'bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400'
-                        }`}
+                      className="border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400 group"
                       onClick={() => {
                         setSelectedProduct(producto);
                         // Actualizar quoteData automáticamente
@@ -2082,18 +2034,18 @@ const ChatModal = ({
                           producto: producto.nombre,
                           codigoProducto: producto.codigo
                         }));
+
+                        // 🆕 Ocultar la lista y mostrar selección en este mensaje específico
+                        if (messageIndex !== null) {
+                          setMessages(prev => prev.map((msg, i) =>
+                            i === messageIndex ? { ...msg, localSelection: producto } : msg
+                          ));
+                        }
                       }}
                     >
                       <div className="flex items-start gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${isSelected
-                          ? 'border-orange-600 bg-orange-600'
-                          : 'border-orange-400'
-                          }`}>
-                          {isSelected && (
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                          )}
+                        <div className="w-5 h-5 rounded-full border-2 border-orange-400 flex items-center justify-center flex-shrink-0 mt-1 group-hover:bg-orange-600 group-hover:border-orange-600 transition-colors">
+                          {/* Círculo vacío por defecto, efecto hover visual */}
                         </div>
                         <div className="flex-1">
                           <div className="font-bold text-orange-900 mb-2 text-base">
@@ -2110,11 +2062,6 @@ const ChatModal = ({
                   );
                 })}
               </div>
-              {selectedProduct && (
-                <div className="text-sm bg-green-50 border border-green-200 rounded p-3 text-green-800 font-medium">
-                  ✅ Producto seleccionado: {selectedProduct.nombre}
-                </div>
-              )}
             </div>
           )
         };
@@ -2304,48 +2251,11 @@ const ChatModal = ({
     return null;
   };
 
-  // Función helper para formatear timestamps de manera segura
-  const formatMessageTime = (timestamp) => {
-    if (!timestamp) {
-      return new Date().toLocaleTimeString('es-CO', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
-
-    try {
-      // Si ya es una hora formateada (HH:MM:SS o HH:MM), devolverla
-      if (typeof timestamp === 'string' && /^\d{1,2}:\d{2}/.test(timestamp)) {
-        return timestamp;
-      }
-
-      // Intentar parsear como fecha
-      const date = new Date(timestamp);
-
-      // Verificar si es fecha válida
-      if (isNaN(date.getTime())) {
-        return new Date().toLocaleTimeString('es-CO', {
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      }
-
-      return date.toLocaleTimeString('es-CO', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (error) {
-      console.warn('Error formateando timestamp:', timestamp, error);
-      return new Date().toLocaleTimeString('es-CO', {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
-  };
+  // formatMessageTime se importa desde ./utils/chatUtils (línea 7)
 
   const sanitizedMessages = useMemo(() => {
-    return messages.map(msg => {
-      const toolCallFormatted = formatToolCallMessage(msg.text);
+    return messages.map((msg, index) => {
+      const toolCallFormatted = formatToolCallMessage(msg.text, msg, index);
       if (toolCallFormatted) {
         return {
           ...msg,
@@ -2354,9 +2264,17 @@ const ChatModal = ({
           created_at: formatMessageTime(msg.created_at)
         };
       }
+
+      // 🔒 Filtrar notas internas que no deben mostrarse al usuario
+      // Estas notas son instrucciones para la IA, no para el usuario
+      let cleanText = stripMarkdown(msg.text);
+      if (msg.role === 'user') {
+        cleanText = cleanText.replace(/\s*NOTA\s+IMPORTANTE:.*$/us, '').trim();
+      }
+
       return {
         ...msg,
-        text: stripMarkdown(msg.text),
+        text: cleanText,
         created_at: formatMessageTime(msg.created_at)
       };
     });
@@ -2391,9 +2309,11 @@ const ChatModal = ({
         }
       `}</style>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[80vh] product-sans">
+      <div className="grid grid-cols-1 lg:grid-cols-2 h-[85vh] max-h-[85vh] product-sans">
         {/* Columna Izquierda - Panel de Información */}
-        <div className="bg-gray-50 p-8 border-r border-gray-200">
+        <div className="bg-gray-50 border-r border-gray-200 flex flex-col h-full overflow-hidden">
+          {/* Contenido con scroll */}
+          <div className="flex-1 overflow-y-auto p-8 scrollbar-thin">
           {/* Header del Panel */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-6 p-6 bg-white rounded-xl shadow-sm border border-gray-200">
@@ -3052,10 +2972,11 @@ const ChatModal = ({
               </div>
             </div>
           )}
+          </div> {/* Cierre del div de scroll de columna izquierda */}
         </div>
 
         {/* Columna Derecha - Chat y Acciones */}
-        <div className="bg-white flex flex-col">
+        <div className="bg-white flex flex-col h-full overflow-hidden">
           {/* Header del Chat */}
           <div className="bg-orange-400 text-white p-6">
             <div className="flex items-center space-x-3">
@@ -3071,12 +2992,11 @@ const ChatModal = ({
             </div>
           </div>
 
-          {/* Área de Conversación */}
+          {/* Área de Conversación - Scroll interno controlado */}
           <div
             ref={conversationRef}
             onScroll={handleConversationScroll}
-            className="flex-1 p-6 overflow-y-auto scrollbar-thin bg-gray-50"
-            style={{ maxHeight: '500px' }}
+            className="flex-1 min-h-0 p-6 overflow-y-auto scrollbar-thin bg-gray-50"
           >
             {messages.length > 0 || processingMessage ? (
               <>
