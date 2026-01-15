@@ -102,8 +102,13 @@ class DataExtractionController extends Controller
                 'message' => 'required|string|min:3',
                 'current_data' => 'nullable|array',
                 'thread_id' => 'nullable|string',
-                'client_id' => 'nullable|string'
+                'client_id' => 'nullable|numeric'  // Cambiado de 'string' a 'numeric' para aceptar números
             ]);
+
+            // Convertir client_id a string si existe
+            if (isset($validated['client_id'])) {
+                $validated['client_id'] = (string) $validated['client_id'];
+            }
 
             Log::info('💬 DataExtractionController: Chat extraction', [
                 'message_length' => strlen($validated['message']),

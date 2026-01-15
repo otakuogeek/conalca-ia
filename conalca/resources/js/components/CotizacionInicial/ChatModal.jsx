@@ -5,12 +5,12 @@ import Modal from './ui/Modal';
 import SpeechRecognition from './ui/SpeechRecognition';
 import QuoteDetailsPanel from './QuoteDetailsPanel';
 
-const ChatModal = ({ 
-  onClose, 
-  onNext, 
-  messages, 
-  inputMessage, 
-  setInputMessage, 
+const ChatModal = ({
+  onClose,
+  onNext,
+  messages,
+  inputMessage,
+  setInputMessage,
   onSendMessage,
   quoteData,
   setQuoteData,
@@ -56,9 +56,9 @@ const ChatModal = ({
   // 🆕 Función para detectar número de ruta mencionada en el mensaje
   const detectRouteFromMessage = (messageText) => {
     if (!messageText) return null;
-    
+
     const lower = messageText.toLowerCase();
-    
+
     // Patrones para detectar ruta específica
     const patterns = [
       /(?:ruta|route)\s*(?:n[uú]mero|#|num\.?)?\s*(\d+)/i,
@@ -68,7 +68,7 @@ const ChatModal = ({
       /(?:de\s+la\s+)?ruta\s*(\d+)/i,
       /ruta\s+(\d+)/i,
     ];
-    
+
     for (const pattern of patterns) {
       const match = lower.match(pattern);
       if (match && match[1]) {
@@ -77,7 +77,7 @@ const ChatModal = ({
         return routeNum - 1; // Convertir a índice base 0
       }
     }
-    
+
     return null;
   };
 
@@ -85,7 +85,7 @@ const ChatModal = ({
   const handleSelectRoute = (index) => {
     console.log(`🔄 Seleccionando ruta para edición:`, index !== null ? `Ruta ${index + 1}` : 'Ninguna');
     setSelectedRouteIndex(index);
-    
+
     // Notificar al usuario en el chat
     if (onUpdateMessages && index !== null) {
       onUpdateMessages(prev => [
@@ -119,7 +119,7 @@ const ChatModal = ({
     console.log('quoteData:', quoteData);
     console.log('Es array?', Array.isArray(quoteData));
     console.log('Longitud:', Array.isArray(quoteData) ? quoteData.length : 'N/A');
-    
+
     if (Array.isArray(quoteData) && quoteData.length > 0) {
       console.log('CONTENIDO DE quoteData[0]:');
       console.log('  ciudadOrigen:', quoteData[0].ciudadOrigen);
@@ -144,24 +144,24 @@ const ChatModal = ({
 
       // SIEMPRE limpiar al cambiar de grupo para evitar mezcla de datos
       console.log('🆕 Cambio de grupo/cliente detectado - limpiando estado');
-      
+
       // Limpiar mensajes del chat
       if (onUpdateMessages) {
         onUpdateMessages([]);
       }
-      
+
       // Limpiar datos de cotización para empezar fresco
       if (setQuoteData) {
         setQuoteData({});
       }
-      
+
       // 🆕 Limpiar hash de datos procesados para evitar falsos positivos
       window._lastProcessedDataHash = null;
 
       // Resetear selección de producto y empaque
       setSelectedProduct(null);
       setSelectedEmpaque(null);
-      
+
       // Usar threadId existente si hay, sino null
       if (clientData.threadId) {
         setThreadId(clientData.threadId);
@@ -178,15 +178,15 @@ const ChatModal = ({
     // Solo ejecutar una vez cuando el modal se abre
     if (!quoteData || messages.length > 0) return;
 
-    const hasData = quoteData.ciudadOrigen || quoteData.ciudadDestino || 
-                    quoteData.pesoMercancia || quoteData.valorMercancia;
-    
+    const hasData = quoteData.ciudadOrigen || quoteData.ciudadDestino ||
+      quoteData.pesoMercancia || quoteData.valorMercancia;
+
     if (hasData) {
       console.log('📝 Detectados datos en formulario, construyendo mensaje automático...');
-      
+
       // Construir mensaje con los datos disponibles
       let mensaje = "He completado los siguientes datos del formulario:\n\n";
-      
+
       if (quoteData.ciudadOrigen) {
         mensaje += `- Ciudad de origen: ${quoteData.ciudadOrigen}\n`;
       }
@@ -217,14 +217,14 @@ const ChatModal = ({
       if (quoteData.tipoFlete) {
         mensaje += `- Tipo de flete: ${quoteData.tipoFlete}\n`;
       }
-      
+
       mensaje += "\n¿Hay algo más que deba completar o modificar?";
-      
+
       console.log('✅ Mensaje construido:', mensaje);
-      
+
       // Establecer el mensaje en el input y simular envío
       setInputMessage(mensaje);
-      
+
       // Enviar después de un breve delay para que el componente se monte completamente
       setTimeout(() => {
         console.log('🚀 Enviando mensaje automático...');
@@ -321,9 +321,9 @@ Producto: ${selectedProduct.nombre}`;
   const hasAllRequiredData = useMemo(() => {
     // Obtener el primer elemento si es array, o el objeto directamente
     const data = Array.isArray(quoteData) ? quoteData[0] : quoteData;
-    
+
     if (!data) return false;
-    
+
     return (
       (selectedProduct !== null || data.producto || data.tipo_producto) &&
       (selectedEmpaque !== null || data.empaque || data.tipo_embajale) &&
@@ -358,7 +358,7 @@ Producto: ${selectedProduct.nombre}`;
   const checkForOrphanMessages = async (threadId) => {
     try {
       console.log('🔍 Verificando mensajes huérfanos para thread:', threadId);
-      
+
       // Usar el endpoint especializado para procesar mensajes huérfanos
       const response = await fetch('/api/chat/orphan/process', {
         method: 'POST',
@@ -372,27 +372,27 @@ Producto: ${selectedProduct.nombre}`;
           client_id: clientData.clientId
         })
       });
-      
+
       // Manejar error 503 (servicio no disponible)
       if (response.status === 503) {
         const data = await response.json();
         console.log('⚠️ Servicio temporalmente no disponible:', data.message);
         return false; // No reintentar, el mensaje se procesará automáticamente cuando el servicio esté disponible
       }
-      
+
       // Manejar error 500 (error interno)
       if (response.status === 500) {
         console.error('❌ Error interno procesando huérfanos');
         return false;
       }
-      
+
       const data = await response.json();
       if (data.success) {
         console.log('✅ Respuesta del procesador de huérfanos:', data.data);
-        
+
         if (data.data.run_id) {
           console.log('🚀 Run creado para mensaje huérfano:', data.data.run_id);
-          
+
           // Mostrar mensaje de procesamiento
           setProcessingMessage({
             role: 'assistant',
@@ -401,10 +401,10 @@ Producto: ${selectedProduct.nombre}`;
             status: 'thinking',
             isTemporary: true
           });
-          
+
           // Iniciar polling para el run creado
           startPollingRun(threadId, data.data.run_id);
-          
+
           return true; // Indica que se encontró y procesó un mensaje huérfano
         } else {
           console.log('ℹ️ No se detectaron mensajes huérfanos');
@@ -424,11 +424,11 @@ Producto: ${selectedProduct.nombre}`;
     console.log('🔄 Iniciando polling para run:', runId);
     setCurrentRunId(runId);
     setProcessingProgress(50);
-    
+
     let pollAttempts = 0;
     const maxPollAttempts = 20;
     let isPollingActive = true;
-    
+
     const stopPolling = (reason = '') => {
       console.log(`🛑 Deteniendo polling: ${reason}`);
       isPollingActive = false;
@@ -439,45 +439,45 @@ Producto: ${selectedProduct.nombre}`;
       setCurrentRunId(null);
       setProcessingMessage(null);
     };
-    
+
     const pollRun = async () => {
       try {
         if (!isPollingActive) {
           console.log('⏹️ Polling ya detenido, saliendo...');
           return;
         }
-        
+
         pollAttempts++;
         console.log(`🔍 Polling intento ${pollAttempts}/${maxPollAttempts}`);
-        
+
         if (pollAttempts > maxPollAttempts) {
           stopPolling('Timeout alcanzado');
           return;
         }
-        
+
         const response = await fetch(`/api/chat/run/${threadId}/${runId}`, {
           headers: { 'Accept': 'application/json' }
         });
-        
+
         const data = await response.json();
         console.log(`📊 Status recibido:`, data.data?.status);
-        
+
         if (!data.success) {
           console.error('❌ Error en respuesta:', data);
           return;
         }
-        
+
         const status = data.data?.status;
-        
+
         // DETENER INMEDIATAMENTE si hay datos
         if (status === 'completed_with_data') {
           console.log('✅ DATOS RECIBIDOS - Procesando y deteniendo...');
-          
+
           // Procesar extracted_data - AHORA PROCESA TODAS LAS RUTAS
           if (data.data.extracted_data && Array.isArray(data.data.extracted_data)) {
             const allRoutes = data.data.extracted_data;
             console.log('📦 Rutas extraídas:', allRoutes.length, allRoutes);
-            
+
             if (setQuoteData && allRoutes.length > 0) {
               // 🆕 PROCESAR TODAS LAS RUTAS COMO ARRAY
               const processedRoutes = allRoutes.map((route, idx) => {
@@ -497,12 +497,12 @@ Producto: ${selectedProduct.nombre}`;
                   contenedor: route.tipo_contenedor ?? route.contenedor ?? null,
                 };
               });
-              
+
               console.log(`✅ ${processedRoutes.length} rutas procesadas para QuoteDetailsPanel:`, processedRoutes);
-              
+
               // 🆕 SIEMPRE devolver array
               setQuoteData(processedRoutes);
-              
+
               // Auto-seleccionar empaque del PRIMER elemento
               const firstRoute = allRoutes[0];
               if (firstRoute.empaque && firstRoute.empaque_id) {
@@ -512,7 +512,7 @@ Producto: ${selectedProduct.nombre}`;
                   nombre: firstRoute.empaque
                 });
               }
-              
+
               // Auto-seleccionar producto del PRIMER elemento (si es común a todas)
               if (firstRoute.tipo_producto || firstRoute.producto) {
                 const prodNombre = firstRoute.tipo_producto || firstRoute.producto;
@@ -530,39 +530,39 @@ Producto: ${selectedProduct.nombre}`;
               }
             }
           }
-          
+
           // NOTA: quote_data viene como array de rutas pero no tiene la normalización camelCase
           // extracted_data ya fue procesado arriba con el mapeo correcto
           // NO sobrescribir quoteData con quote_data crudo
-          
+
           // NO obtener mensajes históricos - solo usar los de la sesión actual
           console.log('✅ Datos procesados - NO cargando mensajes históricos');
           console.log('💬 Los mensajes se actualizarán solo con los de esta conversación');
-          
+
           stopPolling('Datos completados');
           return;
         }
-        
+
         // Estados que también detienen
         if (status === 'completed' || status === 'failed' || status === 'cancelled') {
           stopPolling(`Estado final: ${status}`);
           return;
         }
-        
+
         // in_progress continúa normalmente
         if (status === 'in_progress') {
           console.log('⏳ Procesando...');
         }
-        
+
       } catch (error) {
         console.error('❌ Error en polling:', error);
         stopPolling('Error en fetch');
       }
     };
-    
+
     // Ejecutar primera vez inmediatamente
     pollRun();
-    
+
     // Configurar intervalo
     const interval = setInterval(pollRun, 2000);
     setPollingInterval(interval);
@@ -573,17 +573,17 @@ Producto: ${selectedProduct.nombre}`;
     try {
       console.log('========== INICIANDO processMessageWithAI ==========');
       console.log('Mensaje a procesar:', messageText.substring(0, 100));
-      
+
       let currentData = {};
       if (Array.isArray(quoteData) && quoteData.length > 0) {
         currentData = quoteData[0];
       } else if (quoteData && typeof quoteData === 'object') {
         currentData = quoteData;
       }
-      
+
       console.log('Datos actuales:', currentData);
       const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
+
       console.log('🚀 Llamando a /api/chat/extract-quote-data');
       const response = await fetch('/api/chat/extract-quote-data', {
         method: 'POST',
@@ -596,34 +596,34 @@ Producto: ${selectedProduct.nombre}`;
           message: messageText,
           current_data: currentData,
           thread_id: threadId,
-          client_id: clientData.clientId
+          client_id: String(clientData.clientId)
         })
       });
 
       console.log('✅ Respuesta recibida. HTTP Status:', response.status);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const result = await response.json();
-      
+
       console.log('╔════════════════════════════════════════════════════╗');
       console.log('║ RESPUESTA DEL BACKEND - JSON COMPLETO             ║');
       console.log('╚════════════════════════════════════════════════════╝');
       console.log('JSON COMPLETO:', JSON.stringify(result, null, 2));
-      
+
       console.log('\n🔍 ANÁLISIS ESTRUCTURA:');
       console.log('  result.success:', result.success);
       console.log('  result.data existe?', !!result.data);
       console.log('  result.data.extracted existe?', !!result.data?.extracted);
       console.log('  typeof result.data.extracted:', typeof result.data?.extracted);
-      
+
       if (result.data?.extracted) {
         console.log('  ¿Es objeto vacío?', Object.keys(result.data.extracted).length === 0);
         console.log('  Claves de extracted:', Object.keys(result.data.extracted));
         console.log('  Contenido de extracted:', result.data.extracted);
-        
+
         // VERIFICAR CADA CAMPO INDIVIDUALMENTE
         console.log('\n📋 CAMPOS EXTRAÍDOS INDIVIDUALES:');
         console.log('    origen:', result.data.extracted.origen);
@@ -643,7 +643,7 @@ Producto: ${selectedProduct.nombre}`;
         const extractedData = result.data.extracted;
         console.log('\n✅ PROCESANDO DATOS EXTRAÍDOS...');
         console.log('CAMPOS EXTRAIDOS:', extractedData);
-        
+
         const mappedData = {
           ciudadOrigen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
           ciudad_origen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
@@ -667,12 +667,12 @@ Producto: ${selectedProduct.nombre}`;
 
         console.log('\n📊 DATOS MAPEADOS:');
         console.log(JSON.stringify(mappedData, null, 2));
-        
+
         console.log('\n🔴 LLAMANDO setQuoteData([mappedData])');
         console.log('ANTES de setQuoteData - quoteData actual:', quoteData);
-        
+
         setQuoteData([mappedData]);
-        
+
         console.log('DESPUÉS de setQuoteData (será efectivo en próximo render)');
         console.log('El valor que acabamos de setear:', mappedData);
       } else {
@@ -704,15 +704,15 @@ Producto: ${selectedProduct.nombre}`;
     if (currentRunId || processingMessage) return;
 
     const messageText = inputMessage.trim();
-    
+
     // 🔍 BÚSQUEDA PROACTIVA DE PRODUCTOS - Busca CUALQUIER producto mencionado
     const buscarProductoProactivamente = async (texto) => {
       // Regex mejorado para capturar productos mencionados después de palabras clave
       const regex = /(?:toneladas de|tonelada de|kilos de|kilo de|kg de|transportar|llevar|enviar|envío de|envio de)\s+([a-záéíóúñ\s]+?)(?:\s+(?:por|en|con|desde|hacia|para|,|\.)|$)/gi;
-      
+
       let posibleProducto = null;
       let match;
-      
+
       // Buscar el primer producto mencionado
       while ((match = regex.exec(texto)) !== null) {
         const producto = match[1].trim();
@@ -722,11 +722,11 @@ Producto: ${selectedProduct.nombre}`;
           break;
         }
       }
-      
+
       // Si se detectó un posible producto y no hay producto seleccionado, buscar en BD
       if (posibleProducto && !selectedProduct) {
         console.log('🔍 BÚSQUEDA PROACTIVA - Detectado:', posibleProducto);
-        
+
         try {
           const response = await fetch('/api/mcp/search-products', {
             method: 'POST',
@@ -736,22 +736,22 @@ Producto: ${selectedProduct.nombre}`;
             },
             body: JSON.stringify({ query: posibleProducto })
           });
-          
+
           const result = await response.json();
           console.log('📦 Resultado búsqueda proactiva:', result);
-          
+
           if (result.success && result.productos && result.productos.length > 0) {
             const producto = result.productos[0];
-            
+
             if (result.match_type === 'exact') {
               console.log('✅ MATCH EXACTO - Auto-seleccionando:', producto);
-              
+
               setSelectedProduct({
                 codigo: producto.codigo,
                 nombre: producto.nombre,
                 producto_codigo: producto.codigo
               });
-              
+
               setQuoteData(prev => ({
                 ...prev,
                 producto: producto.nombre,
@@ -760,21 +760,21 @@ Producto: ${selectedProduct.nombre}`;
               }));
             } else if (result.match_type === 'partial') {
               console.log('⚠️ MATCH PARCIAL - Mostrando sugerencia:', producto);
-              
+
               // Auto-seleccionar el más parecido
               setSelectedProduct({
                 codigo: producto.codigo,
                 nombre: producto.nombre,
                 producto_codigo: producto.codigo
               });
-              
+
               setQuoteData(prev => ({
                 ...prev,
                 producto: producto.nombre,
                 producto_codigo: producto.codigo,
                 tipo_producto: producto.nombre
               }));
-              
+
               // Mostrar mensaje informativo
               if (onUpdateMessages) {
                 setTimeout(() => {
@@ -797,9 +797,9 @@ Producto: ${selectedProduct.nombre}`;
         }
       }
     };
-    
+
     await buscarProductoProactivamente(messageText);
-    
+
     setIsSending(true);
     sendingRef.current = true;
     setProcessingProgress(10);
@@ -813,9 +813,9 @@ Producto: ${selectedProduct.nombre}`;
           const url = groupId
             ? `/api/chat/messages/${activeThreadId}?group_id=${groupId}`
             : `/api/chat/messages/${activeThreadId}`;
-          
+
           console.log('🔍 Verificando mensajes existentes:', { activeThreadId, groupId });
-          
+
           const existingMessagesResponse = await fetch(url, {
             headers: { Accept: 'application/json' }
           });
@@ -906,7 +906,7 @@ Producto: ${selectedProduct.nombre}`;
           console.log('💬 ACTUALIZANDO MENSAJES:', data.data.messages.length, 'mensajes recibidos');
           console.log('📝 Primer mensaje:', data.data.messages[0]);
           console.log('📝 Último mensaje:', data.data.messages[data.data.messages.length - 1]);
-          
+
           // El backend ya devuelve los mensajes en el formato correcto {role, text, created_at}
           // Solo necesitamos pasarlos directamente
           if (onUpdateMessages) {
@@ -918,7 +918,7 @@ Producto: ${selectedProduct.nombre}`;
         // 🆕 MOSTRAR PRODUCTOS PENDIENTES COMO BOTONES CLICKEABLES
         if (data.data.productos_pendientes && Array.isArray(data.data.productos_pendientes) && data.data.productos_pendientes.length > 0) {
           console.log('🎯 Productos pendientes para selección:', data.data.productos_pendientes);
-          
+
           if (onUpdateMessages) {
             onUpdateMessages(prev => [
               ...prev,
@@ -938,7 +938,7 @@ Producto: ${selectedProduct.nombre}`;
                           onClick={() => {
                             console.log('✅ Producto seleccionado:', prod);
                             console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
-                            
+
                             // Actualizar quoteData con el producto seleccionado
                             // 🆕 FIX: Solo actualizar la ruta seleccionada si existe
                             setQuoteData(prev => {
@@ -980,7 +980,7 @@ Producto: ${selectedProduct.nombre}`;
                                 tipo_producto: prod.nombre
                               };
                             });
-                            
+
                             // Enviar selección al backend
                             fetch('/api/chat/quote', {
                               method: 'POST',
@@ -1007,12 +1007,12 @@ Producto: ${selectedProduct.nombre}`;
                               if (result.data?.extracted_data) {
                                 const backendData = result.data.extracted_data;
                                 console.log('📦 Actualizando quoteData con datos del backend:', backendData);
-                                
-                                const routesArray = Array.isArray(backendData) ? backendData : 
-                                  (backendData && typeof backendData === 'object' && backendData[0] ? 
-                                    Object.values(backendData).filter(v => typeof v === 'object' && v.origen) : 
+
+                                const routesArray = Array.isArray(backendData) ? backendData :
+                                  (backendData && typeof backendData === 'object' && backendData[0] ?
+                                    Object.values(backendData).filter(v => typeof v === 'object' && v.origen) :
                                     [backendData]);
-                                
+
                                 if (routesArray.length > 0 && setQuoteData) {
                                   setQuoteData(prev => {
                                     if (!Array.isArray(prev)) return routesArray;
@@ -1032,7 +1032,7 @@ Producto: ${selectedProduct.nombre}`;
                                 }
                               }
                             });
-                            
+
                             // Agregar mensaje de confirmación
                             onUpdateMessages(prev => [
                               ...prev,
@@ -1069,22 +1069,22 @@ Producto: ${selectedProduct.nombre}`;
           (Array.isArray(data.data.extracted_data) && data.data.extracted_data.length > 0) ||
           (!Array.isArray(data.data.extracted_data) && Object.keys(data.data.extracted_data).length > 0)
         );
-        
+
         if (hasRealExtractedData && setQuoteData) {
           console.log('✅ Datos extraídos recibidos, auto-llenando campos:', data.data.extracted_data);
-          
+
           // 🆕 DETECTAR SI ES ARRAY (MULTI-RUTA) O OBJETO (RUTA ÚNICA)
           let extractedData = data.data.extracted_data;
-          
+
           console.log('🔍 Tipo de extractedData antes de procesar:', {
             tipo: typeof extractedData,
             esArray: Array.isArray(extractedData),
             valor: extractedData
           });
-          
+
           // 🆕 GARANTIZAR QUE SEA UN ARRAY
           let routesArray = [];
-          
+
           if (Array.isArray(extractedData)) {
             // Ya es un array
             routesArray = extractedData;
@@ -1094,7 +1094,7 @@ Producto: ${selectedProduct.nombre}`;
             // Ejemplo: {0: {...ruta1...}, 1: {...ruta2...}, producto: "...", tipo_producto: "..."}
             const keys = Object.keys(extractedData);
             const numericKeys = keys.filter(k => !isNaN(parseInt(k)));
-            
+
             if (numericKeys.length >= 1 && typeof extractedData[numericKeys[0]] === 'object') {
               // Es un objeto con rutas indexadas - extraer solo las rutas numéricas
               console.log('✅ extracted_data es OBJETO con rutas indexadas:', numericKeys.length, 'ruta(s)');
@@ -1118,9 +1118,9 @@ Producto: ${selectedProduct.nombre}`;
             console.warn('⚠️ extracted_data está vacío o es inválido:', extractedData);
             routesArray = [];
           }
-          
+
           console.log(`🛣️ Procesando ${routesArray.length} ruta(s) extraídas:`, routesArray);
-          
+
           // 🔴 CRÍTICO: MAPEAR CADA RUTA CON LOGGING DETALLADO
           const mappedRoutes = routesArray.map((route, idx) => {
             const mapped = {
@@ -1147,7 +1147,7 @@ Producto: ${selectedProduct.nombre}`;
               empaque: route.empaque || null,
               empaque_id: route.empaque_id || null
             };
-            
+
             console.log(`📍 Ruta ${idx + 1} mapeada:`, {
               origen: mapped.ciudadOrigen,
               destino: mapped.ciudadDestino,
@@ -1159,12 +1159,12 @@ Producto: ${selectedProduct.nombre}`;
               valor: mapped.valorMercancia,
               observaciones: mapped.observaciones
             });
-            
+
             return mapped;
           });
-          
+
           console.log('✅ TODAS LAS RUTAS MAPEADAS:', mappedRoutes);
-          
+
           // 🔴 CRÍTICO: ACTUALIZAR QUOTEDATA HACIENDO MERGE CON DATOS EXISTENTES
           if (mappedRoutes.length > 0) {
             console.log('🚀 Llamando setQuoteData con merge:', mappedRoutes);
@@ -1174,30 +1174,30 @@ Producto: ${selectedProduct.nombre}`;
                 console.log('🆕 No hay datos previos, usando nuevos directamente');
                 return mappedRoutes;
               }
-              
+
               // Si hay datos previos, hacer merge campo por campo
               const prevArray = Array.isArray(prev) ? prev : [prev];
-              
+
               const merged = mappedRoutes.map((newRoute, idx) => {
                 const existingRoute = prevArray[idx] || {};
                 const mergedRoute = { ...existingRoute };
-                
+
                 // Solo sobrescribir campos que tienen valor en los nuevos datos
                 Object.keys(newRoute).forEach(key => {
                   if (newRoute[key] !== null && newRoute[key] !== undefined && newRoute[key] !== '') {
                     mergedRoute[key] = newRoute[key];
                   }
                 });
-                
+
                 console.log(`📍 Ruta ${idx + 1} mergeada:`, {
                   prev: existingRoute,
                   new: newRoute,
                   merged: mergedRoute
                 });
-                
+
                 return mergedRoute;
               });
-              
+
               console.log('✅ DATOS MERGEADOS:', merged);
               return merged;
             });
@@ -1205,7 +1205,7 @@ Producto: ${selectedProduct.nombre}`;
           } else {
             console.warn('⚠️ No hay rutas mapeadas para actualizar');
           }
-          
+
           // 🔴 CRÍTICO: Evitar procesamiento duplicado
           // Crear un hash simple de los datos para comparar - INCLUIR PRODUCTO
           const dataHash = JSON.stringify(routesArray.map(r => `${r.origen || r.ciudad_origen}-${r.destino || r.ciudad_destino}-${r.peso_kg}-${r.producto || r.producto_nombre || ''}`));
@@ -1214,16 +1214,16 @@ Producto: ${selectedProduct.nombre}`;
             return; // No procesar los mismos datos dos veces
           }
           window._lastProcessedDataHash = dataHash;
-          
+
           // 🆕 MEJORADO: Auto-buscar producto de CADA ruta (no solo la primera)
           // Recopilar todos los productos únicos de las rutas
           const productosUnicos = [...new Set(routesArray.map(r => r.producto).filter(Boolean))];
           console.log('🔍 Productos únicos en rutas:', productosUnicos);
-          
+
           // Buscar y validar cada producto por separado
           productosUnicos.forEach((productoTexto, idx) => {
             console.log(`🔍 Buscando producto ${idx + 1}/${productosUnicos.length}: "${productoTexto}"`);
-            
+
             // Llamar al backend para buscar el producto
             fetch('/api/mcp/search-products', {
               method: 'POST',
@@ -1233,37 +1233,57 @@ Producto: ${selectedProduct.nombre}`;
               },
               body: JSON.stringify({ query: productoTexto })
             })
-            .then(res => res.json())
-            .then(result => {
-              console.log(`📦 Resultado búsqueda "${productoTexto}":`, result);
-              
-              if (result.success && result.productos && result.productos.length > 0) {
-                if (result.match_type === 'exact') {
-                  // Coincidencia exacta - auto-actualizar SOLO las rutas con este producto
-                  const producto = result.productos[0];
-                  console.log(`✅ Coincidencia EXACTA para "${productoTexto}":`, producto);
-                  console.log('📍 selectedRouteIndex al procesar producto:', selectedRouteIndex);
-                  
-                  // Si es el primer producto (o único), actualizar selectedProduct global
-                  if (idx === 0) {
-                    setSelectedProduct({
-                      codigo: producto.codigo,
-                      nombre: producto.nombre,
-                      producto_codigo: producto.codigo
-                    });
-                  }
+              .then(res => res.json())
+              .then(result => {
+                console.log(`📦 Resultado búsqueda "${productoTexto}":`, result);
 
-                  // 🆕 CRÍTICO: Si hay ruta seleccionada, actualizar SOLO esa. 
-                  // Si no, actualizar rutas que tenían ESTE producto original
-                  setQuoteData(prev => {
-                    console.log(`🔄 Actualizando rutas con producto "${productoTexto}" -> "${producto.nombre}". selectedRouteIndex:`, selectedRouteIndex);
-                    
-                    if (Array.isArray(prev) && prev.length > 0) {
-                      // 🆕 Si hay ruta seleccionada para edición, actualizar SOLO esa ruta
-                      if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
-                        const updated = prev.map((route, idx) => {
-                          if (idx === selectedRouteIndex) {
-                            console.log(`  ✏️ Actualizando producto SOLO en Ruta ${idx + 1} (seleccionada)`);
+                if (result.success && result.productos && result.productos.length > 0) {
+                  if (result.match_type === 'exact') {
+                    // Coincidencia exacta - auto-actualizar SOLO las rutas con este producto
+                    const producto = result.productos[0];
+                    console.log(`✅ Coincidencia EXACTA para "${productoTexto}":`, producto);
+                    console.log('📍 selectedRouteIndex al procesar producto:', selectedRouteIndex);
+
+                    // Si es el primer producto (o único), actualizar selectedProduct global
+                    if (idx === 0) {
+                      setSelectedProduct({
+                        codigo: producto.codigo,
+                        nombre: producto.nombre,
+                        producto_codigo: producto.codigo
+                      });
+                    }
+
+                    // 🆕 CRÍTICO: Si hay ruta seleccionada, actualizar SOLO esa. 
+                    // Si no, actualizar rutas que tenían ESTE producto original
+                    setQuoteData(prev => {
+                      console.log(`🔄 Actualizando rutas con producto "${productoTexto}" -> "${producto.nombre}". selectedRouteIndex:`, selectedRouteIndex);
+
+                      if (Array.isArray(prev) && prev.length > 0) {
+                        // 🆕 Si hay ruta seleccionada para edición, actualizar SOLO esa ruta
+                        if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
+                          const updated = prev.map((route, idx) => {
+                            if (idx === selectedRouteIndex) {
+                              console.log(`  ✏️ Actualizando producto SOLO en Ruta ${idx + 1} (seleccionada)`);
+                              return {
+                                ...route,
+                                producto: producto.nombre,
+                                producto_codigo: producto.codigo,
+                                tipo_producto: producto.nombre
+                              };
+                            }
+                            return route; // No modificar otras rutas
+                          });
+                          return updated;
+                        }
+
+                        // Sin ruta seleccionada - buscar rutas que tenían este producto
+                        const updated = prev.map(route => {
+                          // Solo actualizar si esta ruta tenía el producto que buscamos
+                          const routeProducto = (route.producto || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                          const buscando = productoTexto.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+                          if (routeProducto === buscando || route.producto?.toUpperCase() === productoTexto.toUpperCase()) {
+                            console.log(`  ✅ Actualizando ruta con ${route.producto} -> ${producto.nombre}`);
                             return {
                               ...route,
                               producto: producto.nombre,
@@ -1271,169 +1291,149 @@ Producto: ${selectedProduct.nombre}`;
                               tipo_producto: producto.nombre
                             };
                           }
-                          return route; // No modificar otras rutas
+                          // No modificar rutas con otro producto
+                          return route;
                         });
                         return updated;
                       }
-                      
-                      // Sin ruta seleccionada - buscar rutas que tenían este producto
-                      const updated = prev.map(route => {
-                        // Solo actualizar si esta ruta tenía el producto que buscamos
-                        const routeProducto = (route.producto || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-                        const buscando = productoTexto.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-                        
-                        if (routeProducto === buscando || route.producto?.toUpperCase() === productoTexto.toUpperCase()) {
-                          console.log(`  ✅ Actualizando ruta con ${route.producto} -> ${producto.nombre}`);
-                          return {
-                            ...route,
-                            producto: producto.nombre,
-                            producto_codigo: producto.codigo,
-                            tipo_producto: producto.nombre
-                          };
+                      return prev;
+                    });
+                  } else if (result.match_type === 'partial') {
+                    // Sugerencias - mostrar al usuario para que elija
+                    console.log('⚠️ No hay coincidencia exacta - Mostrando sugerencias:', result.productos);
+
+                    // Agregar mensaje al chat con sugerencias
+                    if (onUpdateMessages) {
+                      onUpdateMessages(prev => [
+                        ...prev,
+                        {
+                          role: 'assistant',
+                          text: `No encontré "${productoTexto}" exactamente en el catálogo. ¿Te refieres a alguno de estos?`,
+                          created_at: new Date().toLocaleTimeString(),
+                          toolCallData: {
+                            isToolCall: true,
+                            type: 'productos',
+                            content: (
+                              <div className="space-y-2">
+                                {result.productos.map((prod, idx) => (
+                                  <button
+                                    key={idx}
+                                    className="block w-full text-left px-4 py-2 rounded bg-gray-100 hover:bg-orange-100 transition-colors"
+                                    onClick={() => {
+                                      console.log('✅ Usuario seleccionó sugerencia:', prod);
+                                      console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
+
+                                      // 1. Actualizar selectedProduct (global para referencia)
+                                      setSelectedProduct({
+                                        codigo: prod.codigo,
+                                        nombre: prod.nombre,
+                                        producto_codigo: prod.codigo
+                                      });
+
+                                      // 2. Actualizar routes con el producto seleccionado
+                                      // 🆕 Si hay una ruta seleccionada, actualizar SOLO esa ruta
+                                      setQuoteData(prev => {
+                                        console.log('🔄 Actualizando quoteData (sugerencia). prev:', prev, 'selectedRouteIndex:', selectedRouteIndex);
+
+                                        if (Array.isArray(prev) && prev.length > 0) {
+                                          // 🆕 Si hay ruta seleccionada, actualizar SOLO esa ruta
+                                          if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
+                                            const updated = prev.map((route, idx) => {
+                                              if (idx === selectedRouteIndex) {
+                                                console.log(`✏️ Actualizando producto SOLO en Ruta ${idx + 1}`);
+                                                return {
+                                                  ...route,
+                                                  producto: prod.nombre,
+                                                  producto_codigo: prod.codigo,
+                                                  tipo_producto: prod.nombre
+                                                };
+                                              }
+                                              return route;
+                                            });
+                                            console.log('✅ Ruta específica actualizada:', updated);
+                                            return updated;
+                                          }
+                                          // Sin ruta seleccionada - actualizar todas
+                                          const updated = prev.map(route => ({
+                                            ...route,
+                                            producto: prod.nombre,
+                                            producto_codigo: prod.codigo,
+                                            tipo_producto: prod.nombre
+                                          }));
+                                          console.log('✅ Todas las rutas actualizadas:', updated);
+                                          return updated;
+                                        } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
+                                          const updated = {
+                                            ...prev,
+                                            producto: prod.nombre,
+                                            producto_codigo: prod.codigo,
+                                            tipo_producto: prod.nombre
+                                          };
+                                          console.log('✅ Objeto actualizado:', updated);
+                                          return updated;
+                                        } else {
+                                          // Si NO hay datos previos, crear objeto inicial
+                                          const newData = {
+                                            producto: prod.nombre,
+                                            producto_codigo: prod.codigo,
+                                            tipo_producto: prod.nombre
+                                          };
+                                          console.log('🆕 Creando nuevo quoteData:', newData);
+                                          return newData;
+                                        }
+                                      });
+                                    }}
+                                  >
+                                    <div className="font-semibold text-gray-900">{prod.nombre}</div>
+                                    <div className="text-xs text-gray-500">Código: {prod.codigo}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            )
+                          }
                         }
-                        // No modificar rutas con otro producto
-                        return route;
-                      });
-                      return updated;
+                      ]);
                     }
-                    return prev;
-                  });
-                } else if (result.match_type === 'partial') {
-                  // Sugerencias - mostrar al usuario para que elija
-                  console.log('⚠️ No hay coincidencia exacta - Mostrando sugerencias:', result.productos);
-                  
-                  // Agregar mensaje al chat con sugerencias
+                  }
+                } else {
+                  console.warn('❌ Producto no encontrado en BD:', productoTexto, '- Se usará como texto personalizado');
+                  // Crear mensaje informativo
                   if (onUpdateMessages) {
                     onUpdateMessages(prev => [
                       ...prev,
                       {
                         role: 'assistant',
-                        text: `No encontré "${productoTexto}" exactamente en el catálogo. ¿Te refieres a alguno de estos?`,
+                        text: `⚠️ El producto "${productoTexto}" no existe en nuestro catálogo. Se guardará como producto personalizado.`,
                         created_at: new Date().toLocaleTimeString(),
-                        toolCallData: {
-                          isToolCall: true,
-                          type: 'productos',
-                          content: (
-                            <div className="space-y-2">
-                              {result.productos.map((prod, idx) => (
-                                <button
-                                  key={idx}
-                                  className="block w-full text-left px-4 py-2 rounded bg-gray-100 hover:bg-orange-100 transition-colors"
-                                  onClick={() => {
-                                    console.log('✅ Usuario seleccionó sugerencia:', prod);
-                                    console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
-                                    
-                                    // 1. Actualizar selectedProduct (global para referencia)
-                                    setSelectedProduct({
-                                      codigo: prod.codigo,
-                                      nombre: prod.nombre,
-                                      producto_codigo: prod.codigo
-                                    });
-
-                                    // 2. Actualizar routes con el producto seleccionado
-                                    // 🆕 Si hay una ruta seleccionada, actualizar SOLO esa ruta
-                                    setQuoteData(prev => {
-                                      console.log('🔄 Actualizando quoteData (sugerencia). prev:', prev, 'selectedRouteIndex:', selectedRouteIndex);
-                                      
-                                      if (Array.isArray(prev) && prev.length > 0) {
-                                        // 🆕 Si hay ruta seleccionada, actualizar SOLO esa ruta
-                                        if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
-                                          const updated = prev.map((route, idx) => {
-                                            if (idx === selectedRouteIndex) {
-                                              console.log(`✏️ Actualizando producto SOLO en Ruta ${idx + 1}`);
-                                              return {
-                                                ...route,
-                                                producto: prod.nombre,
-                                                producto_codigo: prod.codigo,
-                                                tipo_producto: prod.nombre
-                                              };
-                                            }
-                                            return route;
-                                          });
-                                          console.log('✅ Ruta específica actualizada:', updated);
-                                          return updated;
-                                        }
-                                        // Sin ruta seleccionada - actualizar todas
-                                        const updated = prev.map(route => ({
-                                          ...route,
-                                          producto: prod.nombre,
-                                          producto_codigo: prod.codigo,
-                                          tipo_producto: prod.nombre
-                                        }));
-                                        console.log('✅ Todas las rutas actualizadas:', updated);
-                                        return updated;
-                                      } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
-                                        const updated = {
-                                          ...prev,
-                                          producto: prod.nombre,
-                                          producto_codigo: prod.codigo,
-                                          tipo_producto: prod.nombre
-                                        };
-                                        console.log('✅ Objeto actualizado:', updated);
-                                        return updated;
-                                      } else {
-                                        // Si NO hay datos previos, crear objeto inicial
-                                        const newData = {
-                                          producto: prod.nombre,
-                                          producto_codigo: prod.codigo,
-                                          tipo_producto: prod.nombre
-                                        };
-                                        console.log('🆕 Creando nuevo quoteData:', newData);
-                                        return newData;
-                                      }
-                                    });
-                                  }}
-                                >
-                                  <div className="font-semibold text-gray-900">{prod.nombre}</div>
-                                  <div className="text-xs text-gray-500">Código: {prod.codigo}</div>
-                                </button>
-                              ))}
-                            </div>
-                          )
-                        }
                       }
                     ]);
                   }
                 }
-              } else {
-                console.warn('❌ Producto no encontrado en BD:', productoTexto, '- Se usará como texto personalizado');
-                // Crear mensaje informativo
-                if (onUpdateMessages) {
-                  onUpdateMessages(prev => [
-                    ...prev,
-                    {
-                      role: 'assistant',
-                      text: `⚠️ El producto "${productoTexto}" no existe en nuestro catálogo. Se guardará como producto personalizado.`,
-                      created_at: new Date().toLocaleTimeString(),
-                    }
-                  ]);
-                }
-              }
-            })
-            .catch(err => {
-              console.error('❌ Error buscando producto:', err);
-            });
+              })
+              .catch(err => {
+                console.error('❌ Error buscando producto:', err);
+              });
           });
-          
+
           // 2️⃣ Actualizar quoteData - AHORA MANEJA MULTI-RUTA Y EDICIÓN INDIVIDUAL
           console.log('🚀 Antes de setQuoteData - routesArray:', routesArray, 'length:', routesArray.length);
-          
+
           // 🆕 Detectar si el backend indica que fue edición de una sola ruta
           const backendIndicaSingleEdit = data.data.is_single_route_edit === true;
           const backendEditedRouteIndex = data.data.edited_route_index;
-          
+
           console.log('🔧 Backend indica edición individual:', {
             is_single_route_edit: backendIndicaSingleEdit,
             edited_route_index: backendEditedRouteIndex
           });
-          
+
           // 🆕 Detectar si el mensaje menciona una ruta específica para editar
           const mentionedRouteIndex = detectRouteFromMessage(messageText);
           if (mentionedRouteIndex !== null) {
             console.log(`🎯 Usuario mencionó Ruta ${mentionedRouteIndex + 1} - seleccionando automáticamente`);
             setSelectedRouteIndex(mentionedRouteIndex);
           }
-          
+
           // 🆕 Si el backend ya procesó una edición de ruta individual, usar directamente los datos
           if (backendIndicaSingleEdit && routesArray.length > 1) {
             console.log('✅ Backend ya procesó edición individual - usando datos directamente');
@@ -1463,31 +1463,31 @@ Producto: ${selectedProduct.nombre}`;
             })));
             return; // No continuar con la lógica normal
           }
-          
+
           setQuoteData(prev => {
             console.log('📝 Dentro de setQuoteData - routesArray:', routesArray.length, 'elementos');
             console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
             console.log('📍 mentionedRouteIndex detectado:', mentionedRouteIndex);
-            
+
             // 🆕 Determinar qué índice de ruta usar para edición
             const editingRouteIndex = mentionedRouteIndex !== null ? mentionedRouteIndex : selectedRouteIndex;
-            
+
             const mensajeLower = messageText.toLowerCase();
-            
+
             // Detectar si menciona "NO incluye tara" o "sin tara"
-            const noIncluyeTara = 
+            const noIncluyeTara =
               mensajeLower.includes('no incluye tara') ||
               mensajeLower.includes('sin tara') ||
               mensajeLower.includes('no incluir tara') ||
               mensajeLower.includes('peso sin tara') ||
               mensajeLower.includes('peso neto') ||
               mensajeLower.includes('tara no incluida');
-            
+
             // 🔴 IMPORTANTE: El backend YA calcula la tara en MCPAssistantService.php
             // Si el backend ya la calculó, viene incluye_tara: true en los datos
             // NO debemos calcularla de nuevo en el frontend
             const backendYaAgregoTara = routesArray.some(route => route.incluye_tara === true);
-            
+
             // Solo agregar tara en frontend si:
             // 1. Se menciona explícitamente en el mensaje
             // 2. NO dice que NO incluye
@@ -1511,24 +1511,24 @@ Producto: ${selectedProduct.nombre}`;
               mensajeLower.includes('peso con tara') ||
               mensajeLower.includes('tara sumada')
             );
-            
+
             console.log('🔍 Detección de TARA:', { mencionaTara, noIncluyeTara, backendYaAgregoTara, mensaje: mensajeLower.substring(0, 100) });
-            
+
             const TARA_KG = 3400;
-            
+
             // 🆕 Si hay una ruta seleccionada para edición y solo viene 1 ruta en los datos,
             // aplicar los cambios SOLO a esa ruta, manteniendo las demás intactas
             const prevArray = Array.isArray(prev) ? prev : (prev ? [prev] : []);
             const hasExistingRoutes = prevArray.length > 0;
             const isEditingSingleRoute = editingRouteIndex !== null && routesArray.length === 1 && hasExistingRoutes;
-            
+
             console.log('🔧 Modo de edición:', {
               isEditingSingleRoute,
               editingRouteIndex,
               prevRoutesCount: prevArray.length,
               newRoutesCount: routesArray.length
             });
-            
+
             if (isEditingSingleRoute && editingRouteIndex < prevArray.length) {
               // 🆕 EDICIÓN DE RUTA INDIVIDUAL - Fusionar cambios solo en la ruta seleccionada
               const editedRoute = routesArray[0];
@@ -1538,13 +1538,13 @@ Producto: ${selectedProduct.nombre}`;
                   const pesoBase = editedRoute.peso_kg ?? existingRoute.pesoMercancia ?? 0;
                   // Solo calcular tara en frontend si el backend no la calculó ya
                   const backendYaTieneTara = editedRoute.incluye_tara === true;
-                  const pesoFinal = (mencionaTara && pesoBase > 0 && !backendYaTieneTara) 
-                    ? parseFloat(pesoBase) + TARA_KG 
+                  const pesoFinal = (mencionaTara && pesoBase > 0 && !backendYaTieneTara)
+                    ? parseFloat(pesoBase) + TARA_KG
                     : pesoBase;
-                  
+
                   // Determinar si incluye tara
                   const incluyeTara = backendYaTieneTara || (mencionaTara && pesoBase > 0);
-                  
+
                   const mergedRoute = {
                     ...existingRoute,
                     // Solo sobrescribir si el valor viene definido (no undefined)
@@ -1556,13 +1556,13 @@ Producto: ${selectedProduct.nombre}`;
                     ...(editedRoute.vehiculo !== undefined && { claseVehiculo: editedRoute.vehiculo }),
                     ...(editedRoute.empaque !== undefined && { empaque: editedRoute.empaque }),
                     ...(editedRoute.empaque_id !== undefined && { empaque_id: editedRoute.empaque_id }),
-                    ...(editedRoute.producto !== undefined && { 
+                    ...(editedRoute.producto !== undefined && {
                       producto: editedRoute.producto,
                       tipo_producto: editedRoute.producto
                     }),
                     incluye_tara: incluyeTara || existingRoute.incluye_tara || false,
                   };
-                  
+
                   console.log(`✏️ Ruta ${idx + 1} EDITADA - Campos actualizados:`, {
                     origen: editedRoute.origen !== undefined,
                     destino: editedRoute.destino !== undefined,
@@ -1576,9 +1576,9 @@ Producto: ${selectedProduct.nombre}`;
                 // Rutas no editadas permanecen igual
                 return existingRoute;
               });
-              
+
               console.log(`📊 Rutas actualizadas (1 editada, ${updatedRoutes.length - 1} sin cambios):`, updatedRoutes);
-              
+
               // Notificar al usuario
               if (onUpdateMessages) {
                 setTimeout(() => {
@@ -1592,17 +1592,17 @@ Producto: ${selectedProduct.nombre}`;
                   ]);
                 }, 300);
               }
-              
+
               return updatedRoutes;
             }
-            
+
             // 🆕 MODO NORMAL - Procesar CADA ruta del array
             // 🔴 IMPORTANTE: Si vienen múltiples rutas NUEVAS (ej: "crea dos rutas..."),
             // REEMPLAZAR las existentes en lugar de fusionar
             // Solo fusionar si es una corrección de ruta individual
-            
+
             // Detectar si es una solicitud de NUEVAS rutas (menciona "crea", "nueva", "dos rutas", etc.)
-            const esNuevasSolicitud = 
+            const esNuevasSolicitud =
               mensajeLower.includes('crea') ||
               mensajeLower.includes('nueva') ||
               mensajeLower.includes('dos rutas') ||
@@ -1611,23 +1611,23 @@ Producto: ${selectedProduct.nombre}`;
               mensajeLower.includes('3 rutas') ||
               mensajeLower.includes('la primera') ||
               (routesArray.length >= 2 && prevArray.length === 0);
-            
+
             // Si es una nueva solicitud con múltiples rutas, NO fusionar con las anteriores
             const shouldReplace = esNuevasSolicitud && routesArray.length >= 2;
-            
+
             console.log('🔍 Modo de procesamiento:', {
               esNuevasSolicitud,
               shouldReplace,
               routesArrayLength: routesArray.length,
               prevArrayLength: prevArray.length
             });
-            
+
             const processedRoutes = routesArray.map((routeData, idx) => {
               const pesoBase = routeData.peso_kg || 0;
-              const pesoFinal = (mencionaTara && pesoBase > 0) 
-                ? parseFloat(pesoBase) + TARA_KG 
+              const pesoFinal = (mencionaTara && pesoBase > 0)
+                ? parseFloat(pesoBase) + TARA_KG
                 : pesoBase;
-              
+
               // Si es la primera ruta con tara, mostrar mensaje
               if (idx === 0 && mencionaTara && pesoBase > 0 && onUpdateMessages) {
                 console.log(`🏋️ TARA DETECTADA - Sumando ${TARA_KG} kg al peso base ${pesoBase} kg`);
@@ -1642,13 +1642,13 @@ Producto: ${selectedProduct.nombre}`;
                   ]);
                 }, 500);
               }
-              
+
               // 🔴 Solo fusionar con existentes si NO es nueva solicitud
               const existingRoute = shouldReplace ? {} : (prevArray[idx] || {});
-              
+
               // Determinar si incluye tara (ya sea del backend o calculada aquí)
               const incluyeTara = routeData.incluye_tara === true || (mencionaTara && pesoBase > 0);
-              
+
               return {
                 // Mantener datos existentes como base (solo si NO es reemplazo)
                 ...existingRoute,
@@ -1669,18 +1669,18 @@ Producto: ${selectedProduct.nombre}`;
                 incluye_tara: incluyeTara || existingRoute.incluye_tara || false,
               };
             });
-            
+
             console.log(`📊 ${processedRoutes.length} ruta(s) procesadas (${shouldReplace ? 'REEMPLAZO' : 'fusionadas'}):`, processedRoutes);
-            
+
             // 🆕 SIEMPRE devolver array para consistencia con QuoteDetailsPanel
             return processedRoutes;
           });
 
           // NUEVO: Auto-seleccionar empaque del PRIMER elemento si viene con ID de la BD
-          const firstExtracted = Array.isArray(data.data.extracted_data) 
-            ? data.data.extracted_data[0] 
+          const firstExtracted = Array.isArray(data.data.extracted_data)
+            ? data.data.extracted_data[0]
             : data.data.extracted_data;
-            
+
           if (firstExtracted?.empaque && firstExtracted?.empaque_id) {
             const empaqueObj = {
               id: firstExtracted.empaque_id,
@@ -1814,13 +1814,13 @@ Producto: ${selectedProduct.nombre}`;
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      
+
       // Validación estricta ANTES de intentar enviar
       if (isSending || sendingRef.current || currentRunId || processingMessage) {
         console.log('⚠️ Enter bloqueado: hay procesamiento activo');
         return; // Bloquear completamente si hay procesamiento
       }
-      
+
       // Solo permitir envío si no hay procesamiento activo
       if (clientData.clientId && inputMessage.trim()) {
         handleSendMessage();
@@ -1832,37 +1832,37 @@ Producto: ${selectedProduct.nombre}`;
     setInputMessage(transcript);
   };
 
-    const handleCreateQuote = async () => {
+  const handleCreateQuote = async () => {
     // 🔒 PROTECCIÓN TRIPLE contra doble click
     if (isSavingQuote.current || isCreatingQuote) {
       console.warn('⚠️ Ya se está guardando la cotización, ignorando click duplicado...');
       return;
     }
-    
+
     // 🆕 Convertir a array si es objeto único
     const routesArray = Array.isArray(quoteData) ? quoteData : (quoteData ? [quoteData] : []);
-    
+
     console.log('🔍 DEBUG handleCreateQuote - Estado inicial:', {
       quoteDataType: Array.isArray(quoteData) ? 'array' : typeof quoteData,
       quoteDataLength: Array.isArray(quoteData) ? quoteData.length : 1,
       routesArrayLength: routesArray.length,
       quoteData: JSON.stringify(quoteData, null, 2)
     });
-    
+
     if (routesArray.length === 0) {
       alert('⚠️ No hay datos de cotización. Por favor completa la información en el chat.');
       return;
     }
-    
+
     // Marcar como guardando (doble bloqueo)
     isSavingQuote.current = true;
     setIsCreatingQuote(true);
     console.log('🔒 Guardado iniciado - bloqueando doble click');
-    
+
     // Validar que al menos la primera ruta tenga datos básicos
     const firstRoute = routesArray[0];
     const missingFields = [];
-    
+
     if (!firstRoute.ciudadOrigen && !firstRoute.ciudad_origen && !firstRoute.origen) {
       missingFields.push('Ciudad de origen');
     }
@@ -1872,12 +1872,12 @@ Producto: ${selectedProduct.nombre}`;
     if (!firstRoute.pesoMercancia && !firstRoute.peso_mercancia && !firstRoute.peso_kg) {
       missingFields.push('Peso de mercancía');
     }
-    
+
     // Validar producto (puede venir de selectedProduct o de la ruta)
     if (!selectedProduct && !firstRoute.producto && !firstRoute.tipo_producto) {
       missingFields.push('Producto');
     }
-    
+
     // Si faltan datos, mostrar mensaje específico y desbloquear
     if (missingFields.length > 0) {
       isSavingQuote.current = false;
@@ -1885,7 +1885,7 @@ Producto: ${selectedProduct.nombre}`;
       alert(`⚠️ FALTAN DATOS REQUERIDOS:\n\n${missingFields.map(f => `• ${f}`).join('\n')}\n\nPor favor completa la información en el chat.`);
       return;
     }
-    
+
     if (!clientData.groupId) {
       isSavingQuote.current = false;
       setIsCreatingQuote(false);
@@ -1907,16 +1907,16 @@ Producto: ${selectedProduct.nombre}`;
     // Función para recomendar vehículo basado en peso
     const recommendVehicle = (weight) => {
       if (!weight || weight <= 0) return 'Sencillo';
-      
+
       const sortedVehicles = Object.entries(vehicleCapacities)
         .sort((a, b) => a[1] - b[1]);
-      
+
       for (const [vehicle, capacity] of sortedVehicles) {
         if (weight <= capacity) {
           return vehicle;
         }
       }
-      
+
       return 'TRACTOMULA 3';
     };
 
@@ -1924,7 +1924,7 @@ Producto: ${selectedProduct.nombre}`;
     const routesToSave = routesArray.map((route, idx) => {
       const pesoMercancia = route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0;
       const vehiculoRecomendado = route.claseVehiculo || route.vehiculo || recommendVehicle(pesoMercancia);
-      
+
       return {
         ciudad_origen: route.ciudadOrigen || route.ciudad_origen || route.origen,
         ciudad_destino: route.ciudadDestino || route.ciudad_destino || route.destino,
@@ -1945,7 +1945,7 @@ Producto: ${selectedProduct.nombre}`;
       selectedProduct,
       selectedEmpaque
     });
-    
+
     // 🔍 DEBUG: Verificar si hay duplicados en routesToSave
     const routeSignatures = routesToSave.map(r => `${r.ciudad_origen}-${r.ciudad_destino}-${r.peso_mercancia}`);
     const uniqueSignatures = [...new Set(routeSignatures)];
@@ -1982,12 +1982,12 @@ Producto: ${selectedProduct.nombre}`;
 
       if (saveResult.success) {
         console.log('✅ Cotización guardada exitosamente:', saveResult.data);
-        
+
         // Actualizar quoteData con los IDs retornados
         if (saveResult.data?.routes && saveResult.data.routes.length > 0) {
           if (Array.isArray(quoteData)) {
             // Si es array, actualizar cada elemento con su ID correspondiente
-            setQuoteData(prev => 
+            setQuoteData(prev =>
               prev.map((route, idx) => ({
                 ...route,
                 id: saveResult.data.routes[idx]?.id || route.id
@@ -2006,7 +2006,7 @@ Producto: ${selectedProduct.nombre}`;
         // Cerrar modal actual y avanzar al siguiente paso (EditRoutesModal)
         console.log('🔄 Avanzando al siguiente paso del flujo...');
         console.log('onNext disponible:', typeof onNext);
-        
+
         if (onNext) {
           console.log('✅ Ejecutando onNext para abrir EditRoutesModal');
           onNext();
@@ -2028,22 +2028,22 @@ Producto: ${selectedProduct.nombre}`;
     }
   };
 
-  const canProceed = quoteData && quoteData.length > 0 && 
-                   quoteData.some(route => route.ciudad_origen && route.ciudad_destino);
+  const canProceed = quoteData && quoteData.length > 0 &&
+    quoteData.some(route => route.ciudad_origen && route.ciudad_destino);
 
   // Función para formatear mensajes de tool calls
   const formatToolCallMessage = (text) => {
     try {
       const data = JSON.parse(text);
-      
+
       console.log('🔍 Parseando tool call:', { function: data.function, hasResult: !!data.result, data });
-      
+
       // Si es una llamada a search_products con resultados (soportar múltiples variantes del nombre)
       const isSearchProducts = data.function && (
-        data.function.toLowerCase().includes('searchproduct') || 
+        data.function.toLowerCase().includes('searchproduct') ||
         data.function === 'search_products'
       );
-      
+
       if (isSearchProducts && data.result?.productos && Array.isArray(data.result.productos)) {
         const productos = data.result.productos;
         console.log('✅ Mostrando productos:', productos.length, productos);
@@ -2059,13 +2059,12 @@ Producto: ${selectedProduct.nombre}`;
                 {productos.map((producto, idx) => {
                   const isSelected = selectedProduct?.codigo === producto.codigo;
                   return (
-                    <div 
-                      key={idx} 
-                      className={`border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm ${
-                        isSelected 
-                          ? 'bg-orange-100 border-orange-500 shadow-md' 
+                    <div
+                      key={idx}
+                      className={`border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm ${isSelected
+                          ? 'bg-orange-100 border-orange-500 shadow-md'
                           : 'bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400'
-                      }`}
+                        }`}
                       onClick={() => {
                         setSelectedProduct(producto);
                         // Actualizar quoteData automáticamente
@@ -2077,14 +2076,13 @@ Producto: ${selectedProduct.nombre}`;
                       }}
                     >
                       <div className="flex items-start gap-3">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
-                          isSelected
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${isSelected
                             ? 'border-orange-600 bg-orange-600'
                             : 'border-orange-400'
-                        }`}>
+                          }`}>
                           {isSelected && (
                             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                             </svg>
                           )}
                         </div>
@@ -2112,7 +2110,7 @@ Producto: ${selectedProduct.nombre}`;
           )
         };
       }
-      
+
       // Si es una llamada a get_empaques con resultados
       if (data.function === 'get_empaques' && data.result?.success && data.result?.empaques) {
         const empaques = data.result.empaques;
@@ -2130,13 +2128,12 @@ Producto: ${selectedProduct.nombre}`;
                   const nombre = empaque.nome || empaque.nombre;
                   const isSelected = selectedEmpaque?.id === empaque.id;
                   return (
-                    <div 
-                      key={idx} 
-                      className={`border-2 rounded-lg p-3 transition-all text-center cursor-pointer shadow-sm ${
-                        isSelected
+                    <div
+                      key={idx}
+                      className={`border-2 rounded-lg p-3 transition-all text-center cursor-pointer shadow-sm ${isSelected
                           ? 'bg-blue-100 border-blue-500 shadow-md'
                           : 'bg-blue-50 border-blue-300 hover:bg-blue-100 hover:border-blue-400'
-                      }`}
+                        }`}
                       onClick={() => {
                         setSelectedEmpaque(empaque);
                         // Actualizar quoteData automáticamente
@@ -2148,14 +2145,13 @@ Producto: ${selectedProduct.nombre}`;
                       }}
                     >
                       <div className="flex flex-col items-center gap-1">
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                          isSelected
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected
                             ? 'border-blue-600 bg-blue-600'
                             : 'border-blue-400'
-                        }`}>
+                          }`}>
                           {isSelected && (
                             <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                             </svg>
                           )}
                         </div>
@@ -2179,11 +2175,11 @@ Producto: ${selectedProduct.nombre}`;
           )
         };
       }
-      
+
       // Si es create_cotizacion con resultado exitoso
       if (data.function === 'create_cotizacion' && data.result) {
         console.log('✅ Cotización creada:', data.result);
-        
+
         // Actualizar quoteData con los resultados
         if (setQuoteData && data.result.cotizacion) {
           const cotizacion = data.result.cotizacion;
@@ -2200,7 +2196,7 @@ Producto: ${selectedProduct.nombre}`;
             tiempo_estimado: cotizacion.tiempo_estimado
           }] : prev);
         }
-        
+
         return {
           isToolCall: true,
           type: 'cotizacion_creada',
@@ -2209,7 +2205,7 @@ Producto: ${selectedProduct.nombre}`;
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center">
                   <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
                 </div>
                 <div>
@@ -2217,7 +2213,7 @@ Producto: ${selectedProduct.nombre}`;
                   <div className="text-sm text-green-700">ID: {data.result.cotizacion_id}</div>
                 </div>
               </div>
-              
+
               {data.result.cotizacion && (
                 <div className="space-y-2 bg-white rounded-lg p-4 border border-green-200">
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -2260,7 +2256,7 @@ Producto: ${selectedProduct.nombre}`;
                   </div>
                 </div>
               )}
-              
+
               {data.result.message && (
                 <div className="mt-3 text-sm text-green-700 font-medium">
                   ℹ️ {data.result.message}
@@ -2270,7 +2266,7 @@ Producto: ${selectedProduct.nombre}`;
           )
         };
       }
-      
+
       // Si es un error de herramienta
       if (data.result?.error) {
         return {
@@ -2285,55 +2281,55 @@ Producto: ${selectedProduct.nombre}`;
           )
         };
       }
-      
+
       // Fallback: Si tiene función y resultado pero no coincide con ningún formato conocido
       if (data.function && data.result) {
         console.warn('⚠️ Tool call no reconocido:', data);
       }
-      
+
     } catch (e) {
       // No es JSON válido, retornar null para mostrar texto normal
       return null;
     }
-    
+
     return null;
   };
 
   // Función helper para formatear timestamps de manera segura
   const formatMessageTime = (timestamp) => {
     if (!timestamp) {
-      return new Date().toLocaleTimeString('es-CO', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
+      return new Date().toLocaleTimeString('es-CO', {
+        hour: '2-digit',
+        minute: '2-digit'
       });
     }
-    
+
     try {
       // Si ya es una hora formateada (HH:MM:SS o HH:MM), devolverla
       if (typeof timestamp === 'string' && /^\d{1,2}:\d{2}/.test(timestamp)) {
         return timestamp;
       }
-      
+
       // Intentar parsear como fecha
       const date = new Date(timestamp);
-      
+
       // Verificar si es fecha válida
       if (isNaN(date.getTime())) {
-        return new Date().toLocaleTimeString('es-CO', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
+        return new Date().toLocaleTimeString('es-CO', {
+          hour: '2-digit',
+          minute: '2-digit'
         });
       }
-      
-      return date.toLocaleTimeString('es-CO', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
+
+      return date.toLocaleTimeString('es-CO', {
+        hour: '2-digit',
+        minute: '2-digit'
       });
     } catch (error) {
       console.warn('Error formateando timestamp:', timestamp, error);
-      return new Date().toLocaleTimeString('es-CO', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
+      return new Date().toLocaleTimeString('es-CO', {
+        hour: '2-digit',
+        minute: '2-digit'
       });
     }
   };
@@ -2355,7 +2351,7 @@ Producto: ${selectedProduct.nombre}`;
         created_at: formatMessageTime(msg.created_at)
       };
     });
-  }, [messages]);                
+  }, [messages]);
 
   return (
     <Modal onClose={onClose} size="extra-large">
@@ -2400,9 +2396,9 @@ Producto: ${selectedProduct.nombre}`;
                 <h3 className="text-lg font-600 text-gray-700 product-sans mb-1">
                   {clientData.clientName || clientData.search || 'Nueva Cotización'}
                 </h3>
-                
-              
-                
+
+
+
                 <div className="space-y-1">
                   {clientData.clientId ? (
                     <>
@@ -2438,9 +2434,9 @@ Producto: ${selectedProduct.nombre}`;
                   )}
                 </div>
                 <p className="text-xs text-gray-400 product-sans mt-1">
-                  {new Date().toLocaleDateString('es-ES', { 
-                    year: 'numeric', 
-                    month: 'long', 
+                  {new Date().toLocaleDateString('es-ES', {
+                    year: 'numeric',
+                    month: 'long',
                     day: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
@@ -2473,10 +2469,9 @@ Producto: ${selectedProduct.nombre}`;
               </h4>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
-              <div 
-                className={`h-2 rounded-full transition-all duration-500 ${
-                  currentRunId ? 'bg-orange-400 animate-pulse' : 'bg-orange-400'
-                }`}
+              <div
+                className={`h-2 rounded-full transition-all duration-500 ${currentRunId ? 'bg-orange-400 animate-pulse' : 'bg-orange-400'
+                  }`}
                 style={{ width: `${quoteData.length > 0 ? '70' : currentRunId ? '50' : '30'}%` }}
               ></div>
             </div>
@@ -2493,255 +2488,219 @@ Producto: ${selectedProduct.nombre}`;
 
           {/* Panel de Progreso de Cotización - OCULTO */}
           {false && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="bg-gradient-to-r from-green-50 to-blue-50 px-6 py-4 border-b border-gray-200">
-              <h4 className="text-base font-600 text-gray-700 product-sans">📋 Información de la Cotización</h4>
-            </div>
-            <div className="p-6 space-y-2">
-              {/* 1. Origen */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.ciudadOrigen 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.ciudadOrigen ? 'bg-green-500' : 'bg-gray-300'
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="bg-gradient-to-r from-green-50 to-blue-50 px-6 py-4 border-b border-gray-200">
+                <h4 className="text-base font-600 text-gray-700 product-sans">📋 Información de la Cotización</h4>
+              </div>
+              <div className="p-6 space-y-2">
+                {/* 1. Origen */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.ciudadOrigen
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.ciudadOrigen ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">1</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Origen</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.ciudadOrigen || 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.ciudadOrigen ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.ciudadOrigen ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">1</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Origen</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.ciudadOrigen || 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 2. Destino */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.ciudadDestino 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.ciudadDestino ? 'bg-green-500' : 'bg-gray-300'
+                {/* 2. Destino */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.ciudadDestino
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.ciudadDestino ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">2</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Destino</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.ciudadDestino || 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.ciudadDestino ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.ciudadDestino ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">2</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Destino</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.ciudadDestino || 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 3. Peso */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.pesoMercancia 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.pesoMercancia ? 'bg-green-500' : 'bg-gray-300'
+                {/* 3. Peso */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.pesoMercancia
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.pesoMercancia ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">3</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Peso</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.pesoMercancia ? `${quoteData.pesoMercancia} kg` : 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.pesoMercancia ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.pesoMercancia ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">3</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Peso</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.pesoMercancia ? `${quoteData.pesoMercancia} kg` : 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 4. Cantidad */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.cantidadMercancia 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.cantidadMercancia ? 'bg-green-500' : 'bg-gray-300'
+                {/* 4. Cantidad */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.cantidadMercancia
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.cantidadMercancia ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">4</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Cantidad</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.cantidadMercancia ? `${quoteData.cantidadMercancia} unidades` : 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.cantidadMercancia ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.cantidadMercancia ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">4</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Cantidad</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.cantidadMercancia ? `${quoteData.cantidadMercancia} unidades` : 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 5. Embalaje */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                selectedEmpaque 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    selectedEmpaque ? 'bg-green-500' : 'bg-gray-300'
+                {/* 5. Embalaje */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${selectedEmpaque
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {selectedEmpaque ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">5</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Embalaje</div>
-                    <div className="text-xs text-gray-500">
-                      {selectedEmpaque ? (selectedEmpaque.nome || selectedEmpaque.nombre) : 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${selectedEmpaque ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {selectedEmpaque ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">5</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Embalaje</div>
+                      <div className="text-xs text-gray-500">
+                        {selectedEmpaque ? (selectedEmpaque.nome || selectedEmpaque.nombre) : 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 6. Producto */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                selectedProduct 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    selectedProduct ? 'bg-green-500' : 'bg-gray-300'
+                {/* 6. Producto */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${selectedProduct
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {selectedProduct ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">6</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Producto</div>
-                    <div className="text-xs text-gray-500">
-                      {selectedProduct ? selectedProduct.nombre : 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${selectedProduct ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {selectedProduct ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">6</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Producto</div>
+                      <div className="text-xs text-gray-500">
+                        {selectedProduct ? selectedProduct.nombre : 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 7. Vehículo */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.claseVehiculo || quoteData?.vehiculoRequerido 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? 'bg-green-500' : 'bg-gray-300'
+                {/* 7. Vehículo */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.claseVehiculo || quoteData?.vehiculoRequerido
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">7</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Vehículo</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido || 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">7</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Vehículo</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.claseVehiculo || quoteData?.vehiculoRequerido || 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 8. Valor */}
-              <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                quoteData?.valorMercancia 
-                  ? 'bg-green-50 border-green-300' 
-                  : 'bg-gray-50 border-gray-200'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                    quoteData?.valorMercancia ? 'bg-green-500' : 'bg-gray-300'
+                {/* 8. Valor */}
+                <div className={`flex items-center justify-between p-2 rounded-lg border transition-all ${quoteData?.valorMercancia
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-gray-50 border-gray-200'
                   }`}>
-                    {quoteData?.valorMercancia ? (
-                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                      </svg>
-                    ) : (
-                      <span className="text-xs text-white">8</span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-600 text-gray-700">Valor</div>
-                    <div className="text-xs text-gray-500">
-                      {quoteData?.valorMercancia ? `$${parseInt(quoteData.valorMercancia).toLocaleString('es-CO')}` : 'Esperando...'}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${quoteData?.valorMercancia ? 'bg-green-500' : 'bg-gray-300'
+                      }`}>
+                      {quoteData?.valorMercancia ? (
+                        <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span className="text-xs text-white">8</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-600 text-gray-700">Valor</div>
+                      <div className="text-xs text-gray-500">
+                        {quoteData?.valorMercancia ? `$${parseInt(quoteData.valorMercancia).toLocaleString('es-CO')}` : 'Esperando...'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Resumen */}
-              <div className="pt-3 border-t border-gray-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-600 text-gray-600">
-                    Campos completados
-                  </span>
-                  <span className="text-xs font-700 text-gray-900">
-                    {(() => {
-                      const fields = [
-                        quoteData?.ciudadOrigen,
-                        quoteData?.ciudadDestino,
-                        quoteData?.pesoMercancia,
-                        quoteData?.cantidadMercancia,
-                        selectedEmpaque,
-                        selectedProduct,
-                        quoteData?.claseVehiculo || quoteData?.vehiculoRequerido,
-                        quoteData?.valorMercancia
-                      ];
-                      const completed = fields.filter(f => f).length;
-                      return `${completed}/8`;
-                    })()}
-                  </span>
-                </div>
-                <div className="mt-2 bg-gray-200 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className="bg-gradient-to-r from-green-500 to-blue-500 h-full transition-all duration-500"
-                    style={{ 
-                      width: `${(() => {
+                {/* Resumen */}
+                <div className="pt-3 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-600 text-gray-600">
+                      Campos completados
+                    </span>
+                    <span className="text-xs font-700 text-gray-900">
+                      {(() => {
                         const fields = [
                           quoteData?.ciudadOrigen,
                           quoteData?.ciudadDestino,
@@ -2753,14 +2712,34 @@ Producto: ${selectedProduct.nombre}`;
                           quoteData?.valorMercancia
                         ];
                         const completed = fields.filter(f => f).length;
-                        return Math.round((completed / 8) * 100);
-                      })()}%` 
-                    }}
-                  />
+                        return `${completed}/8`;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="mt-2 bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-green-500 to-blue-500 h-full transition-all duration-500"
+                      style={{
+                        width: `${(() => {
+                          const fields = [
+                            quoteData?.ciudadOrigen,
+                            quoteData?.ciudadDestino,
+                            quoteData?.pesoMercancia,
+                            quoteData?.cantidadMercancia,
+                            selectedEmpaque,
+                            selectedProduct,
+                            quoteData?.claseVehiculo || quoteData?.vehiculoRequerido,
+                            quoteData?.valorMercancia
+                          ];
+                          const completed = fields.filter(f => f).length;
+                          return Math.round((completed / 8) * 100);
+                        })()}%`
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           )}
 
           {/* Panel de Detalles de Cotización - React Component */}
@@ -2778,23 +2757,31 @@ Producto: ${selectedProduct.nombre}`;
               console.log('  - ciudadDestino:', quoteData[0].ciudadDestino);
               console.log('  - pesoMercancia:', quoteData[0].pesoMercancia);
             }
-            
+
             // Construir routesData SIEMPRE con datos disponibles
             let routesData = [];
-            
+
             // Caso 1: quoteData es array (multi-ruta)
             if (Array.isArray(quoteData) && quoteData.length > 0) {
               console.log('CASO 1: quoteData es ARRAY con', quoteData.length, 'rutas');
-              routesData = quoteData.map(route => ({
-                ...route,
-                // Sobrescribir con selectedProduct/selectedEmpaque si existen
-                producto: selectedProduct?.nombre || route.producto || route.tipo_producto,
-                producto_codigo: selectedProduct?.codigo || route.producto_codigo,
-                tipo_producto: selectedProduct?.nombre || route.tipo_producto || route.producto,
-                empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || route.empaque || route.tipo_embalaje,
-                tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || route.tipo_embalaje || route.empaque
-              }));
-            } 
+              routesData = quoteData.map((route, index) => {
+                // 🆕 IMPORTANTE: Respetar el producto específico de cada ruta
+                // Solo usar selectedProduct como fallback si la ruta NO tiene producto definido
+                const routeHasProduct = route.producto || route.tipo_producto || route.producto_nombre;
+                const routeHasEmpaque = route.empaque || route.tipo_embalaje;
+
+                return {
+                  ...route,
+                  // Priorizar el producto de la ruta sobre selectedProduct global
+                  producto: route.producto || route.tipo_producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+                  producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
+                  tipo_producto: route.tipo_producto || route.producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+                  // Priorizar el empaque de la ruta sobre selectedEmpaque global
+                  empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
+                  tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
+                };
+              });
+            }
             // Caso 2: quoteData es objeto con datos
             else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
               routesData = [{
@@ -2816,7 +2803,7 @@ Producto: ${selectedProduct.nombre}`;
                 tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
               }];
             }
-            
+
             console.log('🎯 Datos pasados a QuoteDetailsPanel:', {
               quoteDataOriginal: quoteData,
               selectedProduct,
@@ -2826,9 +2813,9 @@ Producto: ${selectedProduct.nombre}`;
               hasAllRequiredData,
               selectedRouteIndex
             });
-            
+
             return (
-              <QuoteDetailsPanel 
+              <QuoteDetailsPanel
                 routes={routesData}
                 selectedProduct={selectedProduct}
                 selectedEmpaque={selectedEmpaque}
@@ -2844,293 +2831,291 @@ Producto: ${selectedProduct.nombre}`;
 
           {/* ELIMINADO: Panel antiguo Livewire/Detalles editables que causaba errores */}
           {false && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="bg-gray-100 px-6 py-4 border-b border-gray-200">
-              <h4 className="text-base font-600 text-gray-600 product-sans">Detalles de la Cotización</h4>
-            </div>
-            <div className="max-h-[500px] overflow-y-auto scrollbar-thin">
-              {/* Mostrar productos disponibles para selección SI existen */}
-              {(() => {
-                // Buscar si hay productos en los mensajes
-                const productosMessage = messages.find(msg => 
-                  msg.content?.props?.type === 'productos' && 
-                  msg.content?.props?.content?.props?.children?.[1]?.props?.children
-                );
-                
-                const productos = productosMessage?.content?.props?.content?.props?.children?.[1]?.props?.children;
-                
-                if (productos && Array.isArray(productos)) {
-                  const totalProductos = productos.length;
-                  return (
-                    <div className="p-6 space-y-4">
-                      <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
-                        <h5 className="font-600 text-orange-900 mb-2 product-sans flex items-center justify-between">
-                          <span className="flex items-center gap-2">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                            </svg>
-                            Productos Disponibles
-                          </span>
-                          <span className="bg-orange-200 text-orange-900 px-2.5 py-1 rounded-full text-xs font-700">
-                            {totalProductos} {totalProductos === 1 ? 'variación' : 'variaciones'}
-                          </span>
-                        </h5>
-                        {!selectedProduct && (
-                          <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-2.5 mb-3">
-                            <p className="text-xs text-yellow-900 font-600 product-sans flex items-center gap-1.5">
-                              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="bg-gray-100 px-6 py-4 border-b border-gray-200">
+                <h4 className="text-base font-600 text-gray-600 product-sans">Detalles de la Cotización</h4>
+              </div>
+              <div className="max-h-[500px] overflow-y-auto scrollbar-thin">
+                {/* Mostrar productos disponibles para selección SI existen */}
+                {(() => {
+                  // Buscar si hay productos en los mensajes
+                  const productosMessage = messages.find(msg =>
+                    msg.content?.props?.type === 'productos' &&
+                    msg.content?.props?.content?.props?.children?.[1]?.props?.children
+                  );
+
+                  const productos = productosMessage?.content?.props?.content?.props?.children?.[1]?.props?.children;
+
+                  if (productos && Array.isArray(productos)) {
+                    const totalProductos = productos.length;
+                    return (
+                      <div className="p-6 space-y-4">
+                        <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                          <h5 className="font-600 text-orange-900 mb-2 product-sans flex items-center justify-between">
+                            <span className="flex items-center gap-2">
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                               </svg>
-                              ⚠️ REQUERIDO: Debes seleccionar un producto antes de crear la cotización
-                            </p>
-                          </div>
-                        )}
-                        <p className="text-sm text-gray-700 product-sans mb-3">
-                          {totalProductos > 1 
-                            ? `Hay ${totalProductos} variaciones disponibles. Selecciona la que mejor describa tu mercancía:` 
-                            : 'Confirma que este producto corresponde a tu mercancía:'
-                          }
-                        </p>
-                        <div className="space-y-2 max-h-60 overflow-y-auto">
-                          {productos.map((productoEl, idx) => {
-                            if (!productoEl?.props) return null;
-                            const producto = productoEl.props;
-                            const productoData = {
-                              nombre: producto.children?.[1]?.props?.children?.[0]?.props?.children,
-                              codigo: producto.children?.[1]?.props?.children?.[1]?.props?.children?.[1]?.props?.children
-                            };
-                            const isSelected = selectedProduct?.codigo === productoData.codigo;
-                            
-                            return (
-                              <div 
-                                key={idx}
-                                className={`border-2 rounded-lg p-3 transition-all cursor-pointer ${
-                                  isSelected 
-                                    ? 'bg-orange-100 border-orange-500' 
-                                    : 'bg-white border-gray-300 hover:border-orange-400'
-                                }`}
-                                onClick={() => {
-                                  setSelectedProduct(productoData);
-                                  setQuoteData(prev => ({
-                                    ...prev,
-                                    producto: productoData.nombre,
-                                    codigoProducto: productoData.codigo
-                                  }));
-                                }}
-                              >
-                                <div className="flex items-start gap-2">
-                                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                                    isSelected ? 'border-orange-600 bg-orange-600' : 'border-gray-400'
-                                  }`}>
-                                    {isSelected && (
-                                      <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                                      </svg>
-                                    )}
-                                  </div>
-                                  <div className="flex-1">
-                                    <div className="font-600 text-sm text-gray-900 product-sans">
-                                      {productoData.nombre}
+                              Productos Disponibles
+                            </span>
+                            <span className="bg-orange-200 text-orange-900 px-2.5 py-1 rounded-full text-xs font-700">
+                              {totalProductos} {totalProductos === 1 ? 'variación' : 'variaciones'}
+                            </span>
+                          </h5>
+                          {!selectedProduct && (
+                            <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-2.5 mb-3">
+                              <p className="text-xs text-yellow-900 font-600 product-sans flex items-center gap-1.5">
+                                <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </svg>
+                                ⚠️ REQUERIDO: Debes seleccionar un producto antes de crear la cotización
+                              </p>
+                            </div>
+                          )}
+                          <p className="text-sm text-gray-700 product-sans mb-3">
+                            {totalProductos > 1
+                              ? `Hay ${totalProductos} variaciones disponibles. Selecciona la que mejor describa tu mercancía:`
+                              : 'Confirma que este producto corresponde a tu mercancía:'
+                            }
+                          </p>
+                          <div className="space-y-2 max-h-60 overflow-y-auto">
+                            {productos.map((productoEl, idx) => {
+                              if (!productoEl?.props) return null;
+                              const producto = productoEl.props;
+                              const productoData = {
+                                nombre: producto.children?.[1]?.props?.children?.[0]?.props?.children,
+                                codigo: producto.children?.[1]?.props?.children?.[1]?.props?.children?.[1]?.props?.children
+                              };
+                              const isSelected = selectedProduct?.codigo === productoData.codigo;
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`border-2 rounded-lg p-3 transition-all cursor-pointer ${isSelected
+                                      ? 'bg-orange-100 border-orange-500'
+                                      : 'bg-white border-gray-300 hover:border-orange-400'
+                                    }`}
+                                  onClick={() => {
+                                    setSelectedProduct(productoData);
+                                    setQuoteData(prev => ({
+                                      ...prev,
+                                      producto: productoData.nombre,
+                                      codigoProducto: productoData.codigo
+                                    }));
+                                  }}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected ? 'border-orange-600 bg-orange-600' : 'border-gray-400'
+                                      }`}>
+                                      {isSelected && (
+                                        <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                      )}
                                     </div>
-                                    <div className="text-xs text-gray-600 mt-0.5 product-sans">
-                                      Código: {productoData.codigo}
+                                    <div className="flex-1">
+                                      <div className="font-600 text-sm text-gray-900 product-sans">
+                                        {productoData.nombre}
+                                      </div>
+                                      <div className="text-xs text-gray-600 mt-0.5 product-sans">
+                                        Código: {productoData.codigo}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {selectedProduct && (
-                          <div className="mt-3 bg-green-50 border-2 border-green-400 rounded-lg p-3 shadow-sm">
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
-                                <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                                </svg>
-                              </div>
-                              <div className="flex-1">
-                                <div className="text-xs text-green-700 font-600 product-sans">PRODUCTO SELECCIONADO</div>
-                                <div className="text-sm text-green-900 font-700 product-sans mt-0.5">{selectedProduct.nombre}</div>
-                                <div className="text-xs text-green-700 product-sans mt-0.5">Código: {selectedProduct.codigo}</div>
+                              );
+                            })}
+                          </div>
+                          {selectedProduct && (
+                            <div className="mt-3 bg-green-50 border-2 border-green-400 rounded-lg p-3 shadow-sm">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                  <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                  </svg>
+                                </div>
+                                <div className="flex-1">
+                                  <div className="text-xs text-green-700 font-600 product-sans">PRODUCTO SELECCIONADO</div>
+                                  <div className="text-sm text-green-900 font-700 product-sans mt-0.5">{selectedProduct.nombre}</div>
+                                  <div className="text-xs text-green-700 product-sans mt-0.5">Código: {selectedProduct.codigo}</div>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
-              })()}
+                    );
+                  }
+                })()}
 
-              {/* Formulario editable con datos extraídos */}
-              {(quoteData?.ciudadOrigen || quoteData?.ciudadDestino || quoteData?.pesoMercancia) ? (
-                <div className="p-6 space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Origen */}
-                    <div>
-                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Origen</label>
-                      <input
-                        type="text"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                        value={quoteData.ciudadOrigen || ''}
-                        onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadOrigen: e.target.value }))}
-                        placeholder="Ciudad origen"
-                      />
-                    </div>
-                    
-                    {/* Destino */}
-                    <div>
-                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Destino</label>
-                      <input
-                        type="text"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                        value={quoteData.ciudadDestino || ''}
-                        onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadDestino: e.target.value }))}
-                        placeholder="Ciudad destino"
-                      />
-                    </div>
-                    
-                    {/* Peso */}
-                    <div>
-                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Peso (kg)</label>
-                      <input
-                        type="number"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                        value={quoteData.pesoMercancia || ''}
-                        onChange={(e) => setQuoteData(prev => ({ ...prev, pesoMercancia: parseInt(e.target.value) || 0 }))}
-                        placeholder="0"
-                      />
-                    </div>
-                    
-                    {/* Cantidad */}
-                    <div>
-                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Cantidad</label>
-                      <input
-                        type="number"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                        value={quoteData.cantidadMercancia || ''}
-                        onChange={(e) => setQuoteData(prev => ({ ...prev, cantidadMercancia: parseInt(e.target.value) || 0 }))}
-                        placeholder="0"
-                      />
-                    </div>
-                    
-                    {/* Valor Declarado */}
-                    <div className="col-span-2">
-                      <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Valor Declarado (COP)</label>
-                      <input
-                        type="number"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                        value={quoteData.valorMercancia || ''}
-                        onChange={(e) => setQuoteData(prev => ({ ...prev, valorMercancia: parseInt(e.target.value) || 0 }))}
-                        placeholder="0"
-                      />
-                    </div>
-                    
-                    {/* Vehículo */}
-                    {quoteData.claseVehiculo && (
-                      <div className="col-span-2">
-                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Vehículo</label>
+                {/* Formulario editable con datos extraídos */}
+                {(quoteData?.ciudadOrigen || quoteData?.ciudadDestino || quoteData?.pesoMercancia) ? (
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Origen */}
+                      <div>
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Origen</label>
                         <input
                           type="text"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                          value={quoteData.claseVehiculo || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, claseVehiculo: e.target.value }))}
-                          placeholder="Tipo de vehículo"
+                          value={quoteData.ciudadOrigen || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadOrigen: e.target.value }))}
+                          placeholder="Ciudad origen"
                         />
                       </div>
-                    )}
-                    
-                    {/* Embalaje seleccionado */}
-                    {selectedEmpaque && (
+
+                      {/* Destino */}
+                      <div>
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Destino</label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={quoteData.ciudadDestino || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadDestino: e.target.value }))}
+                          placeholder="Ciudad destino"
+                        />
+                      </div>
+
+                      {/* Peso */}
+                      <div>
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Peso (kg)</label>
+                        <input
+                          type="number"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={quoteData.pesoMercancia || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, pesoMercancia: parseInt(e.target.value) || 0 }))}
+                          placeholder="0"
+                        />
+                      </div>
+
+                      {/* Cantidad */}
+                      <div>
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Cantidad</label>
+                        <input
+                          type="number"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={quoteData.cantidadMercancia || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, cantidadMercancia: parseInt(e.target.value) || 0 }))}
+                          placeholder="0"
+                        />
+                      </div>
+
+                      {/* Valor Declarado */}
                       <div className="col-span-2">
-                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Embalaje</label>
-                        <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
-                          ✅ {selectedEmpaque.nome || selectedEmpaque.nombre}
+                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Valor Declarado (COP)</label>
+                        <input
+                          type="number"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={quoteData.valorMercancia || ''}
+                          onChange={(e) => setQuoteData(prev => ({ ...prev, valorMercancia: parseInt(e.target.value) || 0 }))}
+                          placeholder="0"
+                        />
+                      </div>
+
+                      {/* Vehículo */}
+                      {quoteData.claseVehiculo && (
+                        <div className="col-span-2">
+                          <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Vehículo</label>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                            value={quoteData.claseVehiculo || ''}
+                            onChange={(e) => setQuoteData(prev => ({ ...prev, claseVehiculo: e.target.value }))}
+                            placeholder="Tipo de vehículo"
+                          />
+                        </div>
+                      )}
+
+                      {/* Embalaje seleccionado */}
+                      {selectedEmpaque && (
+                        <div className="col-span-2">
+                          <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Embalaje</label>
+                          <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
+                            ✅ {selectedEmpaque.nome || selectedEmpaque.nombre}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Producto seleccionado */}
+                      {selectedProduct && (
+                        <div className="col-span-2">
+                          <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Producto</label>
+                          <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
+                            ✅ {selectedProduct.nombre}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : quoteData.length > 0 ? (
+                  quoteData.map((route, index) => (
+                    <div key={index} className={`p-6 ${index > 0 ? 'border-t border-gray-200' : ''}`}>
+                      <div className="flex items-center space-x-2 mb-4">
+                        <span className="bg-gray-200 text-gray-600 text-xs font-600 px-2 py-1 rounded-full product-sans">
+                          Ruta {index + 1}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Origen:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.ciudad_origen || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Destino:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.ciudad_destino || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Peso:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.peso_mercancia || '0'} kg
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Cantidad:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.cantidad || '0'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Tipo de embalaje:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.tipo_embajale || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Tipo producto:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.tipo_producto || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Vehículo requerido:</span>
+                          <span className="text-sm font-600 text-gray-900 product-sans">
+                            {route.vehiculo_requerido || '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                          <span className="text-sm font-500 text-gray-600 product-sans">Valor declarado:</span>
+                          <span className="text-sm font-600 text-green-600 product-sans">
+                            {route.valor_declarado || '-'}
+                          </span>
                         </div>
                       </div>
-                    )}
-                    
-                    {/* Producto seleccionado */}
-                    {selectedProduct && (
-                      <div className="col-span-2">
-                        <label className="block text-xs font-600 text-gray-600 mb-1 product-sans">Producto</label>
-                        <div className="px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-sm font-500 text-green-800 product-sans">
-                          ✅ {selectedProduct.nombre}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : quoteData.length > 0 ? (
-                quoteData.map((route, index) => (
-                  <div key={index} className={`p-6 ${index > 0 ? 'border-t border-gray-200' : ''}`}>
-                    <div className="flex items-center space-x-2 mb-4">
-                      <span className="bg-gray-200 text-gray-600 text-xs font-600 px-2 py-1 rounded-full product-sans">
-                        Ruta {index + 1}
-                      </span>
                     </div>
-                    <div className="grid grid-cols-1 gap-3">
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Origen:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.ciudad_origen || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Destino:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.ciudad_destino || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Peso:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.peso_mercancia || '0'} kg
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Cantidad:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.cantidad || '0'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Tipo de embalaje:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.tipo_embajale || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Tipo producto:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.tipo_producto || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Vehículo requerido:</span>
-                        <span className="text-sm font-600 text-gray-900 product-sans">
-                          {route.vehiculo_requerido || '-'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-sm font-500 text-gray-600 product-sans">Valor declarado:</span>
-                        <span className="text-sm font-600 text-green-600 product-sans">
-                          {route.valor_declarado || '-'}
-                        </span>
-                      </div>
-                    </div>
+                  ))
+                ) : (
+                  <div className="p-6 text-center text-gray-500">
+                    <p className="text-sm product-sans">
+                      Comparte los detalles de tu envío para comenzar
+                    </p>
                   </div>
-                ))
-              ) : (
-                <div className="p-6 text-center text-gray-500">
-                  <p className="text-sm product-sans">
-                    Comparte los detalles de tu envío para comenzar
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
           )}
         </div>
 
@@ -3152,24 +3137,23 @@ Producto: ${selectedProduct.nombre}`;
           </div>
 
           {/* Área de Conversación */}
-          <div 
+          <div
             ref={conversationRef}
             onScroll={handleConversationScroll}
-            className="flex-1 p-6 overflow-y-auto scrollbar-thin bg-gray-50" 
+            className="flex-1 p-6 overflow-y-auto scrollbar-thin bg-gray-50"
             style={{ maxHeight: '500px' }}
           >
             {messages.length > 0 || processingMessage ? (
               <>
                 {sanitizedMessages.map((message, index) => (
-                  <div 
-                    key={index} 
+                  <div
+                    key={index}
                     className={`mb-4 ${message.role === 'user' ? 'flex justify-end' : 'flex justify-start'} chat-message`}
                   >
-                    <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm ${
-                      message.role === 'user' 
-                        ? 'bg-orange-400 text-white rounded-br-sm' 
+                    <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-2xl shadow-sm ${message.role === 'user'
+                        ? 'bg-orange-400 text-white rounded-br-sm'
                         : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
-                    }`}>
+                      }`}>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs opacity-75 product-sans">
                           {message.role === 'user' ? 'Tú' : 'Asistente'}
@@ -3199,7 +3183,7 @@ Producto: ${selectedProduct.nombre}`;
                     </div>
                   </div>
                 ))}
-                
+
                 {/* Mensaje de "Pensando..." */}
                 {processingMessage && (
                   <div className="mb-4 flex justify-start chat-message">
@@ -3236,7 +3220,7 @@ Producto: ${selectedProduct.nombre}`;
                 <p className="text-gray-500 product-sans text-sm mb-6">
                   Comparte los detalles de tu envío y yo me encargaré del resto.
                 </p>
-                
+
                 {/* Ejemplos de mensajes propositivos */}
                 <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 max-w-md mx-auto">
                   <p className="text-orange-800 text-xs product-sans font-500 mb-2">💡 Ejemplos de mensajes:</p>
@@ -3279,11 +3263,11 @@ Producto: ${selectedProduct.nombre}`;
                         {processingMessage ? 'Generando respuesta...' : 'Procesando tu mensaje anterior...'}
                       </span>
                     </p>
-                    
+
                     {/* Barra de progreso visual */}
                     {processingProgress > 0 && (
                       <div className="w-full bg-blue-200 rounded-full h-2 mb-3 overflow-hidden">
-                        <div 
+                        <div
                           className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-out"
                           style={{ width: `${processingProgress}%` }}
                         >
@@ -3291,26 +3275,26 @@ Producto: ${selectedProduct.nombre}`;
                         </div>
                       </div>
                     )}
-                    
+
                     <p className="text-blue-600 text-xs product-sans mb-3">
                       Espera un momento para enviar el siguiente mensaje.
                     </p>
-                    
+
                     {/* Botón para cancelar y reiniciar */}
                     <button
                       onClick={async () => {
                         console.log('🔄 Cancelando procesamiento y reiniciando chat...');
-                        
+
                         // Detener polling si existe
                         if (pollingInterval) {
                           clearInterval(pollingInterval);
                           setPollingInterval(null);
                         }
-                        
+
                         // Limpiar todos los estados
                         clearProcessingState();
                         setInputMessage('');
-                        
+
                         // Limpiar thread en el backend
                         if (clientData.threadId) {
                           try {
@@ -3325,16 +3309,16 @@ Producto: ${selectedProduct.nombre}`;
                                 client_id: clientData?.clientId || null
                               })
                             });
-                            
+
                             const data = await response.json();
                             if (data.success) {
                               console.log('✅ Chat reiniciado desde cero');
-                              
+
                               // Limpiar mensajes locales
                               if (onUpdateMessages) {
                                 onUpdateMessages([]);
                               }
-                              
+
                               // Mostrar mensaje de confirmación
                               const confirmMessage = {
                                 role: 'system',
@@ -3343,7 +3327,7 @@ Producto: ${selectedProduct.nombre}`;
                                 status: 'success',
                                 isTemporary: false
                               };
-                              
+
                               if (onUpdateMessages) {
                                 onUpdateMessages([confirmMessage]);
                               }
@@ -3360,7 +3344,7 @@ Producto: ${selectedProduct.nombre}`;
                       </svg>
                       <span>Cancelar y Reiniciar Chat</span>
                     </button>
-                   
+
                   </div>
                 </div>
               ) : (
@@ -3387,20 +3371,20 @@ Producto: ${selectedProduct.nombre}`;
                           </p>
                         </div>
                       </div>
-                      
+
                       {/* Botón cancelar en el indicador */}
                       <button
                         onClick={async () => {
                           console.log('🔄 Cancelando procesamiento...');
-                          
+
                           if (pollingInterval) {
                             clearInterval(pollingInterval);
                             setPollingInterval(null);
                           }
-                          
+
                           clearProcessingState();
                           setInputMessage('');
-                          
+
                           if (clientData.threadId) {
                             try {
                               await fetch('/api/chat/clear-thread', {
@@ -3414,7 +3398,7 @@ Producto: ${selectedProduct.nombre}`;
                                   client_id: clientData?.clientId || null
                                 })
                               });
-                              
+
                               if (onUpdateMessages) {
                                 onUpdateMessages([{
                                   role: 'system',
@@ -3437,7 +3421,7 @@ Producto: ${selectedProduct.nombre}`;
                       </button>
                     </div>
                   )}
-                  
+
                   {/* 🆕 Indicador de ruta en edición - FUERA del textarea */}
                   {selectedRouteIndex !== null && (
                     <div className="mb-2 flex items-center justify-between bg-yellow-100 border border-yellow-300 rounded-lg px-3 py-2">
@@ -3457,9 +3441,9 @@ Producto: ${selectedProduct.nombre}`;
                       </button>
                     </div>
                   )}
-                  
+
                   <div className="relative">
-                    <textarea 
+                    <textarea
                       value={inputMessage}
                       onChange={(e) => {
                         // No permitir cambios mientras está procesando
@@ -3469,24 +3453,23 @@ Producto: ${selectedProduct.nombre}`;
                       }}
                       onKeyDown={handleKeyPress}
                       placeholder={
-                        isSending || currentRunId || processingMessage 
-                          ? "⏳ Mensaje en proceso de envío..." 
+                        isSending || currentRunId || processingMessage
+                          ? "⏳ Mensaje en proceso de envío..."
                           : selectedRouteIndex !== null
                             ? `Ej: 'Cambia el destino a Cali' o 'Peso 5000 kg' o 'Producto neumáticos'...`
                             : "Ej: 'Envío de 200kg de Bogotá a Cali' o 'Transportar pallets refrigerados'..."
                       }
-                      className={`w-full px-4 py-3 pr-20 border rounded-xl resize-none focus:outline-none transition-all duration-200 product-sans ${
-                        isSending || currentRunId || processingMessage 
-                          ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium' 
+                      className={`w-full px-4 py-3 pr-20 border rounded-xl resize-none focus:outline-none transition-all duration-200 product-sans ${isSending || currentRunId || processingMessage
+                          ? 'bg-blue-50 border-blue-300 text-gray-700 cursor-not-allowed font-medium'
                           : selectedRouteIndex !== null
                             ? 'bg-yellow-50 border-yellow-400 text-gray-800 placeholder-yellow-600 focus:ring-2 focus:ring-yellow-400 focus:border-transparent'
                             : 'bg-gray-50 border-gray-200 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-orange-400 focus:border-transparent'
-                      }`}
+                        }`}
                       rows="2"
                       disabled={isSending || currentRunId || processingMessage}
                       readOnly={isSending || currentRunId || processingMessage}
                     />
-                    
+
                     {/* Botones de Acción */}
                     <div className="absolute bottom-3 right-3 flex items-center space-x-2">
                       <SpeechRecognition
@@ -3495,15 +3478,15 @@ Producto: ${selectedProduct.nombre}`;
                         setIsRecording={setIsRecording}
                       />
 
-                      <button 
+                      <button
                         type="button"
                         onClick={handleSendMessage}
                         disabled={!inputMessage.trim() || isSending || loading || !clientData.clientId || currentRunId || processingMessage}
                         className="w-8 h-8 flex items-center justify-center rounded-full bg-orange-400 hover:bg-orange-500 transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                         title={
-                          !clientData.clientId ? "Cliente requerido" : 
-                          currentRunId || processingMessage ? "Procesando respuesta anterior..." : 
-                          "Enviar mensaje"
+                          !clientData.clientId ? "Cliente requerido" :
+                            currentRunId || processingMessage ? "Procesando respuesta anterior..." :
+                              "Enviar mensaje"
                         }
                       >
                         {(isSending || loading || currentRunId || processingMessage) ? (
@@ -3524,7 +3507,7 @@ Producto: ${selectedProduct.nombre}`;
             </div>
           )}
 
-         
+
         </div>
       </div>
     </Modal>
