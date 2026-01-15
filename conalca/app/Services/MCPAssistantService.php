@@ -1768,14 +1768,38 @@ class MCPAssistantService
                                 'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
                             ]);
                         } elseif ($isMultiRouteData) {
-                            // Si es multi-ruta pero NO hay ruta seleccionada, aplicar a todas
-                            foreach ($extractedData as $idx => &$ruta) {
+                            // Si es multi-ruta pero NO hay ruta seleccionada
+                            // 🆕 FIX: Verificar si las rutas YA tienen productos - si es así, NO sobrescribir
+                            $rutasSinProducto = [];
+                            foreach ($extractedData as $idx => $ruta) {
                                 if (is_numeric($idx) && is_array($ruta)) {
-                                    $ruta['producto'] = $productoSeleccionado['nombre'] ?? $searchTerm;
-                                    $ruta['producto_codigo'] = $productoSeleccionado['codigo'] ?? null;
-                                    $ruta['producto_nombre'] = $productoSeleccionado['nombre'] ?? $searchTerm;
-                                    $ruta['tipo_producto'] = $productoSeleccionado['tipo'] ?? 'MERCANCIAS VARIAS';
+                                    $tieneProducto = !empty($ruta['producto_codigo']) || 
+                                                    (!empty($ruta['producto']) && $ruta['producto'] !== strtoupper($searchTerm));
+                                    if (!$tieneProducto) {
+                                        $rutasSinProducto[] = $idx;
+                                    }
                                 }
+                            }
+                            
+                            if (count($rutasSinProducto) > 0) {
+                                // Solo aplicar a rutas que NO tienen producto
+                                foreach ($rutasSinProducto as $idx) {
+                                    $extractedData[$idx]['producto'] = $productoSeleccionado['nombre'] ?? $searchTerm;
+                                    $extractedData[$idx]['producto_codigo'] = $productoSeleccionado['codigo'] ?? null;
+                                    $extractedData[$idx]['producto_nombre'] = $productoSeleccionado['nombre'] ?? $searchTerm;
+                                    $extractedData[$idx]['tipo_producto'] = $productoSeleccionado['tipo'] ?? 'MERCANCIAS VARIAS';
+                                }
+                                
+                                Log::info('🔄 Producto aplicado SOLO a rutas sin producto', [
+                                    'rutas_actualizadas' => $rutasSinProducto,
+                                    'producto' => $productoSeleccionado['nombre'],
+                                    'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
+                                ]);
+                            } else {
+                                Log::info('⚠️ Todas las rutas ya tienen producto - NO se sobrescribe', [
+                                    'search_term' => $searchTerm,
+                                    'producto_encontrado' => $productoSeleccionado['nombre']
+                                ]);
                             }
                             unset($ruta);
                             

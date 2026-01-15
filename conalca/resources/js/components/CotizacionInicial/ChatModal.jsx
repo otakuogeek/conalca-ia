@@ -937,10 +937,29 @@ Producto: ${selectedProduct.nombre}`;
                           className="block w-full text-left px-4 py-3 rounded-lg bg-gray-50 hover:bg-orange-100 border border-gray-200 hover:border-orange-300 transition-all duration-200"
                           onClick={() => {
                             console.log('✅ Producto seleccionado:', prod);
+                            console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
                             
                             // Actualizar quoteData con el producto seleccionado
+                            // 🆕 FIX: Solo actualizar la ruta seleccionada si existe
                             setQuoteData(prev => {
                               if (Array.isArray(prev) && prev.length > 0) {
+                                // Si hay una ruta seleccionada, actualizar SOLO esa
+                                if (selectedRouteIndex !== null && selectedRouteIndex < prev.length) {
+                                  console.log(`🎯 Actualizando SOLO ruta ${selectedRouteIndex + 1}`);
+                                  return prev.map((route, routeIdx) => {
+                                    if (routeIdx === selectedRouteIndex) {
+                                      return {
+                                        ...route,
+                                        producto: prod.nombre,
+                                        producto_codigo: prod.codigo,
+                                        tipo_producto: prod.nombre
+                                      };
+                                    }
+                                    return route; // Las demás rutas no se modifican
+                                  });
+                                }
+                                // Si no hay ruta seleccionada, aplicar a todas (comportamiento original)
+                                console.log('⚠️ Sin ruta seleccionada, aplicando a todas');
                                 return prev.map(route => ({
                                   ...route,
                                   producto: prod.nombre,
@@ -983,6 +1002,34 @@ Producto: ${selectedProduct.nombre}`;
                               console.log('✅ Selección enviada al backend:', result);
                               if (result.data?.messages && onUpdateMessages) {
                                 onUpdateMessages(result.data.messages);
+                              }
+                              // 🆕 FIX: Actualizar quoteData con extracted_data del backend
+                              if (result.data?.extracted_data) {
+                                const backendData = result.data.extracted_data;
+                                console.log('📦 Actualizando quoteData con datos del backend:', backendData);
+                                
+                                const routesArray = Array.isArray(backendData) ? backendData : 
+                                  (backendData && typeof backendData === 'object' && backendData[0] ? 
+                                    Object.values(backendData).filter(v => typeof v === 'object' && v.origen) : 
+                                    [backendData]);
+                                
+                                if (routesArray.length > 0 && setQuoteData) {
+                                  setQuoteData(prev => {
+                                    if (!Array.isArray(prev)) return routesArray;
+                                    return prev.map((route, idx) => {
+                                      const newRoute = routesArray[idx];
+                                      if (newRoute) {
+                                        return {
+                                          ...route,
+                                          producto: newRoute.producto_nombre || newRoute.producto || route.producto,
+                                          producto_codigo: newRoute.producto_codigo || route.producto_codigo,
+                                          tipo_producto: newRoute.producto_nombre || newRoute.producto || route.tipo_producto
+                                        };
+                                      }
+                                      return route;
+                                    });
+                                  });
+                                }
                               }
                             });
                             
