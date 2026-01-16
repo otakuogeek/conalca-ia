@@ -138,6 +138,51 @@ class TextPreprocessorService
     /**
      * Correcciones de errores ortográficos comunes
      */
+    /**
+     * Abreviaciones comunes que se expanden
+     */
+    private static array $abbreviations = [
+        'emb' => 'embalaje',
+        'cant' => 'cantidad',
+        'prod' => 'producto',
+        'val' => 'valor',
+        'decl' => 'declarado',
+        'orig' => 'origen',
+        'dest' => 'destino',
+        'veh' => 'vehículo',
+        'cot' => 'cotización',
+        'pto' => 'puerto',
+        'ton' => 'toneladas',
+        'kg' => 'kilogramos',
+        'uds' => 'unidades',
+        'pza' => 'pieza',
+        'pzas' => 'piezas',
+    ];
+
+    /**
+     * Palabras que se escriben mal comúnmente (speech-to-text)
+     */
+    private static array $commonMistakes = [
+        // "la je" = "laje" mal separado, probablemente intento de "en las" o similar
+        'la je' => '',
+        'laje' => '',
+        // Embalaje mal escrito
+        'embala je' => 'embalaje',
+        'embalage' => 'embalaje',
+        'enbalaje' => 'embalaje',
+        'embalages' => 'embalajes',
+        // Contenedor mal escrito
+        'contenedro' => 'contenedor',
+        'contenedo' => 'contenedor',
+        // Destino mal escrito
+        'destio' => 'destino',
+        'desitno' => 'destino',
+        // Origen mal escrito
+        'orígen' => 'origen',
+        'origén' => 'origen',
+        'origne' => 'origen',
+    ];
+
     private static array $spellingCorrections = [
         'toneldas' => 'toneladas',
         'tonelaads' => 'toneladas',
@@ -194,19 +239,25 @@ class TextPreprocessorService
         // 1. Normalizar espacios múltiples y saltos de línea
         $text = self::normalizeWhitespace($text);
         
-        // 2. Corregir errores ortográficos comunes
+        // 2. Expandir abreviaciones comunes
+        $text = self::expandAbbreviations($text);
+        
+        // 3. Corregir errores comunes de speech-to-text
+        $text = self::fixCommonMistakes($text);
+        
+        // 4. Corregir errores ortográficos comunes
         $text = self::fixSpellingErrors($text);
         
-        // 3. Separar palabras clave pegadas (usando keywords estáticos)
+        // 5. Separar palabras clave pegadas (usando keywords estáticos)
         $text = self::separateKeywords($text);
         
-        // 4. Aplicar patrones regex para separaciones más complejas
+        // 6. Aplicar patrones regex para separaciones más complejas
         $text = self::applyRegexPatterns($text);
         
-        // 5. Normalizar espacios nuevamente después de las separaciones
+        // 7. Normalizar espacios nuevamente después de las separaciones
         $text = self::normalizeWhitespace($text);
         
-        // 6. Normalizar acentos y caracteres especiales
+        // 8. Normalizar acentos y caracteres especiales
         $text = self::normalizeAccents($text);
 
         $hasChanges = $text !== $originalText;
@@ -260,6 +311,38 @@ class TextPreprocessorService
         }
         
         return $text;
+    }
+
+    /**
+     * Expande abreviaciones comunes
+     */
+    private static function expandAbbreviations(string $text): string
+    {
+        foreach (self::$abbreviations as $abbr => $full) {
+            // Solo expandir si la abreviación es una palabra completa (no parte de otra)
+            $pattern = '/\b' . preg_quote($abbr, '/') . '\b/ui';
+            $text = preg_replace($pattern, $full, $text);
+        }
+        
+        Log::info('🔧 Abreviaciones expandidas', ['result' => substr($text, 0, 100)]);
+        
+        return $text;
+    }
+
+    /**
+     * Corrige errores comunes de speech-to-text
+     */
+    private static function fixCommonMistakes(string $text): string
+    {
+        foreach (self::$commonMistakes as $wrong => $correct) {
+            $pattern = '/' . preg_quote($wrong, '/') . '/ui';
+            $text = preg_replace($pattern, $correct, $text);
+        }
+        
+        // Limpiar espacios extra que puedan quedar
+        $text = preg_replace('/\s+/', ' ', $text);
+        
+        return trim($text);
     }
 
     /**

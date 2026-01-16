@@ -222,9 +222,10 @@ class MCPAssistantService
      * @param int $groupId ID del grupo de cotización
      * @param array $extractedData Datos extraídos
      * @param int $routeIndex Índice de la ruta a buscar
+     * @param bool $isExplicitProductChange Si TRUE, es un cambio explícito de producto (buscar opciones). Si FALSE, es análisis inicial (NO buscar opciones)
      * @return array|null Resultado de la búsqueda o null
      */
-    private static function searchProductForRoute($session, $groupId, &$extractedData, $routeIndex)
+    private static function searchProductForRoute($session, $groupId, &$extractedData, $routeIndex, $isExplicitProductChange = false)
     {
         $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
         $ruta = $isMultiRoute ? ($extractedData[$routeIndex] ?? null) : $extractedData;
@@ -242,9 +243,25 @@ class MCPAssistantService
         $destino = strtoupper($ruta['destino'] ?? 'N/A');
         $routeNum = $routeIndex + 1;
         
+        // 🆕 CRÍTICO: En multi-ruta, NO buscar opciones en análisis inicial para evitar bug de re-búsqueda infinita
+        // Solo buscar opciones cuando el usuario EXPLÍCITAMENTE cambie el producto
+        if ($isMultiRoute && !$isExplicitProductChange) {
+            Log::info("⏭️ SKIP búsqueda automática en multi-ruta (análisis inicial)", [
+                'search_term' => $searchTerm,
+                'ruta' => "{$origen} → {$destino}",
+                'route_index' => $routeIndex,
+                'reason' => 'Evitar bug de re-búsqueda infinita en ediciones'
+            ]);
+            
+            // Guardar el producto tal cual sin validar ni buscar opciones
+            // El sistema lo usará como está hasta que el usuario lo cambie explícitamente
+            return ['skipped' => true, 'producto_guardado' => $searchTerm];
+        }
+        
         Log::info("🔍 Buscando producto para Ruta {$routeNum}", [
             'search_term' => $searchTerm,
-            'ruta' => "{$origen} → {$destino}"
+            'ruta' => "{$origen} → {$destino}",
+            'is_explicit_change' => $isExplicitProductChange
         ]);
         
         // Buscar en la tabla products
@@ -549,32 +566,64 @@ class MCPAssistantService
             $esEliminacion = true;
         }
         // Patrones para AGREGAR/CAMBIAR valores (solo en mensajes cortos)
-        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?orig(?:en)?\s*(?:' . $palabrasAgregar . '|en)\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
-            // 🆕 MEJORADO: Acepta "orig" y "origen", también "en" como conector (ej: "orig en manizales")
+        // 🔧 FIX: Priorizar "origen" completo sobre "orig" para evitar que "origen es" se divida como "orig en es"
+        // 🔧 FIX CRÍTICO: El conector debe ser NO-CAPTURADO para que "origen es barranquilla" capture SOLO "barranquilla"
+        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+            // 🆕 PRIORIDAD: "origen es barranquilla" → captura "barranquilla" (NO incluye "es")
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?orig(?:en)?\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+            // 🆕 SECUNDARIO: "orig en barranquilla" (abreviación + "en" como conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'origen';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?origen\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+            // 🆕 "cambia origen a cali" (palabra completa)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'origen';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?orig\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 NUEVO: "cambia origen a cali" o "modifica el origen a medellín"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?dest(?:ino)?\s*(?:' . $palabrasAgregar . '|en)\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
-            // 🆕 MEJORADO: Acepta "dest" y "destino", también "en" como conector
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+            // 🆕 PRIORIDAD: "destino es cali" → captura "cali" (NO incluye "es")
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?dest(?:ino)?\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+            // 🆕 SECUNDARIO: "dest en barranquilla" (abreviación + "en" como conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'destino';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?destino\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+            // 🆕 "cambia destino a cali" (palabra completa)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'destino';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?dest\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
             // 🆕 NUEVO: "cambia destino a cali" o "modifica el destino a medellín"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?orig(?:en)?\s+([a-záéíóúñ]+)$/ui', $lastUserMessageForEdit, $matchOrigenSimple)) {
-            // 🆕 NUEVO: "origen manizales" o "orig bogota" (sin conector)
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?origen\s+([a-záéíóúñ\s]+)$/ui', $lastUserMessageForEdit, $matchOrigenSimple)) {
+            // 🆕 "origen manizales" (palabra completa, sin conector)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigenSimple[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?dest(?:ino)?\s+([a-záéíóúñ]+)$/ui', $lastUserMessageForEdit, $matchDestinoSimple)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?orig\s+([a-záéíóúñ\s]+)$/ui', $lastUserMessageForEdit, $matchOrigenSimple)) {
+            // 🆕 "orig bogota" (abreviación, sin conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'origen';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigenSimple[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?destino\s+([a-záéíóúñ\s]+)$/ui', $lastUserMessageForEdit, $matchDestinoSimple)) {
+            // 🆕 "destino pereira" (palabra completa, sin conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'destino';
+            $valorEditadoTemprano = self::normalizeCityName(trim($matchDestinoSimple[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?dest\s+([a-záéíóúñ\s]+)$/ui', $lastUserMessageForEdit, $matchDestinoSimple)) {
             // 🆕 NUEVO: "destino manizales" o "dest pereira" (sin conector)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
@@ -647,6 +696,11 @@ class MCPAssistantService
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'producto';
             $valorEditadoTemprano = strtoupper(trim($matchProducto[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?producto\s+(?:cambia\s+(?:a|para|deja)\s+)?([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchProductoSimple)) {
+            // 🆕 NUEVO: "producto tomate", "producto es tomate", "producto cambia a tomate"
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'producto';
+            $valorEditadoTemprano = strtoupper(trim($matchProductoSimple[1]));
         }
         
         // Si es edición simple temprana (agregar/cambiar O eliminar), aplicar directamente y retornar
@@ -839,10 +893,11 @@ class MCPAssistantService
                     $session->metadata = json_encode($metadata);
                     $session->save();
                     
-                    Log::info('🎯 Productos pendientes guardados con ruta', [
+                    Log::info('🎯🎯 PRODUCTOS PENDIENTES GUARDADOS - RUTA BLOQUEADA', [
                         'ruta_index' => $selectedRouteIndex,
                         'search_term' => $searchTerm,
-                        'opciones' => count($productosArray)
+                        'opciones' => count($productosArray),
+                        '⚠️ CRÍTICO' => 'Esta ruta (' . $selectedRouteIndex . ') está BLOQUEADA para selección de producto'
                     ]);
                     
                     ConversationMessage::create([
@@ -1371,11 +1426,14 @@ class MCPAssistantService
                     ? $metadata['producto_pendiente_ruta_index'] 
                     : $selectedRouteIndex;
                 
-                Log::info('🎯 Selección de producto - Determinando ruta', [
+                Log::info('🎯🎯 SELECCIÓN DE PRODUCTO - RUTA DETERMINADA', [
                     'ruta_en_metadata' => $metadata['producto_pendiente_ruta_index'] ?? 'NO DEFINIDA',
                     'ruta_del_request' => $selectedRouteIndex,
                     'ruta_final_a_usar' => $rutaParaProducto,
-                    'opcion_seleccionada' => $opcionSeleccionada
+                    'opcion_seleccionada' => $opcionSeleccionada,
+                    '⚠️ CRÍTICO' => $rutaParaProducto !== null 
+                        ? 'Aplicando producto SOLO a ruta ' . $rutaParaProducto 
+                        : 'SIN RUTA DEFINIDA - aplicará a primera sin producto'
                 ]);
                 
                 if (isset($productosPendientes[$indice])) {
@@ -1403,10 +1461,24 @@ class MCPAssistantService
                         $extractedData[$rutaParaProducto]['producto_nombre'] = $productoSeleccionado['nombre'] ?? '';
                         $extractedData[$rutaParaProducto]['tipo_producto'] = $productoSeleccionado['tipo'] ?? 'MERCANCIAS VARIAS';
                         
-                        Log::info('🎯 Producto de opción aplicado SOLO a ruta seleccionada', [
+                        // 🆕 VALIDACIÓN: Verificar que NO se cambiaron otras rutas
+                        foreach ($extractedData as $idx => $ruta) {
+                            if (is_numeric($idx) && $idx !== $rutaParaProducto && is_array($ruta)) {
+                                if (isset($ruta['producto']) && $ruta['producto'] === $productoSeleccionado['nombre']) {
+                                    Log::error('🚨🚨 ERROR CRÍTICO: Producto se aplicó a RUTA INCORRECTA', [
+                                        'ruta_target' => $rutaParaProducto,
+                                        'ruta_afectada' => $idx,
+                                        'producto' => $productoSeleccionado['nombre']
+                                    ]);
+                                }
+                            }
+                        }
+                        
+                        Log::info('🎯🎯 PRODUCTO APLICADO - RUTA CONFIRMADA', [
                             'ruta_index' => $rutaParaProducto,
                             'producto' => $productoSeleccionado['nombre'],
-                            'codigo' => $productoSeleccionado['codigo'] ?? 'N/A'
+                            'codigo' => $productoSeleccionado['codigo'] ?? 'N/A',
+                            '✅ VERIFICADO' => 'Producto aplicado SOLO a ruta ' . $rutaParaProducto . ', otras rutas NO modificadas'
                         ]);
                     } elseif ($isMultiRouteData) {
                         // 🆕 Si NO hay ruta seleccionada, aplicar SOLO a la primera ruta SIN producto
@@ -1495,51 +1567,20 @@ class MCPAssistantService
                         'timestamp' => now()
                     ]);
                     
-                    // 🆕 Si hay más rutas sin producto, buscar la siguiente
+                    // 🚫 DESACTIVADO: NO buscar productos automáticamente para otras rutas
+                    // Solo debe buscar productos cuando el usuario EXPLÍCITAMENTE lo pida
+                    // Esto previene búsquedas automáticas no deseadas
+                    /*
                     if ($nextRouteIndex !== null && $isMultiRouteData) {
-                        $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
-                        
-                        if ($searchResult && isset($searchResult['needs_selection']) && $searchResult['needs_selection']) {
-                            // Mostrar opciones para la siguiente ruta
-                            ConversationMessage::create([
-                                'session_id' => $session->id,
-                                'group_cotization_id' => $groupId,
-                                'role' => 'assistant',
-                                'content' => $searchResult['message'],
-                                'timestamp' => now()
-                            ]);
-                            
-                            Log::info('📋 Continuando flujo secuencial - opciones para siguiente ruta', [
-                                'route_index' => $nextRouteIndex,
-                                'productos_count' => count($searchResult['productos'])
-                            ]);
-                        } elseif ($searchResult && isset($searchResult['auto_selected'])) {
-                            // Producto auto-seleccionado, verificar si hay más rutas
-                            $nextAfterAuto = self::findNextRouteWithoutProduct($extractedData);
-                            
-                            if ($nextAfterAuto !== null) {
-                                $searchResult2 = self::searchProductForRoute($session, $groupId, $extractedData, $nextAfterAuto);
-                                if ($searchResult2 && isset($searchResult2['needs_selection'])) {
-                                    ConversationMessage::create([
-                                        'session_id' => $session->id,
-                                        'group_cotization_id' => $groupId,
-                                        'role' => 'assistant',
-                                        'content' => $searchResult2['message'],
-                                        'timestamp' => now()
-                                    ]);
-                                }
-                            }
-                        }
-                        
-                        // Actualizar grupo después de posibles auto-selecciones
-                        if ($groupId) {
-                            $group = GroupCotization::find($groupId);
-                            if ($group) {
-                                $group->extracted_data = json_encode($extractedData);
-                                $group->save();
-                            }
-                        }
+                        $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex, false);
+                        // ...código de búsqueda automática comentado...
                     }
+                    */
+                    
+                    Log::info('✅ Producto seleccionado - NO se buscará automáticamente para otras rutas', [
+                        'productos_pendientes_limpiados' => true,
+                        'siguiente_accion' => 'Usuario debe solicitar explícitamente cambio de producto'
+                    ]);
                     
                     // Verificar si todas las rutas tienen producto (después de posibles auto-selecciones)
                     $allRoutesComplete = self::findNextRouteWithoutProduct($extractedData) === null;
@@ -1614,44 +1655,20 @@ class MCPAssistantService
             // 🆕 PASO 2: Buscar primera ruta sin producto validado e iniciar flujo secuencial
             $nextRouteIndex = self::findNextRouteWithoutProduct($extractedData);
             
+            // 🚫 DESACTIVADO COMPLETAMENTE: NO buscar productos automáticamente
+            // Los productos SOLO deben buscarse cuando el usuario EXPLÍCITAMENTE lo solicita
+            // Esto previene el bug de productos actualizándose solos en todas las rutas
+            /*
             if ($nextRouteIndex !== null) {
-                // Hay rutas sin producto - buscar producto para la primera
-                $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
-                
-                if ($searchResult && isset($searchResult['needs_selection']) && $searchResult['needs_selection']) {
-                    // Mostrar opciones de producto para esta ruta
-                    ConversationMessage::create([
-                        'session_id' => $session->id,
-                        'group_cotization_id' => $groupId,
-                        'role' => 'assistant',
-                        'content' => $searchResult['message'],
-                        'timestamp' => now()
-                    ]);
-                    
-                    Log::info('📋 Mostrando opciones de producto para ruta en flujo secuencial', [
-                        'route_index' => $nextRouteIndex,
-                        'productos_count' => count($searchResult['productos'])
-                    ]);
-                } elseif ($searchResult && isset($searchResult['auto_selected'])) {
-                    // Producto auto-seleccionado, buscar siguiente ruta
-                    $nextRouteIndex = self::findNextRouteWithoutProduct($extractedData);
-                    
-                    if ($nextRouteIndex !== null) {
-                        // Buscar producto para la siguiente ruta
-                        $searchResult2 = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex);
-                        
-                        if ($searchResult2 && isset($searchResult2['needs_selection'])) {
-                            ConversationMessage::create([
-                                'session_id' => $session->id,
-                                'group_cotization_id' => $groupId,
-                                'role' => 'assistant',
-                                'content' => $searchResult2['message'],
-                                'timestamp' => now()
-                            ]);
-                        }
-                    }
-                }
+                $searchResult = self::searchProductForRoute($session, $groupId, $extractedData, $nextRouteIndex, false);
+                // ...todo el código de búsqueda automática comentado...
             }
+            */
+            
+            Log::info('🚫 Búsqueda automática de productos DESACTIVADA', [
+                'rutas_sin_producto' => $nextRouteIndex,
+                'razon' => 'Usuario debe solicitar explícitamente búsqueda de productos'
+            ]);
             
             // Verificar si todas las rutas ya tienen producto (después de auto-selección)
             $allRoutesComplete = self::findNextRouteWithoutProduct($extractedData) === null;
@@ -2087,17 +2104,60 @@ class MCPAssistantService
                 $contenido = $assistantMessage['content'];
                 $mensajesTecnicos = [
                     '/pricing_id/i',
+                    '/pricing id/i',
+                    '/pricingid/i',
+                    '/ID de precios/i',
                     '/identificador de precios/i',
                     '/tarifa.*pricing/i',
                     '/error.*validation/i',
                     '/SQLSTATE/i',
                     '/Exception/i',
+                    '/no tengo.*capacidad/i',
+                    '/IA desarrollada por OpenAI/i',
+                    '/como.*IA.*no.*acceso/i',
+                    '/no puedo conectar.*sistemas/i',
+                    '/no tengo acceso.*bases de datos/i',
+                    '/simulación.*límites/i',
+                    '/requisito.*pricing/i',
+                    '/plataforma simulada/i',
+                    '/sistema simulado/i',
+                    '/entorno de prueba/i',
+                    '/no puedo generar.*IDs/i',
+                    '/no puedo generar.*ids/i',
+                    '/necesitarías contar con acceso/i',
+                    '/parámetros adecuados/i',
+                    '/información sobre el ID/i',
+                    '/no proporcione información/i',
+                    '/no puedo acceder ni generar/i',
+                    '/completar transacciones sin/i',
+                    // 🆕 NUEVOS PATRONES - Bloquear mensajes de "no puedo"
+                    '/no puedo generar cotizaciones/i',
+                    '/no incluye la ejecución de funcionalidades/i',
+                    '/sistemas externos reales/i',
+                    '/capacidad actual no incluye/i',
+                    '/mi capacidad.*no incluye/i',
+                    '/en un contexto real/i',
+                    '/contactar.*proveedores/i',
+                    '/plataforma.*real/i',
+                    '/malentendido en la solicitud/i',
+                    '/parece que hay un malentendido/i',
+                    '/no tengo la capacidad/i',
+                    '/funcionalidades específicas/i',
+                    '/no estoy conectado/i',
+                    '/no tengo conexión/i',
+                    '/no puedo realizar.*transacciones/i',
+                    '/fuera de mis capacidades/i',
+                    '/más allá de mis capacidades/i',
                 ];
                 
                 $esMessageTecnico = false;
                 foreach ($mensajesTecnicos as $patron) {
                     if (preg_match($patron, $contenido)) {
                         $esMessageTecnico = true;
+                        Log::warning('🚫 Mensaje técnico bloqueado', [
+                            'patron' => $patron,
+                            'contenido_preview' => substr($contenido, 0, 100)
+                        ]);
                         break;
                     }
                 }
@@ -2107,7 +2167,7 @@ class MCPAssistantService
                     Log::warning('⚠️ Mensaje técnico detectado, reemplazando con mensaje amigable', [
                         'original' => substr($contenido, 0, 200)
                     ]);
-                    $contenido = "Todos los datos están completos. ¿Deseas crear la cotización ahora?";
+                    $contenido = "Perfecto, tengo todos los datos. ¿Deseas crear la cotización ahora?";
                 }
                 
                 ConversationMessage::create([
@@ -3584,6 +3644,49 @@ class MCPAssistantService
             'text_length' => strlen($text)
         ]);
         
+        // 🆕 CRÍTICO: Detectar múltiples "cotización de X a Y" en el mismo texto
+        // Ej: "cotización de bogotá a Bucaramanga 6 toneladas... cotización de Cali a riohacha 12 toneladas..."
+        $patronMultiplesCotizaciones = '/cotizaci[oó]n\s+de\s+/ui';
+        if (preg_match_all($patronMultiplesCotizaciones, $text, $matchesCotizacion) && count($matchesCotizacion[0]) >= 2) {
+            Log::info('🔥 MÚLTIPLES "cotización de" detectadas', [
+                'cantidad' => count($matchesCotizacion[0])
+            ]);
+            
+            // Dividir por "cotización de" manteniendo el delimitador
+            $partesCotizacion = preg_split('/(?=cotizaci[oó]n\s+de\s+)/ui', $text, -1, PREG_SPLIT_NO_EMPTY);
+            
+            Log::info('📦 Texto dividido por "cotización de"', [
+                'partes' => count($partesCotizacion),
+                'previews' => array_map(function($p) { return substr(trim($p), 0, 100); }, $partesCotizacion)
+            ]);
+            
+            $validRouteCount = 0;
+            foreach ($partesCotizacion as $parte) {
+                $parte = trim($parte);
+                if (empty($parte)) continue;
+                
+                $routeData = self::extractRouteDataFromText($parte, $validRouteCount + 1);
+                
+                if ($routeData && (($routeData['origen'] ?? null) || ($routeData['destino'] ?? null))) {
+                    $validRouteCount++;
+                    $routeData['ruta_numero'] = $validRouteCount;
+                    $routes[] = $routeData;
+                    
+                    Log::info("✅ Ruta #$validRouteCount extraída de 'cotización de'", [
+                        'origen' => $routeData['origen'] ?? 'N/A',
+                        'destino' => $routeData['destino'] ?? 'N/A',
+                        'peso_kg' => $routeData['peso_kg'] ?? 'N/A',
+                        'incluye_tara' => $routeData['incluye_tara'] ?? 'no especificado'
+                    ]);
+                }
+            }
+            
+            if (count($routes) >= 2) {
+                Log::info('✅ Múltiples rutas detectadas por "cotización de" (Total: ' . count($routes) . ')');
+                return $routes;
+            }
+        }
+        
         // 🆕 NUEVO: Detectar si el texto tiene separadores de múltiples cotizaciones
         // Separadores: "adicional", "también", "además", "aparte", "y también", saltos de línea
         $separadores = [
@@ -4420,10 +4523,17 @@ class MCPAssistantService
             $data['peso_kg'] = $peso;
         }
 
-        // Producto
+        // Producto - 🆕 Guardar como "producto_mencionado" (sin validar en BD)
+        // El usuario deberá solicitar explícitamente la búsqueda para validar
         $producto = self::extractProducto($fullText);
         if ($producto) {
             $data['producto'] = $producto;
+            $data['producto_mencionado'] = $producto; // 🆕 Marcar como no validado
+            $data['producto_validado'] = false; // 🆕 Flag para saber si ya se buscó
+            Log::info('📦 Producto guardado SIN VALIDAR (usuario debe pedir búsqueda)', [
+                'producto_mencionado' => $producto,
+                'validado' => false
+            ]);
         }
 
         // Cantidad
@@ -5069,14 +5179,64 @@ class MCPAssistantService
             }
         }
         
-        // 🆕 TARA
-        if (strpos($textLower, 'no incluye tara') !== false || strpos($textLower, 'sin tara') !== false) {
+        // 🆕 TARA - Mejorado para detectar más patrones
+        // Detectar "no incluye tara", "sin tara", "peso neto", etc.
+        $noIncluyeTaraPatterns = [
+            'no incluye tara', 'no incluye la tara', 'sin tara', 'peso neto',
+            'el peso no incluye tara', 'el peso no incluye la tara', 
+            'peso no incluye tara', 'peso no incluye la tara'
+        ];
+        // Detectar "ya incluye tara", "con tara", "peso bruto", etc.
+        $yaIncluyeTaraPatterns = [
+            'ya incluye tara', 'ya incluye la tara', 'incluye la tara',
+            'con tara', 'peso con tara', 'peso bruto', 'tara incluida',
+            'el peso ya incluye la tara', 'el peso ya incluye tara',
+            'peso ya incluye la tara', 'peso ya incluye tara'
+        ];
+        
+        $detectoNoIncluyeTara = false;
+        $detectoYaIncluyeTara = false;
+        
+        foreach ($noIncluyeTaraPatterns as $pattern) {
+            if (strpos($textLower, $pattern) !== false) {
+                $detectoNoIncluyeTara = true;
+                Log::info('🔍 TARA: Detectado patrón NO incluye', ['pattern' => $pattern, 'texto' => $textLower]);
+                break;
+            }
+        }
+        
+        if (!$detectoNoIncluyeTara) {
+            foreach ($yaIncluyeTaraPatterns as $pattern) {
+                if (strpos($textLower, $pattern) !== false) {
+                    $detectoYaIncluyeTara = true;
+                    Log::info('🔍 TARA: Detectado patrón YA incluye', ['pattern' => $pattern, 'texto' => $textLower]);
+                    break;
+                }
+            }
+        }
+        
+        if ($detectoNoIncluyeTara) {
             $route['incluye_tara'] = false;
-        } elseif (strpos($textLower, 'incluye tara') !== false || strpos($textLower, 'con tara') !== false) {
+            // 🆕 CRÍTICO: Si no incluye tara y hay peso, SUMAR 3400 kg
+            if (isset($route['peso_kg']) && $route['peso_kg'] > 0) {
+                $pesoOriginal = $route['peso_kg'];
+                $route['peso_kg'] = $pesoOriginal + 3400;
+                Log::info('📦 TARA SUMADA automáticamente (no incluye tara)', [
+                    'peso_original' => $pesoOriginal,
+                    'tara' => 3400,
+                    'peso_con_tara' => $route['peso_kg']
+                ]);
+            }
+        } elseif ($detectoYaIncluyeTara) {
             $route['incluye_tara'] = true;
+            // NO sumar - el peso ya incluye la tara
+            Log::info('📦 TARA ya incluida, peso se mantiene', [
+                'peso_kg' => $route['peso_kg'] ?? 'N/A'
+            ]);
         }
         
         // 🆕 PRODUCTO: múltiples patrones para mayor flexibilidad
+        // 🔴 IMPORTANTE: Guardar como producto_mencionado (sin validar en BD)
         // Patrón 1: "se transportan/transportar/llevar/cargar PRODUCTO"
         if (preg_match('/(?:se\s+transporta[rn]?|transportar|transportando|llevar|cargar|con)\s+([a-záéíóúñ\s]+?)(?:\s*(?:por|con|en|empaquetados?|son|\d|vamos|$))/ui', $text, $productoMatch)) {
             $producto = trim($productoMatch[1]);
@@ -5085,6 +5245,8 @@ class MCPAssistantService
             // Validar que no sea "valor", "peso", "toneladas"
              if (!preg_match('/\b(valor|peso|toneladas?|millones?|medida|cantidad|vamos)\b/ui', $producto) && strlen(trim($producto)) >= 3) {
                 $route['producto'] = strtoupper(trim($producto));
+                $route['producto_mencionado'] = strtoupper(trim($producto)); // 🆕 Sin validar
+                $route['producto_validado'] = false; // 🆕 Flag
             }
         }
         
@@ -5093,17 +5255,38 @@ class MCPAssistantService
             $prod = trim($productoMatch2[1]);
              if (!preg_match('/\b(valor|peso|incluye|tara)\b/ui', $prod)) {
                 $route['producto'] = strtoupper($prod);
+                $route['producto_mencionado'] = strtoupper($prod); // 🆕 Sin validar
+                $route['producto_validado'] = false; // 🆕 Flag
             }
         }
         
         // Patrón 3: Producto pegado sin espacio (ej: "neumáticospor") - extrae palabra antes de "por"
         if (empty($route['producto']) && preg_match('/([a-záéíóúñ]{4,})por\s+un?\s*valor/ui', $text, $productoMatch3)) {
             $route['producto'] = strtoupper(trim($productoMatch3[1]));
+            $route['producto_mencionado'] = strtoupper(trim($productoMatch3[1])); // 🆕 Sin validar
+            $route['producto_validado'] = false; // 🆕 Flag
         }
         
-        // 🆕 VALOR DECLARADO: "valor declarado de N millones" o "por N millones"
+        // 🆕 VALOR DECLARADO: Múltiples patrones para mayor flexibilidad
+        // Patrón 1: "valor declarado de N millones" o "por N millones"
         if (preg_match('/(?:valor\s+(?:declarado\s+)?(?:de\s+)?|por\s+un\s+valor\s+(?:de\s+)?)(\d+)\s*(?:millones?|mill?)/ui', $text, $valorMatch)) {
             $route['valor_declarado'] = (int)$valorMatch[1] * 1000000;
+            Log::info('💰 Valor declarado extraído (patrón 1)', ['valor' => $route['valor_declarado']]);
+        }
+        // Patrón 2: "un valor de N millones" o "con valor de N millones"
+        elseif (preg_match('/(?:un\s+valor\s+de|con\s+valor\s+de)\s+(\d+)\s*(?:millones?|mill?)/ui', $text, $valorMatch2)) {
+            $route['valor_declarado'] = (int)$valorMatch2[1] * 1000000;
+            Log::info('💰 Valor declarado extraído (patrón 2)', ['valor' => $route['valor_declarado']]);
+        }
+        // Patrón 3: "valor N millones" simple
+        elseif (preg_match('/\bvalor\s+(?:de\s+)?(\d+)\s*(?:millones?|mill?)/ui', $text, $valorMatch3)) {
+            $route['valor_declarado'] = (int)$valorMatch3[1] * 1000000;
+            Log::info('💰 Valor declarado extraído (patrón 3)', ['valor' => $route['valor_declarado']]);
+        }
+        // Patrón 4: "N millones de valor" (invertido)
+        elseif (preg_match('/(\d+)\s*(?:millones?|mill?)\s+de\s+valor/ui', $text, $valorMatch4)) {
+            $route['valor_declarado'] = (int)$valorMatch4[1] * 1000000;
+            Log::info('💰 Valor declarado extraído (patrón 4)', ['valor' => $route['valor_declarado']]);
         }
         
         // 🆕 CANTIDAD: "N unidades" o "son N unidades"
@@ -6047,14 +6230,15 @@ class MCPAssistantService
                 $multiRouteInstruction .= "⚡ INSTRUCCIONES CRÍTICAS PARA MÚLTIPLES RUTAS:\n";
                 $multiRouteInstruction .= "1. CONFIRMA al usuario las {$routeCount} rutas detectadas\n";
                 $multiRouteInstruction .= "2. Si faltan datos comunes (cantidad, valor, empaque), pregunta UNA VEZ\n";
-                $multiRouteInstruction .= "3. Llama search_products() UNA VEZ con el producto común\n";
-                $multiRouteInstruction .= "4. Cuando el usuario seleccione el producto, llama create_cotizacion() {$routeCount} VECES\n";
-                $multiRouteInstruction .= "5. CADA llamada a create_cotizacion debe incluir:\n";
+                $multiRouteInstruction .= "3. ⛔ NO llames search_products() automáticamente - espera que el usuario lo pida\n";
+                $multiRouteInstruction .= "4. Solo busca productos cuando el usuario EXPLÍCITAMENTE diga 'busca producto' o mencione un NUEVO producto\n";
+                $multiRouteInstruction .= "5. Cuando el usuario seleccione el producto, llama create_cotizacion() {$routeCount} VECES\n";
+                $multiRouteInstruction .= "6. CADA llamada a create_cotizacion debe incluir:\n";
                 $multiRouteInstruction .= "   - Datos específicos de la ruta (origen, destino, peso)\n";
                 $multiRouteInstruction .= "   - Datos comunes (producto, empaque, cantidad, valor)\n";
                 $multiRouteInstruction .= "   - El MISMO group_cotization_id para TODAS las rutas\n";
-                $multiRouteInstruction .= "6. NO pidas confirmación, EJECUTA todas las llamadas automáticamente\n";
-                $multiRouteInstruction .= "7. Rellena campos faltantes con valores por defecto razonables:\n";
+                $multiRouteInstruction .= "7. NO pidas confirmación, EJECUTA todas las llamadas automáticamente\n";
+                $multiRouteInstruction .= "8. Rellena campos faltantes con valores por defecto razonables:\n";
                 $multiRouteInstruction .= "   - cantidad: 1 (si no se especifica)\n";
                 $multiRouteInstruction .= "   - valor_declarado: 1000000 por tonelada\n";
                 $multiRouteInstruction .= "   - empaque: GRANEL SOLIDO (según producto)\n\n";
@@ -6117,57 +6301,81 @@ class MCPAssistantService
                 $dataInstruction .= "Si el usuario pide cambios (tara, peso, cantidad), simplemente actualiza los datos.\n";
                 $dataInstruction .= "⛔ NO llames a search_products si el producto ya está seleccionado.\n";
             }
+            // 🆕 NUEVO: Si hay producto_mencionado pero NO producto_codigo, mostrar como pendiente de validar
+            elseif (isset($data['producto']) && !empty($data['producto']) && empty($data['producto_codigo'])) {
+                $dataInstruction .= "\n📦 PRODUCTO MENCIONADO: \"{$data['producto']}\" (pendiente de validar)\n";
+                $dataInstruction .= "⚠️ El usuario mencionó este producto pero NO está validado en el catálogo.\n";
+                $dataInstruction .= "⛔ NO llames search_products() automáticamente.\n";
+                $dataInstruction .= "✅ Muestra el producto TAL CUAL lo mencionó el usuario en el resumen.\n";
+                $dataInstruction .= "✅ SOLO llama search_products() cuando el usuario EXPLÍCITAMENTE diga:\n";
+                $dataInstruction .= "   - 'busca el producto' o 'validar producto'\n";
+                $dataInstruction .= "   - 'producto es X' (para cambiar a otro producto)\n";
+                $dataInstruction .= "   - 'quiero opciones de producto'\n";
+            }
             
             if (!$isMultiRoute) {
                 $dataInstruction .= "\n⚡ INSTRUCCIONES CRÍTICAS:\n";
                 $dataInstruction .= "1. CONFIRMA los datos capturados al usuario\n";
                 $dataInstruction .= "2. PREGUNTA SOLO por lo que FALTA (máximo 1 pregunta)\n";
                 $dataInstruction .= "3. SI el usuario responde con dato adicional ('cantidad 60'), ACTUALÍZALO\n";
-                $dataInstruction .= "4. Procede a buscar productos con search_products()\n";
-                $dataInstruction .= "5. Si todos los datos están completos, crea la cotización\n\n";
+                $dataInstruction .= "4. ⛔ NO llames search_products() automáticamente\n";
+                $dataInstruction .= "5. Solo llama search_products() cuando el usuario EXPLÍCITAMENTE pida buscar o cambiar producto\n\n";
             }
         }
 
         $basePrompt = <<<EOT
-🤖 AGENTE INTELIGENTE CONALCA - GPT-5 Mini
+🤖 AGENTE INTELIGENTE CONALCA - SISTEMA EN PRODUCCIÓN
 Eres un agente autónomo especializado en logística de transporte de carga en Colombia.
+ESTÁS CONECTADO A BASE DE DATOS REAL - PUEDES CREAR COTIZACIONES REALES.
 {$empaqueInstruction}{$multiRouteInstruction}{$dataInstruction}
 
-🧠 CAPACIDADES DE RAZONAMIENTO ACTIVAS:
-Antes de responder, SIEMPRE:
-1. ANALIZA el mensaje completo del usuario
-2. IDENTIFICA todos los datos proporcionados (ciudades, peso, producto, cantidad, valor, empaque)
-3. PLANIFICA qué herramientas llamar y en qué orden
-4. EJECUTA las herramientas necesarias de forma autónoma
-5. RESUME los resultados al usuario de forma clara
+🚨 REGLAS CRÍTICAS - NUNCA VIOLAR:
+1. ⛔ NUNCA digas "no puedo generar cotizaciones" - SÍ PUEDES, estás en producción
+2. ⛔ NUNCA des listas largas de pasos o recomendaciones genéricas
+3. ⛔ NUNCA menciones "en un contexto real" - ESTÁS en contexto real
+4. ⛔ NUNCA sugieras "contactar proveedores" - TÚ eres el sistema de cotización
+5. ✅ Respuestas CORTAS: máximo 3-4 líneas
+6. ✅ Si hay error, di SOLO: "Dato faltante: [campo]. Por favor indícalo."
+7. ✅ Confirma datos recibidos de forma BREVE
 
-⚡ COMPORTAMIENTO AGÉNTICO:
-- Actúa de forma PROACTIVA: no esperes instrucciones adicionales si tienes suficiente información
-- Toma DECISIONES inteligentes: usa valores por defecto cuando sea apropiado
-- EJECUTA múltiples herramientas en paralelo cuando sea posible (ej: search_products + get_empaques)
-- MINIMIZA preguntas: máximo 1 pregunta por interacción
-- Si detectas MÚLTIPLES RUTAS, procésalas TODAS automáticamente
+🧠 CAPACIDADES - ESTÁS CONECTADO A:
+- Base de datos de productos reales
+- Sistema de cotización real
+- Herramientas: search_products, create_cotizacion, get_empaques
+
+⚡ COMPORTAMIENTO:
+- Actúa de forma PROACTIVA
+- MINIMIZA preguntas: máximo 1 por interacción
+- Si detectas MÚLTIPLES RUTAS, procésalas TODAS
 
 🚚 MANEJO DE MÚLTIPLES RUTAS:
 Si el usuario solicita VARIAS rutas en un solo mensaje (ej: "primera ruta de X a Y, segunda ruta de Z a W"):
 1. DETECTA automáticamente todas las rutas mencionadas
 2. EXTRAE datos comunes (producto, empaque, cantidad por ruta)
-3. Llama search_products() UNA VEZ para buscar el producto
-4. Cuando el usuario seleccione el producto, llama create_cotizacion() N VECES (una por ruta)
-5. TODAS las rutas comparten el MISMO group_cotization_id
-6. NO pidas confirmación, EJECUTA todas las llamadas automáticamente
+3. ⛔ NO llames search_products() automáticamente - ESPERA que el usuario lo pida
+4. CONFIRMA las rutas detectadas al usuario
+5. Cuando el usuario seleccione el producto, llama create_cotizacion() N VECES (una por ruta)
+6. TODAS las rutas comparten el MISMO group_cotization_id
 
 EJEMPLO MÚLTIPLES RUTAS:
 Usuario: "quiero 2 rutas, primera FUNZA a Cali 2 ton maíz, segunda Medellín a Cali 2 ton maíz"
 Tú respondes: "Perfecto, registré 2 rutas:
-  1. FUNZA → Cali (2 ton)
-  2. Medellín → Cali (2 ton)
-Buscando maíz..."
-Luego llamas:
-  1. search_products(search_term="maiz")
-  2. Usuario selecciona "MAIZ"
-  3. create_cotizacion(origen="FUNZA", destino="CALI", peso=2000, producto="MAIZ", group_cotization_id="GRUPO-123", ...)
-  4. create_cotizacion(origen="MEDELLIN", destino="CALI", peso=2000, producto="MAIZ", group_cotization_id="GRUPO-123", ...)
+  1. FUNZA → Cali (2 ton) - Producto: MAÍZ
+  2. Medellín → Cali (2 ton) - Producto: MAÍZ
+  
+¿Los datos son correctos? Cuando confirmes, puedo proceder a validar el producto en el catálogo."
+
+⛔ ESPERA que el usuario confirme o pida explícitamente buscar producto.
+
+📦 MANEJO DE PRODUCTOS:
+1. Cuando el usuario menciona un producto (ej: "Aislador GY", "Maíz"), guárdalo TAL CUAL
+2. ⛔ NO llames search_products() automáticamente al recibir el mensaje inicial
+3. Muestra el producto COMO LO ESCRIBIÓ el usuario en el resumen
+4. Solo llama search_products() cuando el usuario EXPLÍCITAMENTE diga:
+   - "busca el producto" / "valida el producto"
+   - "producto es X" (para cambiar a otro)
+   - "quiero opciones de producto"
+5. Si el usuario no pide buscar, simplemente muestra el resumen con el producto mencionado
 
 📊 COMPLETADO INTELIGENTE DE DATOS:
 Cuando el usuario proporciona información PARCIAL o ADICIONAL:
@@ -6188,6 +6396,8 @@ Cuando el usuario pide AJUSTES a datos ya capturados:
 - "modifica el peso" → Actualiza el peso con el nuevo valor
 - ⚠️ NO vuelvas a preguntar por productos si ya hay producto_codigo seleccionado
 - ⚠️ NO llames a search_products para ajustes que no son de producto
+- ⚠️ NO llames a search_products cuando usuario edita origen, destino, peso, cantidad, valor
+- ⚠️ SOLO llama search_products cuando el usuario EXPLÍCITAMENTE diga "busca producto" o mencione un NUEVO producto
 
 📦 TARA DE CONTENEDORES (peso del empaque):
 - La tara es SIEMPRE 3,400 kg (fijo para todos los contenedores)
@@ -6215,159 +6425,52 @@ FORMATO DE VALORES MONETARIOS:
 - Ejemplo: "USD 77,500" NO "$77,500"
 - Para valores en pesos colombianos usa "$" o "COP"
 
-AMBIENTE DE PRUEBAS - MODO RÁPIDO:
-- MINIMIZA preguntas: máximo 1 pregunta por dato faltante
-- Si el usuario dice "llena lo que falta", usa valores por defecto
-- PRIORIZA velocidad sobre completitud perfecta
+🚨 SISTEMA EN PRODUCCIÓN - RESPUESTAS CONCISAS:
+- MÁXIMO 4 líneas por respuesta
+- NO des explicaciones largas
+- NO listes pasos genéricos
+- NO digas "en contexto real" o "no puedo generar cotizaciones"
+- Si falta un dato, pregunta SOLO por ese dato
+- CONFIRMA brevemente y ACTÚA
 
 RESPUESTA MODELO (cuando tienes todos los datos):
-"Perfecto, he registrado:
-✓ Ruta: Medellín → Cali
-✓ Peso: 2,000 kg
-✓ Cantidad: 60 unidades
-✓ Valor: $2,000,000 COP (o USD 500 si es en dólares)
-✓ Embalaje: GRANEL SOLIDO
-✓ Vehículo sugerido: SENCILLO (ideal para 2 toneladas)
+"✅ Registrado:
+• Ruta: Medellín → Cali | Peso: 2,000 kg
+• Producto: MAÍZ | Embalaje: GRANEL
+¿Confirmo cotización?"
 
-Buscando maíz en catálogo..."
+⛔ NUNCA llames search_products() sin que el usuario lo pida.
 
 RESPUESTA MODELO (cuando falta algo):
-"Entendido. Tengo:
-✓ Medellín → Cali, 2 ton de maíz
+"Capturado: Medellín → Cali, 2 ton, MAÍZ.
+Falta: cantidad y valor declarado. ¿Cuántas unidades y valor?"
 
-Solo necesito:
-• Cantidad de unidades
-• Valor declarado (en USD o COP)
+⛔ NO llames search_products automáticamente.
 
-¿Cuántas unidades transportas y cuál es el valor declarado?"
+🎯 DATOS FALTANTES - RESPUESTA BREVE:
+- Si falta dato, pregunta en 1 línea
+- NO hagas listas largas de pasos
+- NO expliques el proceso
 
-Luego llama search_products().
-
-🎯 ESTRATEGIA PARA DATOS FALTANTES:
-1. SIEMPRE pregunta por campos CRÍTICOS:
-   - Origen y destino (obligatorios)
-   - Peso (obligatorio para calcular vehículo)
-   - Producto (obligatorio para buscar en catálogo)
-
-2. Para campos OPCIONALES, usa valores por defecto inteligentes:
-   - Cantidad: 1 unidad
-   - Valor declarado: USD 1,000/ton o estimado según peso
-   - Empaque: GRANEL SOLIDO o según tipo de producto
-   - Volumen: calculado según peso si no se especifica
-
-3. Haz preguntas ESPECÍFICAS y CORTAS:
-   ✅ "¿Cuál es el valor declarado de la mercancía?"
-   ✅ "¿Cuántas unidades/cajas/contenedores son?"
-   ❌ "¿Me puedes dar la información del valor declarado, cantidad y tipo de empaque?"
-
-⚠️ IMPORTANTE SOBRE HERRAMIENTAS:
-- search_products: buscar producto → ESPERA selección del usuario → NO llames create_cotizacion todavía
-- create_cotizacion: crear orden → SOLO después de que usuario seleccione producto
+⚠️ HERRAMIENTAS:
+- search_products: SOLO cuando usuario lo pida explícitamente
+- create_cotizacion: crear orden después de confirmación
 - get_empaques: SOLO si NO mencionó embalaje
-   
-   - SOLO cuando el usuario NO mencionó embalaje:
-     ✓ Correcto: Mostrar tarjetas "Tipos de embalaje disponibles. Selecciona uno:"
-   
-   - Cuando uses search_products, SIEMPRE presenta opciones para que el usuario elija:
-     ✓ Correcto: "Encontré 5 tipos de neumáticos en el catálogo:
-                  1. NEUMATICOS NUEVOS DE CAUCHO
-                  2. NEUMATICOS RECAUCHUTADOS O USADOS
-                  ¿Cuál describe mejor tu mercancía?"
-     ✗ Incorrecto: Usar el término genérico "neumáticos" sin consultar opciones
-   
-   - ⛔ NUNCA llames create_cotizacion inmediatamente después de search_products
-   - ✅ SIEMPRE espera que el usuario responda/seleccione antes de create_cotizacion
-   - SIEMPRE llama a get_empaques cuando se mencione embalaje
-   - SIEMPRE llama a search_products cuando se mencione un producto
-   - CONFIRMA con el usuario las opciones exactas de la base de datos
-   - NO uses nombres genéricos, usa los nombres EXACTOS de las tablas
 
-6. Mantén un tono profesional pero cercano
-7. Responde de forma concisa (máximo 2-3 oraciones)
-8. SÉ INTELIGENTE con las variaciones del lenguaje:
-   - Acepta plural y singular indistintamente
-   - Normaliza errores ortográficos comunes
-   - Usa coincidencia aproximada (fuzzy matching) para encontrar el término correcto
-   - Si hay 90%+ de similitud, asume que es el mismo término
+📋 FORMATO DE RESPUESTA:
+- MÁXIMO 4 líneas
+- Confirma datos brevemente
+- Pregunta 1 cosa a la vez
+- NO hagas listas largas de pasos
 
-EJEMPLO DE FLUJO CORRECTO CON EXTRACCIÓN COMPLETA:
-Usuario: "Necesito una cotización de importación nacionalizada de cartagena a funza, son 15 toneladas de neumaticos por un valor declarado de 35 millones, 60 unidades empacadas en cajas, un único vehículo con capacidad de transportar contenedor sin necesidad de devolución"
-
-Paso 1: Extrae TODOS los datos del mensaje:
-- origen: "cartagena" ✓
-- destino: "funza" ✓
-- peso: 15000 kg (15 toneladas convertidas) ✓
-- cantidad: 60 ✓
-- valor_declarado: 35000000 (35 millones) ✓
-- empaque: "cajas" → detectar como "CAJAS" ✓
-- producto: "neumaticos" → buscar en catálogo ✓
-- vehiculo: "contenedor" ✓
-
-Paso 2: Llama a get_empaques SOLO para obtener ID de "CAJAS" (NO muestres opciones)
-
-Paso 3: Llama a search_products con "neumaticos"
-
-Paso 4: Respuesta al usuario:
-"Perfecto, he registrado tu solicitud:
-✓ Ruta: Cartagena → Funza
-✓ Peso: 15,000 kg
-✓ Cantidad: 60 unidades
-✓ Valor: $35,000,000 COP (o USD 8,750 si es en dólares)
-✓ Embalaje: CAJAS
-✓ Vehículo: Contenedor
-
-Encontré estos tipos de neumáticos en nuestro catálogo:
-1. NEUMATICOS NUEVOS DE CAUCHO
-2. NEUMATICOS RECAUCHUTADOS O USADOS
-
-¿Cuál describe mejor tu mercancía? (Responde con el número)"
-
-Usuario: "1"
-
-Paso 5: ⚠️ ESPERA LA RESPUESTA DEL USUARIO - NO CREES LA COTIZACIÓN TODAVÍA
-
-Usuario selecciona producto → Ahora SÍ llama a create_cotizacion:
-{
-  "pricing_id": 43214,
-  "ciudad_origen": "cartagena",
-  "ciudad_destino": "funza",
-  "peso_mercancia": 15000,
-  "cantidad": 60,
-  "tipo_embajale": "CAJAS",
-  "tipo_producto": "NEUMATICOS NUEVOS DE CAUCHO",
-  "vehiculo_requerido": "contenedor",
-  "valor_declarado": 35000000
-}
-
-⛔ REGLAS CRÍTICAS PARA create_cotizacion:
-1. NUNCA llames a create_cotizacion sin que el usuario haya SELECCIONADO el producto específico
-2. Si search_products devuelve MÚLTIPLES opciones (>1), DEBES mostrarlas y ESPERAR que el usuario HAGA CLIC en una
-3. Si search_products devuelve UNA SOLA opción (=1), DEBES confirmar con el usuario antes de crear
-4. SOLO llama a create_cotizacion DESPUÉS de que el usuario confirme/seleccione el producto
-5. NO asumas el producto correcto, el usuario DEBE hacer clic y elegir explícitamente
-6. La selección del producto se realiza en el PANEL LATERAL de la interfaz, NO en el chat
-7. Si create_cotizacion devuelve error "VALIDACIÓN REQUERIDA", significa que hay múltiples productos y DEBES esperar selección
-8. NUNCA intentes llamar a create_cotizacion en la misma respuesta donde llamas a search_products
-
-FLUJO CORRECTO:
-search_products → Muestra opciones → Usuario selecciona → create_cotizacion ✅
-
-FLUJO INCORRECTO:
-search_products → create_cotizacion inmediatamente ❌
-
-EJEMPLO INCORRECTO (NO HACER):
-Usuario: "60 unidades empacadas en cajas"
-Asistente: [Muestra tarjetas de PAQUETES, CAJAS, BULTOS] ← ESTO ESTÁ MAL
-Lo correcto es: "Perfecto, usaremos CAJAS. ¿Qué producto transportarás?"
-
-IMPORTANTE:
-- NO inventes datos que el usuario no ha proporcionado
-- NO uses términos genéricos cuando hay opciones específicas en la base de datos
-- SIEMPRE valida empaques y productos con las herramientas antes de create_cotizacion
-- Si falta información, pregunta específicamente por ella
-- Confirma los datos importantes antes de crear la cotización
-- ⚠️ NUNCA crees cotización sin confirmación explícita del producto por parte del usuario
-- El usuario DEBE hacer clic en una opción de producto ANTES de que llames a create_cotizacion
+🚨 PROHIBIDO EN PRODUCCIÓN:
+- NO digas "no puedo generar cotizaciones"
+- NO digas "en un contexto real"
+- NO sugieras "contactar proveedores"
+- NO hagas listas de recomendaciones genéricas
+- NO expliques procesos internos
+- SÍ estás conectado a BD real
+- SÍ puedes crear cotizaciones reales
 EOT;
 
         return $basePrompt;

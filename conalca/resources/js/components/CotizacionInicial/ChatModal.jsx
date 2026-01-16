@@ -125,6 +125,21 @@ const ChatModal = ({
     const resetConversation = async () => {
       if (!clientData.clientId) return;
 
+      // 🔴 SOLO resetear si es un NUEVO cliente o grupo (no en cada render)
+      const currentKey = `${clientData.clientId}-${clientData.groupId}`;
+      const previousKey = sessionStorage.getItem('lastChatKey');
+      
+      // Si es el mismo cliente/grupo, NO resetear
+      if (previousKey === currentKey) {
+        console.log('🔒 Mismo cliente/grupo, preservando datos existentes');
+        return;
+      }
+      
+      // Guardar la clave actual
+      sessionStorage.setItem('lastChatKey', currentKey);
+      
+      console.log('🔄 Nuevo cliente/grupo detectado, reseteando conversación');
+
       // Limpiar mensajes del chat
       if (onUpdateMessages) {
         onUpdateMessages([]);
@@ -895,6 +910,20 @@ const ChatModal = ({
                             });
 
                             // Enviar selección al backend
+                            // 🆕 FIX CRÍTICO: Usar selectedRouteIndexRef.current para obtener valor actualizado
+                            const currentSelectedRouteIndex = selectedRouteIndexRef.current;
+                            
+                            console.log('🚀🚀 ENVIANDO SELECCIÓN DE PRODUCTO AL BACKEND', {
+                              producto: prod.nombre,
+                              opcion: idx + 1,
+                              selectedRouteIndex_ref: currentSelectedRouteIndex,
+                              selectedRouteIndex_state: selectedRouteIndex,
+                              thread_id: activeThreadId || data.data.thread_id,
+                              '⚠️ CRÍTICO': currentSelectedRouteIndex !== null 
+                                ? `Producto se aplicará SOLO a Ruta ${currentSelectedRouteIndex + 1}` 
+                                : 'NO HAY RUTA SELECCIONADA - se aplicará a primera sin producto'
+                            });
+                            
                             fetch('/api/chat/quote', {
                               method: 'POST',
                               headers: {
@@ -908,7 +937,7 @@ const ChatModal = ({
                                 client_id: clientData.clientId,
                                 group_id: clientData.groupId || null,
                                 type_business: clientData.typeBusiness || typeBusiness,
-                                selected_route_index: selectedRouteIndex, // 🆕 FIX: Pasar índice de ruta seleccionada
+                                selected_route_index: currentSelectedRouteIndex, // 🆕 FIX: Usar valor actualizado de ref
                                 existing_routes_count: Array.isArray(quoteData) ? quoteData.length : (quoteData ? 1 : 0) // 🆕 FIX: Pasar cantidad de rutas
                               })
                             }).then(res => res.json()).then(result => {
@@ -1503,7 +1532,15 @@ const ChatModal = ({
                     ...(editedRoute.destino !== undefined && { ciudadDestino: editedRoute.destino }),
                     ...(pesoFinal && { pesoMercancia: pesoFinal }),
                     ...(editedRoute.cantidad !== undefined && { cantidadMercancia: editedRoute.cantidad }),
-                    ...(editedRoute.valor_declarado !== undefined && { valorMercancia: editedRoute.valor_declarado }),
+                    // 🔧 FIX: Preservar valorMercancia - verificar múltiples nombres de propiedad
+                    ...(editedRoute.valor_declarado !== undefined && { 
+                      valorMercancia: editedRoute.valor_declarado,
+                      valor_declarado: editedRoute.valor_declarado 
+                    }),
+                    ...(editedRoute.valor_mercancia !== undefined && !editedRoute.valor_declarado && { 
+                      valorMercancia: editedRoute.valor_mercancia,
+                      valor_declarado: editedRoute.valor_mercancia 
+                    }),
                     ...(editedRoute.vehiculo !== undefined && { claseVehiculo: editedRoute.vehiculo }),
                     ...(editedRoute.empaque !== undefined && { empaque: editedRoute.empaque }),
                     ...(editedRoute.empaque_id !== undefined && { empaque_id: editedRoute.empaque_id }),
