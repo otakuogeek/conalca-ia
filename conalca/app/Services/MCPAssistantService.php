@@ -802,7 +802,15 @@ class MCPAssistantService
                     // Múltiples resultados - mostrar opciones
                     Log::info('🔍 Múltiples productos encontrados, mostrando opciones', ['count' => count($productos)]);
                     
-                    $opcionesTxt = "He encontrado varios productos relacionados con \"{$searchTerm}\". A continuación, te presento las opciones disponibles:\n\n";
+                    // 🔧 FIX: Agregar número de ruta en multi-ruta
+                    $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
+                    $rutaInfo = '';
+                    if ($isMultiRouteData && $selectedRouteIndex !== null) {
+                        $rutaNum = $selectedRouteIndex + 1;
+                        $rutaInfo = " para la **Ruta {$rutaNum}**";
+                    }
+                    
+                    $opcionesTxt = "He encontrado varios productos relacionados con \"{$searchTerm}\"{$rutaInfo}. A continuación, te presento las opciones disponibles:\n\n";
                     $productosArray = [];
                     foreach ($productos as $idx => $prod) {
                         $p = (array)$prod;
@@ -3646,6 +3654,88 @@ class MCPAssistantService
                     return $routes;
                 }
             }
+        }
+        
+        // 🆕 CRÍTICO: DETECTAR PARES DE CIUDADES "de X a Y y Z a W"
+        // Patrón: "créame una ruta de bogotá a Medellín y Cartagena a San Andrés"
+        // Este patrón detecta múltiples pares origen→destino incluso si dice "una ruta"
+        $patronParesCiudades = '/(?:de|desde)\s+([a-záéíóúñ\s]+?)\s+(?:a|hasta)\s+([a-záéíóúñ\s]+?)\s+y\s+(?:de\s+)?([a-záéíóúñ\s]+?)\s+(?:a|hasta)\s+([a-záéíóúñ\s]+?)(?:\s+con|\s+de|\s+para|,|\.|\s+y\s+|$)/ui';
+        
+        if (preg_match($patronParesCiudades, $text, $matchPares)) {
+            Log::info('🔍 Patrón de PARES DE CIUDADES detectado', [
+                'match' => $matchPares[0],
+                'origen1' => $matchPares[1],
+                'destino1' => $matchPares[2],
+                'origen2' => $matchPares[3],
+                'destino2' => $matchPares[4]
+            ]);
+            
+            // Extraer las dos rutas
+            $ruta1 = [
+                'ruta_numero' => 1,
+                'origen' => self::normalizeCityName(trim($matchPares[1])),
+                'destino' => self::normalizeCityName(trim($matchPares[2]))
+            ];
+            
+            $ruta2 = [
+                'ruta_numero' => 2,
+                'origen' => self::normalizeCityName(trim($matchPares[3])),
+                'destino' => self::normalizeCityName(trim($matchPares[4]))
+            ];
+            
+            // Extraer datos comunes del resto del texto (después del match)
+            $matchEnd = strpos($text, $matchPares[0]) + strlen($matchPares[0]);
+            $contextAfter = substr($text, $matchEnd);
+            
+            // Buscar producto común
+            $productoComun = null;
+            if (preg_match('/(?:con\s+un?\s+)?producto(?:\s+de)?\s+([a-záéíóúñ\s]+?)(?:\s+para\s+los\s+dos|\s+de\s+\d+|\s+con|,|\.|\s+y\s+|$)/ui', $contextAfter, $prodMatch)) {
+                $productoComun = strtoupper(trim($prodMatch[1]));
+                Log::info('✅ Producto común detectado', ['producto' => $productoComun]);
+            }
+            
+            // Buscar peso común
+            $pesoComun = null;
+            if (preg_match('/(?:de|para\s+los\s+dos\s+de)\s+(\d+)\s*(?:toneladas?|ton|kilogramos?|kg)/ui', $contextAfter, $pesoMatch)) {
+                $pesoRaw = (int)$pesoMatch[1];
+                // Detectar si es toneladas
+                if (stripos($pesoMatch[0], 'ton') !== false) {
+                    $pesoComun = $pesoRaw * 1000; // Convertir a kg
+                } else {
+                    $pesoComun = $pesoRaw;
+                }
+                Log::info('✅ Peso común detectado', ['peso_kg' => $pesoComun]);
+            }
+            
+            // Buscar valor común
+            $valorComun = null;
+            if (preg_match('/(?:con\s+un?\s+)?valor(?:\s+de)?\s+(\d+)\s*(?:millones?|mill?)/ui', $contextAfter, $valorMatch)) {
+                $valorComun = (int)$valorMatch[1] * 1000000;
+                Log::info('✅ Valor común detectado', ['valor' => $valorComun]);
+            }
+            
+            // Aplicar datos comunes a ambas rutas
+            if ($productoComun) {
+                $ruta1['producto'] = $productoComun;
+                $ruta2['producto'] = $productoComun;
+            }
+            if ($pesoComun) {
+                $ruta1['peso_kg'] = $pesoComun;
+                $ruta2['peso_kg'] = $pesoComun;
+            }
+            if ($valorComun) {
+                $ruta1['valor_declarado'] = $valorComun;
+                $ruta2['valor_declarado'] = $valorComun;
+            }
+            
+            $routes = [$ruta1, $ruta2];
+            
+            Log::info('✅ 2 RUTAS detectadas con patrón de PARES DE CIUDADES', [
+                'ruta1' => $ruta1,
+                'ruta2' => $ruta2
+            ]);
+            
+            return $routes;
         }
         
         // 🆕 NUEVO PATRÓN: "Una cotización de X a Y, son N kg/toneladas de PRODUCTO..."

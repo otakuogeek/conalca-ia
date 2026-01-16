@@ -535,7 +535,7 @@ Route::group(['middleware' => 'auth'], function () {
         return view('llamadas.index', compact('groupCotizationId', 'cotizacionId'));
     })->name('llamadas.index');
 
-    Route::get('/logout', [LoginController::class, 'logout'])->name('auth.logout');
+    Route::match(['get', 'post'], '/logout', [LoginController::class, 'logout'])->name('auth.logout');
 
     // Account management routes
     Route::get('/account', [App\Http\Controllers\AccountController::class, 'show'])->name('account.show');
