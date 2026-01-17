@@ -455,6 +455,7 @@ const ChatModal = ({
               const processedRoutes = allRoutes.map((route, idx) => {
                 console.log(`📍 Procesando ruta ${idx + 1}:`, route);
                 return {
+                  ruta_numero: route.ruta_numero || (idx + 1), // Asegurar ID
                   ciudadOrigen: route.ciudad_origen ?? route.origen ?? null,
                   ciudadDestino: route.ciudad_destino ?? route.destino ?? null,
                   pesoMercancia: route.peso_mercancia ?? route.peso_kg ?? null,
@@ -467,15 +468,73 @@ const ChatModal = ({
                   empaque: route.empaque ?? null,
                   empaque_id: route.empaque_id ?? null,
                   contenedor: route.tipo_contenedor ?? route.contenedor ?? null,
+                  // Mantener valores originales para debug
+                  _originalValues: route
                 };
               });
 
               console.log(`✅ ${processedRoutes.length} rutas procesadas para QuoteDetailsPanel:`, processedRoutes);
 
-              // 🆕 SIEMPRE devolver array
-              setQuoteData(processedRoutes);
+              // 🆕 LÓGICA DE FUSIÓN INTELIGENTE (SMART MERGE)
+              setQuoteData(prevData => {
+                const prevArray = Array.isArray(prevData) ? prevData : [];
+                
+                // 1. Si no hay datos previos, o si la nueva data parece ser un reset completo (ej: multiples rutas), reemplazar todo
+                if (prevArray.length === 0 || (processedRoutes.length > 1 && processedRoutes.length >= prevArray.length)) {
+                  console.log('🔄 Reemplazo completo de quoteData (Reset o detección inicial)');
+                  return processedRoutes;
+                }
 
-              // Auto-seleccionar empaque del PRIMER elemento
+                // 2. Si son actualizaciones parciales (ej: 1 ruta en respuesta), fusionar
+                console.log('🔀 Iniciando fusión parcial de datos...');
+                const nextData = [...prevArray];
+                
+                processedRoutes.forEach(newRoute => {
+                  let targetIdx = -1;
+                  
+                  // Intentar coincidir por número de ruta
+                  if (newRoute.ruta_numero) {
+                    targetIdx = newRoute.ruta_numero - 1;
+                  } 
+                  
+                  // Si no hay ruta_numero pero es una sola actualización, asumir la ruta activa actual
+                  if (targetIdx === -1 && processedRoutes.length === 1) {
+                    // Usamos selectedRouteIndexRef para asegurar el valor más reciente
+                    const currentSelection = selectedRouteIndexRef.current;
+                    if (currentSelection !== null) {
+                        targetIdx = currentSelection;
+                    } else {
+                        // Si no hay selección explicita, asumir índice 0
+                        targetIdx = 0;
+                    }
+                  }
+
+                  if (targetIdx >= 0 && targetIdx < nextData.length) {
+                     const existing = nextData[targetIdx];
+                     const merged = { ...existing };
+                     
+                     // Fusionar solo campos no nulos/vacíos
+                     Object.keys(newRoute).forEach(key => {
+                        const val = newRoute[key];
+                        // Ignorar nulos, undefined se tratan como nulos. String vacios se ignoran? 
+                        // Depende, a veces queremos borrar. Pero en extracción IA partial, null suele significar "no mencionado".
+                        if (val !== null && val !== undefined && key !== '_originalValues') {
+                          merged[key] = val;
+                        }
+                     });
+                     
+                     console.log(`✅ Ruta ${targetIdx + 1} actualizada por fusión`, merged);
+                     nextData[targetIdx] = merged;
+                  } else {
+                     console.warn(`⚠️ No se pudo fusionar la ruta con ruta_numero=${newRoute.ruta_numero}. Índice fuera de rango.`);
+                  }
+                });
+                
+                return nextData;
+              });
+
+              // Auto-seleccionar empaque del PRIMER elemento (solo si es inicial)
+
               const firstRoute = allRoutes[0];
               if (firstRoute.empaque && firstRoute.empaque_id) {
                 setSelectedEmpaque({
@@ -544,8 +603,16 @@ const ChatModal = ({
   const processMessageWithAI = async (messageText) => {
     try {
       let currentData = {};
+      const currentRouteIdx = selectedRouteIndexRef.current;
+      
+      // 🆕 Seleccionar los datos correctos según la ruta seleccionada
       if (Array.isArray(quoteData) && quoteData.length > 0) {
-        currentData = quoteData[0];
+        if (currentRouteIdx !== null && currentRouteIdx < quoteData.length) {
+            currentData = quoteData[currentRouteIdx];
+            console.log(`📤 Enviando datos de ruta ${currentRouteIdx + 1} para extracción rápida`);
+        } else {
+            currentData = quoteData[0];
+        }
       } else if (quoteData && typeof quoteData === 'object') {
         currentData = quoteData;
       }
@@ -556,14 +623,15 @@ const ChatModal = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
           'Accept': 'application/json'
         },
         body: JSON.stringify({
           message: messageText,
           current_data: currentData,
           thread_id: threadId,
-          client_id: String(clientData.clientId)
+          client_id: String(clientData.clientId),
+          selected_route_index: selectedRouteIndex // 🆕 Enviar índice de ruta seleccionada para edición
         })
       });
 
@@ -599,13 +667,40 @@ const ChatModal = ({
           observaciones: extractedData.observaciones || currentData.observaciones || null
         };
 
-        // 🆕 NO sobrescribir si ya hay múltiples rutas (evitar perder multi-ruta)
+        // 🆕 NO sobrescribir si ya hay múltiples rutas (evitar perder multi-ruta),
+        // EXCEPTO si estamos editando una ruta específica
         setQuoteData(prev => {
+          const activeRouteIdx = selectedRouteIndexRef.current;
+            
           if (Array.isArray(prev) && prev.length > 1) {
-            console.log('⚠️ processMessageWithAI: Ya hay', prev.length, 'rutas - NO sobrescribiendo');
+            // Si hay ruta seleccionada, actualizar esa ruta específica
+            if (activeRouteIdx !== null && activeRouteIdx < prev.length) {
+                console.log(`✅ Extracción rápida: Actualizando ruta ${activeRouteIdx + 1}`);
+                const updated = [...prev];
+                // Merge inteligente para no borrar datos que no llegaron
+                updated[activeRouteIdx] = {
+                    ...updated[activeRouteIdx],
+                    ...Object.fromEntries(Object.entries(mappedData).filter(([_, v]) => v !== null))
+                };
+                return updated;
+            }
+
+            console.log('⚠️ processMessageWithAI: Multi-ruta detectada sin ruta seleccionada - NO sobrescribiendo');
             return prev; // Mantener las rutas existentes
           }
-          console.log('✅ processMessageWithAI: Actualizando con nuevos datos extraídos');
+          
+          // Caso ruta única o inicialización
+          console.log('✅ processMessageWithAI: Actualizando con nuevos datos extraídos (Ruta única)');
+          
+          if (Array.isArray(prev) && prev.length === 1) {
+             const updated = [...prev];
+             updated[0] = {
+                 ...updated[0],
+                 ...Object.fromEntries(Object.entries(mappedData).filter(([_, v]) => v !== null))
+             };
+             return updated;
+          }
+          
           return [mappedData];
         });
       }
@@ -1136,6 +1231,10 @@ const ChatModal = ({
           console.log('✅ TODAS LAS RUTAS MAPEADAS:', mappedRoutes);
 
           // 🔴 CRÍTICO: ACTUALIZAR QUOTEDATA HACIENDO MERGE CON DATOS EXISTENTES
+          // 🆕 FIX: Usar is_single_route_edit del backend si está disponible
+          const isBackendSingleEdit = data.data.is_single_route_edit === true;
+          const backendEditIndex = data.data.edited_route_index;
+
           if (mappedRoutes.length > 0) {
             console.log('🚀 Llamando setQuoteData con merge:', mappedRoutes);
             setQuoteData(prev => {
@@ -1145,37 +1244,86 @@ const ChatModal = ({
                 return mappedRoutes.map(route => sanitizeRouteData(route, {}));
               }
 
-              // Si hay datos previos, hacer merge campo por campo
+              // Si hay datos previos, hacer merge inteligente
               const prevArray = Array.isArray(prev) ? prev : [prev];
+              
+              // 🆕 LÓGICA DE ACTUALIZACIÓN SEGURA:
+              // 1. Si el backend dice explícitamente qué ruta editar -> usar eso
+              // 2. Si recibimos exactamente 1 ruta nueva y tenemos varias previas -> asumir edición de la seleccionada
+              // 3. Si recibimos N rutas nuevas -> hacer merge 1 a 1 (o agregar nuevas)
 
-              const merged = mappedRoutes.map((newRoute, idx) => {
-                const existingRoute = prevArray[idx] || {};
-
-                // 🆕 PRIMERO: Sanitizar la ruta nueva para evitar ciudades inválidas
-                const sanitizedNewRoute = sanitizeRouteData(newRoute, existingRoute);
-
-                const mergedRoute = { ...existingRoute };
-
-                // Solo sobrescribir campos que tienen valor en los nuevos datos (sanitizados)
-                Object.keys(sanitizedNewRoute).forEach(key => {
-                  if (sanitizedNewRoute[key] !== null && sanitizedNewRoute[key] !== undefined && sanitizedNewRoute[key] !== '') {
-                    mergedRoute[key] = sanitizedNewRoute[key];
+              let nextState = [...prevArray];
+              
+              if (isBackendSingleEdit && backendEditIndex !== null && backendEditIndex < nextState.length) {
+                 // CASO 1: Edición backend explícita
+                 console.log(`🎯 Merge dirigido a índice ${backendEditIndex} (Backend)`);
+                 const existing = nextState[backendEditIndex];
+                 const update = mappedRoutes[0]; // Asumimos que viene 1 sola en este caso
+                 const sanitized = sanitizeRouteData(update, existing);
+                 
+                 // Merge manual
+                 const merged = { ...existing };
+                 Object.keys(sanitized).forEach(key => {
+                    if (sanitized[key] !== null && sanitized[key] !== undefined && sanitized[key] !== '') {
+                        merged[key] = sanitized[key];
+                    }
+                 });
+                 nextState[backendEditIndex] = merged;
+                 
+              } else if (mappedRoutes.length === 1 && prevArray.length > 1) {
+                  // CASO 2: Edición implícita de una sola ruta
+                  const targetIdx = selectedRouteIndexRef.current !== null ? selectedRouteIndexRef.current : 0;
+                  console.log(`🎯 Merge dirigido a índice ${targetIdx} (Implícito 1-vs-Many)`);
+                  
+                  if (targetIdx < nextState.length) {
+                      const existing = nextState[targetIdx];
+                      const update = mappedRoutes[0];
+                      const sanitized = sanitizeRouteData(update, existing);
+                      
+                      const merged = { ...existing };
+                      Object.keys(sanitized).forEach(key => {
+                        if (sanitized[key] !== null && sanitized[key] !== undefined && sanitized[key] !== '') {
+                            merged[key] = sanitized[key];
+                        }
+                      });
+                      nextState[targetIdx] = merged;
                   }
-                });
+              } else {
+                  // CASO 3: Merge genérico (1-1 o Agregar)
+                  // Iteramos sobre la lista MÁS LARGA para cubrir actualizaciones y agregados
+                  const maxLen = Math.max(prevArray.length, mappedRoutes.length);
+                  
+                  for (let i = 0; i < maxLen; i++) {
+                      // Si hay una nueva ruta en esta posición, aplicarla
+                      if (i < mappedRoutes.length) {
+                          const existing = prevArray[i] || {};
+                          const update = mappedRoutes[i];
+                          
+                          // Si es una ruta totalmente nueva (no existe en prevArray), usarla base
+                          const isNew = i >= prevArray.length;
+                          
+                          const sanitized = sanitizeRouteData(update, existing);
+                          
+                          if (isNew) {
+                              nextState[i] = sanitized;
+                          } else {
+                              const merged = { ...existing };
+                              Object.keys(sanitized).forEach(key => {
+                                if (sanitized[key] !== null && sanitized[key] !== undefined && sanitized[key] !== '') {
+                                    merged[key] = sanitized[key];
+                                }
+                              });
+                              nextState[i] = merged;
+                          }
+                      }
+                      // Si no hay nueva ruta (mappedRoutes se acabó), conservamos la existente de nextState (ya clonada)
+                  }
+              }
 
-                console.log(`📍 Ruta ${idx + 1} mergeada:`, {
-                  prev: existingRoute,
-                  new: sanitizedNewRoute,
-                  merged: mergedRoute
-                });
-
-                return mergedRoute;
-              });
-
-              console.log('✅ DATOS MERGEADOS:', merged);
-              return merged;
+              console.log('✅ DATOS MERGEADOS (ESTADO FINAL):', nextState);
+              return nextState;
             });
-            console.log('✅ SETQUOTEDATA EJECUTADO CON MERGE');
+            console.log('✅ SETQUOTEDATA EJECUTADO CON MERGE INTELIGENTE');
           } else {
             console.warn('⚠️ No hay rutas mapeadas para actualizar');
           }
@@ -1193,12 +1341,14 @@ const ChatModal = ({
 
           // Auto-buscar producto de CADA ruta (no solo la primera)
           // Recopilar todos los productos únicos de las rutas
-          const productosUnicos = [...new Set(routesArray.map(r => r.producto).filter(Boolean))];
-          console.log('🔍 Productos únicos en rutas:', productosUnicos);
+          
+          // 🆕 FIX CRÍTICO: Iterar sobre `routesArray` directamente para mantener el contexto de índice
+          // Esto evita que el producto de la Ruta 1 sobrescriba a la Ruta 2 cuando se edita
+          routesArray.forEach((route, routeIdx) => {
+            const productoTexto = route.producto || route.producto_nombre;
+            if (!productoTexto) return;
 
-          // Buscar y validar cada producto por separado
-          productosUnicos.forEach((productoTexto, idx) => {
-            console.log(`🔍 Buscando producto ${idx + 1}/${productosUnicos.length}: "${productoTexto}"`);
+            console.log(`🔍 Buscando producto para Ruta ${routeIdx + 1}: "${productoTexto}"`);
 
             // Llamar al backend para buscar el producto
             fetch('/api/mcp/search-products', {
@@ -1211,17 +1361,24 @@ const ChatModal = ({
             })
               .then(res => res.json())
               .then(result => {
-                console.log(`📦 Resultado búsqueda "${productoTexto}":`, result);
+                console.log(`📦 Resultado búsqueda Ruta ${routeIdx + 1} ("${productoTexto}"):`, result);
 
                 if (result.success && result.productos && result.productos.length > 0) {
                   if (result.match_type === 'exact') {
-                    // Coincidencia exacta - auto-actualizar SOLO las rutas con este producto
+                    // Coincidencia exacta - auto-actualizar SOLO la ruta correspondiente
                     const producto = result.productos[0];
-                    console.log(`✅ Coincidencia EXACTA para "${productoTexto}":`, producto);
-                    console.log('📍 selectedRouteIndex al procesar producto:', selectedRouteIndex);
+                    console.log(`✅ Coincidencia EXACTA ruta ${routeIdx + 1}:`, producto);
+                    
+                    const currentRouteIndex = selectedRouteIndexRef.current;
+                    const isSingleUpdate = routesArray.length === 1 && currentRouteIndex !== null;
+                    const targetIndex = isSingleUpdate ? currentRouteIndex : routeIdx;
+
+                    console.log(`🎯 Aplicando producto a índice: ${targetIndex} (SingleUpdate: ${isSingleUpdate})`);
 
                     // Si es el primer producto (o único), actualizar selectedProduct global
-                    if (idx === 0) {
+                    // 🆕 FIX: Solo actualizar si la ruta destino es la primera (índice 0)
+                    // Esto evita que editar la ruta 2 sobrescriba la ruta 1 por usar selectedProduct fallback
+                    if (targetIndex === 0) {
                       setSelectedProduct({
                         codigo: producto.codigo,
                         nombre: producto.nombre,
@@ -1229,49 +1386,32 @@ const ChatModal = ({
                       });
                     }
 
-                    // Si hay ruta seleccionada, actualizar SOLO esa. 
-                    // Si no, actualizar rutas que tenían ESTE producto original
-                    // FIX: Usar ref para obtener valor actual (evitar closure obsoleto)
-                    const currentRouteIndex = selectedRouteIndexRef.current;
                     setQuoteData(prev => {
                       if (Array.isArray(prev) && prev.length > 0) {
-                        // Si hay ruta seleccionada para edición, actualizar SOLO esa ruta
-                        if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
-                          const updated = prev.map((route, idx) => {
-                            if (idx === currentRouteIndex) {
+                        // Actualizar SOLO la ruta objetivo
+                        if (targetIndex < prev.length) {
+                          const updated = prev.map((r, idx) => {
+                            if (idx === targetIndex) {
                               return {
-                                ...route,
+                                ...r,
                                 producto: producto.nombre,
                                 producto_codigo: producto.codigo,
                                 tipo_producto: producto.nombre
                               };
                             }
-                            return route; // No modificar otras rutas
+                            return r;
                           });
                           return updated;
                         }
-
-                        // Sin ruta seleccionada - buscar rutas que tenían este producto
-                        const updated = prev.map(route => {
-                          // Solo actualizar si esta ruta tenía el producto que buscamos
-                          const routeProducto = (route.producto || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-                          const buscando = productoTexto.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-                          if (routeProducto === buscando || route.producto?.toUpperCase() === productoTexto.toUpperCase()) {
-                            console.log(`  ✅ Actualizando ruta con ${route.producto} -> ${producto.nombre}`);
-                            return {
-                              ...route,
-                              producto: producto.nombre,
-                              producto_codigo: producto.codigo,
-                              tipo_producto: producto.nombre
-                            };
-                          }
-                          // No modificar rutas con otro producto
-                          return route;
-                        });
-                        return updated;
+                        return prev;
                       }
-                      return prev;
+                      // Caso objeto simple (no debería ocurrir en multi-ruta pero por seguridad)
+                      return {
+                        ...prev,
+                        producto: producto.nombre,
+                        producto_codigo: producto.codigo,
+                        tipo_producto: producto.nombre
+                      };
                     });
                   } else if (result.match_type === 'partial') {
                     // Sugerencias - mostrar al usuario para que elija
@@ -1283,7 +1423,7 @@ const ChatModal = ({
                         ...prev,
                         {
                           role: 'assistant',
-                          text: `No encontré "${productoTexto}" exactamente en el catálogo. ¿Te refieres a alguno de estos?`,
+                          text: `No encontré "${productoTexto}" exacta para la Ruta ${routeIdx + 1}. ¿Te refieres a alguno de estos?`,
                           created_at: new Date().toLocaleTimeString(),
                           toolCallData: {
                             isToolCall: true,
@@ -1296,62 +1436,47 @@ const ChatModal = ({
                                     className="block w-full text-left px-4 py-2 rounded bg-gray-100 hover:bg-orange-100 transition-colors"
                                     onClick={() => {
                                       console.log('✅ Usuario seleccionó sugerencia:', prod);
-                                      console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
+                                      
+                                      // Recalcular targetIndex al momento del click
+                                      const clickRouteIndex = selectedRouteIndexRef.current;
+                                      const isSingleUpdateClick = routesArray.length === 1 && clickRouteIndex !== null;
+                                      const targetIndexClick = isSingleUpdateClick ? clickRouteIndex : routeIdx;
 
                                       // 1. Actualizar selectedProduct (global para referencia)
-                                      setSelectedProduct({
-                                        codigo: prod.codigo,
-                                        nombre: prod.nombre,
-                                        producto_codigo: prod.codigo
-                                      });
+                                      // 🆕 FIX: Solo actualizar si es la ruta 0 para evitar efectos colaterales
+                                      if (targetIndexClick === 0) {
+                                          setSelectedProduct({
+                                            codigo: prod.codigo,
+                                            nombre: prod.nombre,
+                                            producto_codigo: prod.codigo
+                                          });
+                                      }
 
                                       // 2. Actualizar routes con el producto seleccionado
-                                      // FIX: Usar ref para obtener valor actual (evitar closure obsoleto)
-                                      const currentRouteIndex = selectedRouteIndexRef.current;
                                       setQuoteData(prev => {
                                         if (Array.isArray(prev) && prev.length > 0) {
-                                          // Si hay ruta seleccionada, actualizar SOLO esa ruta
-                                          if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
-                                            const updated = prev.map((route, idx) => {
-                                              if (idx === currentRouteIndex) {
+                                          if (targetIndexClick < prev.length) {
+                                            const updated = prev.map((r, i) => {
+                                              if (i === targetIndexClick) {
                                                 return {
-                                                  ...route,
+                                                  ...r,
                                                   producto: prod.nombre,
                                                   producto_codigo: prod.codigo,
                                                   tipo_producto: prod.nombre
                                                 };
                                               }
-                                              return route;
+                                              return r;
                                             });
                                             return updated;
                                           }
-                                          // Sin ruta seleccionada - actualizar todas
-                                          const updated = prev.map(route => ({
-                                            ...route,
-                                            producto: prod.nombre,
-                                            producto_codigo: prod.codigo,
-                                            tipo_producto: prod.nombre
-                                          }));
-                                          return updated;
-                                        } else if (prev && typeof prev === 'object' && Object.keys(prev).length > 0) {
-                                          const updated = {
+                                        }
+                                        // Fallback objeto
+                                        return {
                                             ...prev,
                                             producto: prod.nombre,
-                                            producto_codigo: prod.codigo,
+                                            producto_codigo: prod.codigo, 
                                             tipo_producto: prod.nombre
-                                          };
-                                          console.log('✅ Objeto actualizado:', updated);
-                                          return updated;
-                                        } else {
-                                          // Si NO hay datos previos, crear objeto inicial
-                                          const newData = {
-                                            producto: prod.nombre,
-                                            producto_codigo: prod.codigo,
-                                            tipo_producto: prod.nombre
-                                          };
-                                          console.log('🆕 Creando nuevo quoteData:', newData);
-                                          return newData;
-                                        }
+                                        };
                                       });
                                     }}
                                   >
@@ -2065,12 +2190,27 @@ const ChatModal = ({
                       className="border-2 rounded-lg p-4 transition-all cursor-pointer shadow-sm bg-orange-50 border-orange-300 hover:bg-orange-100 hover:border-orange-400 group"
                       onClick={() => {
                         setSelectedProduct(producto);
-                        // Actualizar quoteData automáticamente
-                        setQuoteData(prev => ({
-                          ...prev,
-                          producto: producto.nombre,
-                          codigoProducto: producto.codigo
-                        }));
+                        // Actualizar quoteData automáticamente (Manejo robusto para Array/Objeto)
+                        setQuoteData(prev => {
+                          if (Array.isArray(prev)) {
+                            // Actualizar solo la ruta seleccionada (o la primera si no hay selección)
+                            const targetIdx = selectedRouteIndexRef.current ?? 0;
+                            return prev.map((route, idx) => 
+                              idx === targetIdx ? { 
+                                ...route, 
+                                producto: producto.nombre, 
+                                codigoProducto: producto.codigo,
+                                tipo_producto: producto.nombre
+                              } : route
+                            );
+                          }
+                          return {
+                            ...prev,
+                            producto: producto.nombre,
+                            codigoProducto: producto.codigo,
+                            tipo_producto: producto.nombre
+                          };
+                        });
 
                         // 🆕 Ocultar la lista y mostrar selección en este mensaje específico
                         if (messageIndex !== null) {
@@ -2129,12 +2269,27 @@ const ChatModal = ({
                         }`}
                       onClick={() => {
                         setSelectedEmpaque(empaque);
-                        // Actualizar quoteData automáticamente
-                        setQuoteData(prev => ({
-                          ...prev,
-                          empaque: nombre,
-                          empaqueId: empaque.id
-                        }));
+                        // Actualizar quoteData automáticamente (Manejo robusto para Array/Objeto)
+                        setQuoteData(prev => {
+                          if (Array.isArray(prev)) {
+                             // Actualizar solo la ruta seleccionada (o la primera si no hay selección)
+                             const targetIdx = selectedRouteIndexRef.current ?? 0;
+                             return prev.map((route, idx) => 
+                               idx === targetIdx ? {
+                                 ...route,
+                                 empaque: nombre,
+                                 empaqueId: empaque.id,
+                                 tipo_embalaje: nombre
+                               } : route
+                             );
+                          }
+                          return {
+                            ...prev,
+                            empaque: nombre,
+                            empaqueId: empaque.id,
+                            tipo_embalaje: nombre
+                          };
+                        });
                       }}
                     >
                       <div className="flex flex-col items-center gap-1">

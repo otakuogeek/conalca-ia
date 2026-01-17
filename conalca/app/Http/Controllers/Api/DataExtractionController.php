@@ -102,7 +102,8 @@ class DataExtractionController extends Controller
                 'message' => 'required|string|min:3',
                 'current_data' => 'nullable|array',
                 'thread_id' => 'nullable|string',
-                'client_id' => 'nullable|numeric'  // Cambiado de 'string' a 'numeric' para aceptar números
+                'client_id' => 'nullable|numeric',
+                'selected_route_index' => 'nullable|numeric' // 🆕 Nuevo parámetro
             ]);
 
             // Convertir client_id a string si existe
@@ -118,7 +119,8 @@ class DataExtractionController extends Controller
 
             $result = $this->extractionService->extractDataFromMessage(
                 $validated['message'],
-                $validated['current_data'] ?? []
+                $validated['current_data'] ?? [],
+                $validated['selected_route_index'] ?? null // 🆕 Pasar al servicio
             );
 
             // Generar respuesta conversacional

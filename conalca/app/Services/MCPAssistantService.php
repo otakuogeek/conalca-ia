@@ -701,6 +701,11 @@ class MCPAssistantService
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'producto';
             $valorEditadoTemprano = strtoupper(trim($matchProductoSimple[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:agrega|pon|sumar?|inclu(?:ye|ir))\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit)) {
+            // 🆕 NUEVO: "Agrega Tara" detectado tempranamente
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'tara';
+            $valorEditadoTemprano = true; // Flag indicador
         }
         
         // Si es edición simple temprana (agregar/cambiar O eliminar), aplicar directamente y retornar
@@ -913,11 +918,24 @@ class MCPAssistantService
                     $metadata['last_run_status'] = 'completed';
                     $session->metadata = json_encode($metadata);
                     $session->save();
+
+                    // 🆕 FIX: Retornar los datos CON el término de búsqueda aplicado
+                    // Esto permite que el Frontend mantenga "TOMATE" y muestre las opciones,
+                    // en lugar de revertir al producto anterior.
+                    $extractedData = $previousExtractedData;
+                    // Aplicar término de búsqueda temporamente para que el frontend lo refleje
+                    if ($isMultiRouteData && $selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                        $extractedData[$selectedRouteIndex]['producto'] = $searchTerm;
+                        $extractedData[$selectedRouteIndex]['producto_nombre'] = $searchTerm;
+                    } elseif (!$isMultiRouteData) {
+                        $extractedData['producto'] = $searchTerm;
+                        $extractedData['producto_nombre'] = $searchTerm;
+                    }
                     
                     return [
                         'id' => $runId,
                         'status' => 'completed_with_data',
-                        'extracted_data' => $previousExtractedData,
+                        'extracted_data' => $extractedData, // Enviamos datos actualizados con el término de búsqueda
                         'productos_pendientes' => $productosArray
                     ];
                 }
@@ -948,11 +966,24 @@ class MCPAssistantService
                         $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
                     }
                     
-                    foreach ($camposAActualizar as $campo) {
-                        if ($esEliminacion) {
-                            unset($extractedData[$selectedRouteIndex][$campo]);
+                    if ($campoEditadoTemprano === 'tara') {
+                        // Lógica especial para Tara
+                        $yaConTara = !empty($extractedData[$selectedRouteIndex]['incluye_tara']);
+                        if (!$yaConTara) {
+                            $peso = floatval(str_replace(',', '', (string)($extractedData[$selectedRouteIndex]['peso_kg'] ?? 0)));
+                            $extractedData[$selectedRouteIndex]['peso_kg'] = $peso + 3400;
+                            $extractedData[$selectedRouteIndex]['incluye_tara'] = true;
+                            $valorEditadoTemprano = "Sí (+3400kg)";
                         } else {
-                            $extractedData[$selectedRouteIndex][$campo] = $valorEditadoTemprano;
+                            $valorEditadoTemprano = "Ya incluido";
+                        }
+                    } else {
+                        foreach ($camposAActualizar as $campo) {
+                            if ($esEliminacion) {
+                                unset($extractedData[$selectedRouteIndex][$campo]);
+                            } else {
+                                $extractedData[$selectedRouteIndex][$campo] = $valorEditadoTemprano;
+                            }
                         }
                     }
                 } else {
@@ -971,18 +1002,34 @@ class MCPAssistantService
                         $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
                     }
                     
-                    foreach ($extractedData as $idx => &$ruta) {
-                        if (is_array($ruta) && is_numeric($idx)) {
-                            foreach ($camposAActualizar as $campo) {
-                                if ($esEliminacion) {
-                                    unset($ruta[$campo]);
-                                } else {
-                                    $ruta[$campo] = $valorEditadoTemprano;
+                    if ($campoEditadoTemprano === 'tara') {
+                         foreach ($extractedData as $idx => &$ruta) {
+                            if (is_array($ruta) && is_numeric($idx)) {
+                                $yaConTara = !empty($ruta['incluye_tara']);
+                                if (!$yaConTara) {
+                                    $peso = floatval(str_replace(',', '', (string)($ruta['peso_kg'] ?? 0)));
+                                    $ruta['peso_kg'] = $peso + 3400;
+                                    $ruta['incluye_tara'] = true;
+                                }
+                            }
+                         }
+                         unset($ruta);
+                         $valorEditadoTemprano = "Sí (+3400kg)";
+                    } else {
+                        foreach ($extractedData as $idx => &$ruta) {
+                            if (is_array($ruta) && is_numeric($idx)) {
+                                foreach ($camposAActualizar as $campo) {
+                                    if ($esEliminacion) {
+                                        unset($ruta[$campo]);
+                                    } else {
+                                        $ruta[$campo] = $valorEditadoTemprano;
+                                    }
                                 }
                             }
                         }
+                        unset($ruta);
                     }
-                    unset($ruta);
+
                 }
             } else {
                 // 🆕 Ruta única - también mapear campos duplicados
@@ -1260,7 +1307,7 @@ class MCPAssistantService
         
         // 🆕 Agregar tara solo si se pide explícitamente Y no está ya incluida
         // FIX: Respetar selectedRouteIndex para aplicar solo a la ruta seleccionada
-        if ($agregarTara && !$yaIncluyeTara) {
+        if ($agregarTara) {
             // Verificar si hay peso en los datos y sumar tara (3400 kg fijo)
             $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
             
@@ -1268,29 +1315,37 @@ class MCPAssistantService
                 // 🔧 FIX: Si hay ruta seleccionada, aplicar SOLO a esa
                 if ($selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
                     $route = $extractedData[$selectedRouteIndex];
+                    // SIEMPRE SUMAR SI EL USUARIO LO PIDE, verificando lógica inteligente para no duplicar excesivamente
+                    // Pero si el usuario dice "agrega tara", asumimos que el peso actual NO la tiene o quiere corregirlo
                     $yaConTara = isset($route['incluye_tara']) && $route['incluye_tara'] === true;
-                    if (isset($route['peso_kg']) && !$yaConTara) {
-                        $pesoAnterior = $route['peso_kg'];
-                        $extractedData[$selectedRouteIndex]['peso_kg'] = $pesoAnterior + 3400;
-                        $extractedData[$selectedRouteIndex]['incluye_tara'] = true;
-                        Log::info('📦 TARA agregada a ruta ESPECÍFICA', [
-                            'ruta_seleccionada' => $selectedRouteIndex,
-                            'peso_anterior' => $pesoAnterior,
-                            'peso_con_tara' => $extractedData[$selectedRouteIndex]['peso_kg']
-                        ]);
-                    } else if ($yaConTara) {
-                        Log::info('📦 TARA ya incluida en ruta seleccionada, no se suma de nuevo', [
-                            'ruta' => $selectedRouteIndex,
-                            'peso_actual' => $route['peso_kg']
-                        ]);
+                    
+                    if (isset($route['peso_kg'])) {
+                        // Limpiar posible formato previo si viene de un string sucio
+                         $pesoAnterior = floatval(str_replace(',', '', (string)$route['peso_kg']));
+                         
+                         // Si la diferencia con el peso anterior es exactamente 3400, probalemente ya se sumó
+                         // Pero como estamos en el flujo FINAL del Run, es seguro sumarlo si el flag no está
+                         // O forzarlo si el usuario lo pide explícitamente
+                         
+                         if (!$yaConTara) {
+                            $extractedData[$selectedRouteIndex]['peso_kg'] = $pesoAnterior + 3400;
+                            $extractedData[$selectedRouteIndex]['incluye_tara'] = true;
+                            Log::info('📦 TARA agregada a ruta ESPECÍFICA', [
+                                'ruta_seleccionada' => $selectedRouteIndex,
+                                'peso_anterior' => $pesoAnterior,
+                                'peso_con_tara' => $extractedData[$selectedRouteIndex]['peso_kg']
+                            ]);
+                         }
                     }
                 } else {
                     // Sin ruta seleccionada - aplicar a todas
                     foreach ($extractedData as $idx => $route) {
                         // 🔧 Verificar que NO tenga ya la tara incluida en los datos
                         $yaConTara = isset($route['incluye_tara']) && $route['incluye_tara'] === true;
+                        
                         if (isset($route['peso_kg']) && !$yaConTara) {
-                            $pesoAnterior = $route['peso_kg'];
+                             $pesoAnterior = floatval(str_replace(',', '', (string)$route['peso_kg']));
+                             
                             $extractedData[$idx]['peso_kg'] = $pesoAnterior + 3400;
                             $extractedData[$idx]['incluye_tara'] = true;
                             Log::info('📦 TARA agregada a ruta (multi)', [
@@ -1298,29 +1353,22 @@ class MCPAssistantService
                                 'peso_anterior' => $pesoAnterior,
                                 'peso_con_tara' => $extractedData[$idx]['peso_kg']
                             ]);
-                        } else if ($yaConTara) {
-                            Log::info('📦 TARA ya incluida en ruta (multi), no se suma de nuevo', [
-                                'ruta' => $idx,
-                                'peso_actual' => $route['peso_kg']
-                            ]);
                         }
                     }
                 }
             } else {
                 // 🔧 Verificar que NO tenga ya la tara incluida en los datos
                 $yaConTara = isset($extractedData['incluye_tara']) && $extractedData['incluye_tara'] === true;
+                
                 if (isset($extractedData['peso_kg']) && !$yaConTara) {
-                    $pesoAnterior = $extractedData['peso_kg'];
+                    $pesoAnterior = floatval(str_replace(',', '', (string)$extractedData['peso_kg']));
+                    
                     $extractedData['peso_kg'] = $pesoAnterior + 3400;
                     $extractedData['incluye_tara'] = true;
                     Log::info('📦 TARA agregada al peso', [
                         'peso_anterior' => $pesoAnterior,
                         'tara' => 3400,
                         'peso_con_tara' => $extractedData['peso_kg']
-                    ]);
-                } else if ($yaConTara) {
-                    Log::info('📦 TARA ya incluida en datos, no se suma de nuevo', [
-                        'peso_actual' => $extractedData['peso_kg']
                     ]);
                 }
             }
@@ -5361,8 +5409,55 @@ class MCPAssistantService
      */
     private static function normalizeCityName($cityName)
     {
-        // Eliminar acentos y convertir a mayúsculas
+        // Abreviaciones comunes (Agregado solicitud usuario)
+        $abbreviations = [
+            'BOG' => 'BOGOTA',
+            'MED' => 'MEDELLIN',
+            'CLO' => 'CALI',
+            'BAQ' => 'BARRANQUILLA',
+            'CTG' => 'CARTAGENA',
+            'BGA' => 'BUCARAMANGA',
+            'CUC' => 'CUCUTA',
+            'PEI' => 'PEREIRA',
+            'MZL' => 'MANIZALES',
+            'AXM' => 'ARMENIA',
+            'IBE' => 'IBAGUE',
+            'NVA' => 'NEIVA',
+            'VVC' => 'VILLAVICENCIO',
+            'PSO' => 'PASTO',
+            'PPN' => 'POPAYAN',
+            'SMR' => 'SANTA MARTA',
+            'CVE' => 'SINCELEJO',
+            'MTR' => 'MONTERIA',
+            'VUP' => 'VALLEDUPAR',
+            'RCH' => 'RIOHACHA',
+            'UIB' => 'QUIBDO',
+            'LET' => 'LETICIA',
+            'ADZ' => 'SAN ANDRES',
+            'EYP' => 'YOPAL',
+            'AUC' => 'ARAUCA',
+            'FLA' => 'FLORENCIA',
+            'MCO' => 'MOCOA',
+            'TUN' => 'TUNJA',
+            'DUI' => 'DUITAMA',
+            'SOG' => 'SOGAMOSO',
+            'GIR' => 'GIRARDOT',
+            'ZIP' => 'ZIPAQUIRA',
+            'FAC' => 'FACATATIVA',
+            'SOA' => 'SOACHA'
+        ];
+
+        // Normalizar entrada inicial
         $cityName = trim($cityName);
+        $upperInput = mb_strtoupper($cityName);
+        
+        // Verificar si es una abreviatura exacta
+        if (isset($abbreviations[$upperInput])) {
+            Log::info('📍 Abreviatura ciudad expandida', ['abbr' => $upperInput, 'full' => $abbreviations[$upperInput]]);
+            return $abbreviations[$upperInput];
+        }
+
+        // Eliminar acentos y convertir a mayúsculas
         
         // 🆕 LISTA NEGRA: Palabras que NO son ciudades (verbos, conectores, etc.)
         $blackList = [
@@ -6390,8 +6485,7 @@ Cuando el usuario proporciona información PARCIAL o ADICIONAL:
 
 � AJUSTES Y CORRECCIONES:
 Cuando el usuario pide AJUSTES a datos ya capturados:
-- "agrega la tara" → Suma el peso del empaque/contenedor al peso neto
-- "incluye la tara" → Calcula peso bruto = peso neto + peso contenedor
+- "agrega la tara" → DÉJALO ESTAR, el sistema lo sumará automáticamente. Solo confirma.
 - "cambia el producto" → SOLO si menciona un NUEVO producto
 - "modifica el peso" → Actualiza el peso con el nuevo valor
 - ⚠️ NO vuelvas a preguntar por productos si ya hay producto_codigo seleccionado
@@ -6400,9 +6494,10 @@ Cuando el usuario pide AJUSTES a datos ya capturados:
 - ⚠️ SOLO llama search_products cuando el usuario EXPLÍCITAMENTE diga "busca producto" o mencione un NUEVO producto
 
 📦 TARA DE CONTENEDORES (peso del empaque):
-- La tara es SIEMPRE 3,400 kg (fijo para todos los contenedores)
-- Si el usuario dice "agrega la tara" o "incluye la tara" → suma 3,400 kg al peso neto
-- Si el usuario dice "el peso ya incluye tara" o "peso con tara" → NO sumes nada
+- El sistema se encarga de la matemática de la tara (3400kg).
+- Tú solo extrae la INTENCIÓN del usuario: "quiere incluir tara".
+- Si el usuario dice "peso 20 toneladas con tara", extrae "peso: 20000", "incluye_tara: true".
+- Si el usuario dice "agrega tara", el sistema lo hará.
 
 �🚛 SUGERENCIA AUTOMÁTICA DE VEHÍCULO:
 Basado en el peso detectado, sugiere automáticamente:

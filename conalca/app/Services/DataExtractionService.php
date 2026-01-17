@@ -28,11 +28,12 @@ class DataExtractionService
      * Procesa un mensaje de usuario y extrae datos de cotización
      * Usa OpenAI API para análisis inteligente
      */
-    public function extractDataFromMessage(string $userMessage, array $currentData = []): array
+    public function extractDataFromMessage(string $userMessage, array $currentData = [], ?int $selectedRouteIndex = null): array
     {
         Log::info('🔍 DataExtractionService: Procesando mensaje con OpenAI', [
             'message_length' => strlen($userMessage),
-            'current_data_keys' => array_keys($currentData)
+            'current_data_keys' => array_keys($currentData),
+            'selected_route_index' => $selectedRouteIndex
         ]);
 
         $systemPrompt = $this->buildSystemPrompt($currentData);
@@ -76,6 +77,35 @@ class DataExtractionService
             
             // Parsear respuesta JSON
             $extractedData = $this->parseExtractionResponse($assistantMessage);
+
+            // 🆕 LÓGICA TARA (Manual, post-procesamiento para respuesta rápida)
+            // Esto asegura que la respuesta inmediata tenga el cálculo aplicado
+            $lastUserMessage = strtolower($userMessage);
+            $agregarTara = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar)\s+(?:la\s+)?tara/ui', $lastUserMessage);
+            
+            if ($agregarTara) {
+                // Buscar peso en extracción actual o datos previos
+                $pesoActual = $extractedData['extracted']['peso'] ?? $currentData['peso_mercancia'] ?? $currentData['peso'] ?? 0;
+                
+                // Limpiar peso si viene como string
+                if (is_string($pesoActual)) {
+                    $pesoActual = (float) preg_replace('/[^0-9.]/', '', $pesoActual);
+                }
+                
+                // Solo sumar si hay un peso base y no parece tener tara ya incluida (heurística simple)
+                if ($pesoActual > 0) {
+                     $nuevoPeso = $pesoActual + 3400;
+                     $extractedData['extracted']['peso'] = $nuevoPeso;
+                     // Asegurar que se incluya en la respuesta
+                     $extractedData['extracted']['incluye_tara'] = true;
+                     
+                     Log::info('📦 TARA agregada en Quick Extraction', [
+                         'peso_anterior' => $pesoActual,
+                         'nuevo_peso' => $nuevoPeso,
+                         'selected_route_index' => $selectedRouteIndex
+                     ]);
+                }
+            }
             
             Log::info('✅ DataExtractionService: Extracción completada', [
                 'extracted_fields' => array_keys($extractedData['extracted'] ?? []),
@@ -297,6 +327,39 @@ EOT;
 
                 case 'origen':
                 case 'destino':
+                    // 🆕 NORMALIZACIÓN EXTENDIDA: Abreviaturas y Mayúsculas
+                    // Usar la misma lógica de MCPAssistantService si es posible, o replicarla
+                    $val = trim($value);
+                    $upperVal = mb_strtoupper($val);
+                    
+                    $abbreviations = [
+                        'BOG' => 'BOGOTA', 'MED' => 'MEDELLIN', 'CLO' => 'CALI', 
+                        'BAQ' => 'BARRANQUILLA', 'CTG' => 'CARTAGENA', 'BGA' => 'BUCARAMANGA',
+                        'CUC' => 'CUCUTA', 'PEI' => 'PEREIRA', 'MZL' => 'MANIZALES',
+                        'AXM' => 'ARMENIA', 'IBE' => 'IBAGUE', 'NVA' => 'NEIVA',
+                        'VVC' => 'VILLAVICENCIO', 'PSO' => 'PASTO', 'PPN' => 'POPAYAN',
+                        'SMR' => 'SANTA MARTA', 'CVE' => 'SINCELEJO', 'MTR' => 'MONTERIA',
+                        'VUP' => 'VALLEDUPAR', 'RCH' => 'RIOHACHA', 'UIB' => 'QUIBDO',
+                        'LET' => 'LETICIA', 'ADZ' => 'SAN ANDRES', 'EYP' => 'YOPAL',
+                        'AUC' => 'ARAUCA', 'FLA' => 'FLORENCIA', 'MCO' => 'MOCOA',
+                        'TUN' => 'TUNJA', 'DUI' => 'DUITAMA', 'SOG' => 'SOGAMOSO',
+                        'GIR' => 'GIRARDOT', 'ZIP' => 'ZIPAQUIRA', 'FAC' => 'FACATATIVA',
+                        'SOA' => 'SOACHA'
+                    ];
+                    
+                    if (isset($abbreviations[$upperVal])) {
+                        $normalized[$key] = $abbreviations[$upperVal];
+                    } else {
+                        // Eliminar acentos y convertir a mayúsculas
+                        $replacements = [
+                            'á' => 'A', 'é' => 'E', 'í' => 'I', 'ó' => 'O', 'ú' => 'U',
+                            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+                            'ñ' => 'N', 'Ñ' => 'N'
+                        ];
+                        $normalized[$key] = mb_strtoupper(strtr($val, $replacements), 'UTF-8');
+                    }
+                    break;
+                    
                 case 'contenedor':
                 case 'producto':
                 case 'mercancia':

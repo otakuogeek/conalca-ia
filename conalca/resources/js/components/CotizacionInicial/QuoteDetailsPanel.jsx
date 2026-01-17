@@ -140,49 +140,72 @@ const QuoteDetailsPanel = ({
         const productoValido = !!productoMostrar;
         
         // Resolver empaque: priorizar route específico, luego selectedEmpaque
-        const empaqueMostrar = route.empaque || route.tipo_embalaje || selectedEmpaque?.nome || selectedEmpaque?.nombre || null;
+        const empaqueMostrar = route.empaque || route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.nome || selectedEmpaque?.nombre || null;
         
         // 🆕 Verificar si esta ruta está seleccionada para edición
         const isSelected = selectedRouteIndex === index;
         
-        console.log(`📋 Ruta ${index + 1} - Datos resueltos:`, {
-          productoMostrar,
-          productoValido,
-          empaqueMostrar,
-          isSelected,
-          route
-        });
+
+        // Colores según estado y selección
+        const colorScheme = isSelected 
+          ? { 
+              border: 'border-yellow-400 ring-2 ring-yellow-200', 
+              bg: 'bg-white', 
+              header: 'bg-yellow-500', 
+              icon: 'text-yellow-600',
+              gradient: 'from-yellow-400 to-yellow-500',
+              badge: 'bg-yellow-100 text-yellow-800'
+            }
+          : { 
+              border: 'border-gray-200', 
+              bg: 'bg-white', 
+              header: 'bg-orange-500', 
+              icon: 'text-orange-500',
+              gradient: 'from-orange-500 to-red-400',
+              badge: 'bg-orange-100 text-orange-700'
+            };
         
-        // Colores para diferentes rutas
-        const routeColors = [
-          { bg: 'from-orange-500 to-orange-600', badge: 'bg-orange-100 text-orange-700', icon: 'text-orange-500', border: 'border-orange-500' },
-          { bg: 'from-emerald-500 to-emerald-600', badge: 'bg-emerald-100 text-emerald-700', icon: 'text-emerald-500', border: 'border-emerald-500' },
-          { bg: 'from-purple-500 to-purple-600', badge: 'bg-purple-100 text-purple-700', icon: 'text-purple-500', border: 'border-purple-500' },
-          { bg: 'from-blue-500 to-blue-600', badge: 'bg-blue-100 text-blue-700', icon: 'text-blue-500', border: 'border-blue-500' },
-          { bg: 'from-pink-500 to-pink-600', badge: 'bg-pink-100 text-pink-700', icon: 'text-pink-500', border: 'border-pink-500' },
-        ];
-        const colorScheme = routeColors[index % routeColors.length];
+        // Colores específicos por ruta si no está seleccionada
+        if (!isSelected) {
+            if (index === 1) { // Ruta 2
+                colorScheme.gradient = 'from-emerald-500 to-teal-500';
+                colorScheme.icon = 'text-emerald-500';
+                colorScheme.badge = 'bg-emerald-100 text-emerald-700';
+            } else if (index === 2) { // Ruta 3
+                colorScheme.gradient = 'from-blue-500 to-indigo-500';
+                colorScheme.icon = 'text-blue-500';
+                colorScheme.badge = 'bg-blue-100 text-blue-700';
+            }
+        }
         
         return (
           <div 
             key={index} 
-            className={`bg-white rounded-xl shadow-sm overflow-hidden transition-all duration-200 cursor-pointer
+            className={`w-full rounded-2xl shadow-sm overflow-hidden transition-all duration-300 group
               ${isSelected 
-                ? `ring-2 ring-offset-2 ${colorScheme.border} ring-current shadow-lg border-2 ${colorScheme.border}` 
+                ? `ring-4 ring-yellow-200 border-2 border-yellow-400 transform scale-[1.01] z-10 my-2` 
                 : 'border border-gray-200 hover:shadow-md'
               }`}
-            onClick={() => onSelectRoute && onSelectRoute(isSelected ? null : index)}
           >
-            {/* Header de la ruta con color */}
-            <div className={`bg-gradient-to-r ${colorScheme.bg} px-5 py-3`}>
+            {/* Header de la Card */}
+            <div className={`bg-gradient-to-r ${colorScheme.gradient} px-5 py-3 relative`}>
+                
+              {/* Etiqueta flotante de edición */}
+              {isSelected && (
+                  <div className="absolute top-3 right-16 bg-white/20 px-2 py-0.5 rounded text-white text-xs font-bold animate-pulse">
+                      ✏️ Editando
+                  </div>
+              )}
+              
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3 flex-1">
-                  {/* 🆕 Checkbox de selección */}
-                  <div 
-                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-200 flex-shrink-0
+                  {/* 🆕 Checkbox de selección grande y claro */}
+                  <button
+                    type="button" 
+                    className={`h-8 px-3 rounded-lg flex items-center gap-2 transition-all duration-200 shadow-sm font-bold text-xs uppercase tracking-wide
                       ${isSelected 
-                        ? 'bg-white text-green-600' 
-                        : 'bg-white/20 text-white hover:bg-white/40'
+                        ? 'bg-white text-yellow-700 hover:bg-yellow-50 ring-2 ring-white/50' 
+                        : 'bg-white/20 text-white hover:bg-white/30'
                       }`}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -190,15 +213,22 @@ const QuoteDetailsPanel = ({
                     }}
                   >
                     {isSelected ? (
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>Activa</span>
+                      </>
                     ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        <span>Editar</span>
+                      </>
                     )}
-                  </div>
+                  </button>
+
                   <span className="text-white font-bold text-base">
                     Ruta {index + 1}
                     {isSelected && <span className="ml-2 text-xs font-normal bg-white/30 px-2 py-0.5 rounded-full">Editando</span>}
