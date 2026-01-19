@@ -528,6 +528,179 @@ class MCPAssistantService
         // Mensajes largos como correos de solicitud NO deben procesarse como edición simple
         $esEdicionSimpleHabilitada = strlen($lastUserMessageForEdit) < 150;
         
+        // 🆕🆕 DETECCIÓN DE MÚLTIPLES CAMPOS: Si el mensaje contiene comas, detectar todos los campos a la vez
+        $camposMultiples = [];
+        $esEdicionMultiple = false;
+        if ($esEdicionSimpleHabilitada && strpos($lastUserMessageForEdit, ',') !== false) {
+            Log::info('🔍 Detectando MÚLTIPLES CAMPOS en mensaje con comas');
+            
+            // Detectar ORIGEN
+            if (preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['origen'] = self::normalizeCityName(trim($m[1]));
+            } elseif (preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['origen'] = self::normalizeCityName(trim($m[1]));
+            }
+            
+            // Detectar DESTINO
+            if (preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['destino'] = self::normalizeCityName(trim($m[1]));
+            } elseif (preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['destino'] = self::normalizeCityName(trim($m[1]));
+            }
+            
+            // Detectar VEHÍCULO
+            if (preg_match('/(?:el\s+)?veh[ií]culo\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $vehiculoRaw = trim($m[1]);
+                $camposMultiples['vehiculo'] = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
+            }
+            
+            // Detectar PRODUCTO
+            if (preg_match('/(?:el\s+)?producto\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['producto'] = strtoupper(trim($m[1]));
+            }
+            
+            // Detectar PESO
+            if (preg_match('/(?:el\s+)?peso\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $m)) {
+                $peso = floatval(str_replace(',', '.', $m[1]));
+                if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
+                    $peso = $peso * 1000;
+                }
+                $camposMultiples['peso_kg'] = $peso;
+            }
+            
+            // Detectar CANTIDAD
+            if (preg_match('/(?:la\s+)?cantidad\s*(?:' . $palabrasAgregar . ')\s*(\d+)/ui', $lastUserMessageForEdit, $m)) {
+                $camposMultiples['cantidad'] = intval($m[1]);
+            }
+            
+            // Detectar VALOR DECLARADO
+            if (preg_match('/(?:el\s+)?valor(?:\s+declarado)?\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:millones?)?/ui', $lastUserMessageForEdit, $m)) {
+                $valor = floatval(str_replace([',', '.'], ['', ''], $m[1]));
+                if (preg_match('/millones?/ui', $lastUserMessageForEdit)) {
+                    $valor = $valor * 1000000;
+                }
+                $camposMultiples['valor_declarado'] = $valor;
+            }
+            
+            // Si detectamos 2 o más campos, es edición múltiple
+            if (count($camposMultiples) >= 2) {
+                $esEdicionMultiple = true;
+                Log::info('✅ EDICIÓN MÚLTIPLE detectada', ['campos' => array_keys($camposMultiples)]);
+            }
+        }
+        
+        // 🆕🆕 PROCESAR EDICIÓN MÚLTIPLE (antes de edición simple individual)
+        if ($esEdicionMultiple && !empty($previousExtractedData)) {
+            Log::info('🚀 Procesando EDICIÓN MÚLTIPLE', ['campos' => $camposMultiples]);
+            
+            $extractedData = $previousExtractedData;
+            $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
+            
+            // Aplicar TODOS los cambios a la ruta seleccionada (o primera ruta si no hay selección)
+            if ($isMultiRouteData) {
+                $targetIndex = $selectedRouteIndex !== null ? $selectedRouteIndex : 0;
+                if (isset($extractedData[$targetIndex])) {
+                    foreach ($camposMultiples as $campo => $valor) {
+                        if ($campo === 'origen') {
+                            $extractedData[$targetIndex]['origen'] = $valor;
+                            $extractedData[$targetIndex]['ciudad_origen'] = $valor;
+                        } elseif ($campo === 'destino') {
+                            $extractedData[$targetIndex]['destino'] = $valor;
+                            $extractedData[$targetIndex]['ciudad_destino'] = $valor;
+                        } elseif ($campo === 'vehiculo') {
+                            $extractedData[$targetIndex]['vehiculo'] = $valor;
+                        } elseif ($campo === 'producto') {
+                            $extractedData[$targetIndex]['producto'] = $valor;
+                        } elseif ($campo === 'peso_kg') {
+                            $extractedData[$targetIndex]['peso_kg'] = $valor;
+                        } elseif ($campo === 'cantidad') {
+                            $extractedData[$targetIndex]['cantidad'] = $valor;
+                        } elseif ($campo === 'valor_declarado') {
+                            $extractedData[$targetIndex]['valor_declarado'] = $valor;
+                        }
+                    }
+                    
+                    Log::info('✅ Cambios múltiples aplicados a ruta', [
+                        'ruta_index' => $targetIndex,
+                        'datos_actualizados' => $extractedData[$targetIndex]
+                    ]);
+                }
+            } else {
+                // Ruta única
+                foreach ($camposMultiples as $campo => $valor) {
+                    if ($campo === 'origen') {
+                        $extractedData['origen'] = $valor;
+                        $extractedData['ciudad_origen'] = $valor;
+                    } elseif ($campo === 'destino') {
+                        $extractedData['destino'] = $valor;
+                        $extractedData['ciudad_destino'] = $valor;
+                    } elseif ($campo === 'vehiculo') {
+                        $extractedData['vehiculo'] = $valor;
+                    } elseif ($campo === 'producto') {
+                        $extractedData['producto'] = $valor;
+                    } elseif ($campo === 'peso_kg') {
+                        $extractedData['peso_kg'] = $valor;
+                    } elseif ($campo === 'cantidad') {
+                        $extractedData['cantidad'] = $valor;
+                    } elseif ($campo === 'valor_declarado') {
+                        $extractedData['valor_declarado'] = $valor;
+                    }
+                }
+            }
+            
+            // Guardar en BD
+            if ($groupId) {
+                $group = GroupCotization::find($groupId);
+                if ($group) {
+                    $group->extracted_data = json_encode($extractedData);
+                    $group->save();
+                    Log::info('💾 extracted_data guardado tras edición múltiple', ['group_id' => $groupId]);
+                }
+            }
+            
+            // Generar respuesta con todos los cambios
+            $rutaInfo = $isMultiRouteData && $selectedRouteIndex !== null 
+                ? " en la **Ruta " . ($selectedRouteIndex + 1) . "**" 
+                : "";
+            
+            $cambiosTxt = "¡Entendido! He actualizado los siguientes campos{$rutaInfo}:\n\n";
+            foreach ($camposMultiples as $campo => $valor) {
+                $nombreCampo = ucfirst(str_replace('_', ' ', $campo));
+                if ($campo === 'peso_kg') {
+                    $cambiosTxt .= "- **{$nombreCampo}:** " . number_format($valor, 0, ',', '.') . " kg\n";
+                } elseif ($campo === 'cantidad') {
+                    $cambiosTxt .= "- **{$nombreCampo}:** " . number_format($valor, 0, ',', '.') . "\n";
+                } elseif ($campo === 'valor_declarado') {
+                    $cambiosTxt .= "- **{$nombreCampo}:** $" . number_format($valor, 0, ',', '.') . "\n";
+                } else {
+                    $cambiosTxt .= "- **{$nombreCampo}:** {$valor}\n";
+                }
+            }
+            
+            ConversationMessage::create([
+                'session_id' => $session->id,
+                'group_cotization_id' => $groupId,
+                'role' => 'assistant',
+                'content' => $cambiosTxt,
+                'timestamp' => now()
+            ]);
+            
+            $runId = 'run_multi_edit_' . time();
+            $metadata = json_decode($session->metadata ?? '{}', true);
+            $metadata['last_run_id'] = $runId;
+            $metadata['last_run_status'] = 'completed';
+            $metadata['quote_data'] = $extractedData;
+            $metadata['extracted_data'] = $extractedData;
+            $session->metadata = json_encode($metadata);
+            $session->save();
+            
+            return [
+                'id' => $runId,
+                'status' => 'completed_with_data',
+                'extracted_data' => $extractedData
+            ];
+        }
+        
         // Primero verificar si es una ELIMINACIÓN de campo (solo en mensajes cortos)
         if ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?origen\s*(?:' . $palabrasEliminar . ')/ui', $lastUserMessageForEdit)) {
             $esEdicionSimpleTemprana = true;
