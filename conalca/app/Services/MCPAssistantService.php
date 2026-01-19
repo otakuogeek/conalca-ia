@@ -3991,7 +3991,11 @@ class MCPAssistantService
         // Ejemplo: "cali a bucaramanga, 14 toneladas de alimentos... bogotá a ipiales, 4 toneladas de pescado"
         // Este patrón detecta TODOS los pares origen→destino en el texto
         // 🔧 FIX: Excluir palabras numéricas/monetarias como "millones" de los nombres de ciudad
-        $patronCiudadACiudad = '/\b(?!(?:millones?|mil|cientos?|miles)\b)([a-záéíóúñ]+(?:\s+(?!(?:millones?|mil|cientos?|miles)\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\b/ui';
+        // 🔧 FIX 2: Excluir palabras comunes que no son ciudades (toneladas, bultos, vehiculo, etc.)
+        // 🔧 FIX 3: Agregar productos comunes para evitar capturarlos como ciudades
+        $palabrasExcluidas = '(?:millones?|mil|cientos?|miles|toneladas?|bultos?|sacos?|unidades?|cajas?|vehiculos?|veh[íi]culo|turbo|patineta|camioneta?|tractomula|de|del|con|sin|y|para|desde|' .
+            'alimentos?|pesca|pescados?|bananos?|cafe|cafés?|arroz|ma[íi]z|cemento|arena|carbon|ganado|lacteos?|frutas?|verduras?|granos?|legumbres?|carne|pollos?|huevos?|azucar|sal)';
+        $patronCiudadACiudad = '/\b(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+(?!' . $palabrasExcluidas . '\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\b/ui';
         
         if (preg_match_all($patronCiudadACiudad, $text, $matchesCiudades, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
             Log::info('🔍 Pares "ciudad a ciudad" detectados', [
@@ -4055,10 +4059,12 @@ class MCPAssistantService
                     
                     // Extraer producto del contextoDespues PRIMERO
                     // 🔧 MEJORADO: Regex más robusto con múltiples terminadores comunes
-                    if (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+empaquetad|\s+y\s+|$)/ui', $contextoDespues, $prodMatch)) {
+                    // 🔧 OPTIMIZADO: Capturar solo 1-2 palabras para evitar contaminar con ciudades siguientes
+                    // 🔧 FIX: Permitir espacios antes del fin de línea con \s*$
+                    if (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,1})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+empaquetad|\s+y\s+|\s+\d+|\s+[A-Z][a-z]+\s+a\s+|\s*$)/ui', $contextoDespues, $prodMatch)) {
                         $productoRaw = trim($prodMatch[1]);
                         // Limpiar palabras no relevantes
-                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante'];
+                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante', 'bultos', 'sacos', 'cajas'];
                         $palabras = explode(' ', strtolower($productoRaw));
                         $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
                             return !in_array($p, $excluir);
@@ -4066,6 +4072,8 @@ class MCPAssistantService
                         $productoLimpio = implode(' ', $palabrasLimpias);
                         
                         if (strlen($productoLimpio) >= 3) {
+                            // 🔧 Normalizar acentos para consistencia
+                            $productoLimpio = self::removeAccents($productoLimpio);
                             $routeData['producto'] = strtoupper(trim($productoLimpio));
                             Log::info("📦 Producto extraído de contextoDespues (Ruta #{$routeData['ruta_numero']})", [
                                 'raw' => $productoRaw,
@@ -4075,9 +4083,9 @@ class MCPAssistantService
                         }
                     }
                     // Si no se encuentra producto después, buscar antes (fallback)
-                    elseif (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|$)/ui', $contextoAntes, $prodMatch)) {
+                    elseif (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+\d+|$)/ui', $contextoAntes, $prodMatch)) {
                         $productoRaw = trim($prodMatch[1]);
-                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante'];
+                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante', 'bultos', 'sacos', 'cajas'];
                         $palabras = explode(' ', strtolower($productoRaw));
                         $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
                             return !in_array($p, $excluir);
@@ -4085,13 +4093,21 @@ class MCPAssistantService
                         $productoLimpio = implode(' ', $palabrasLimpias);
                         
                         if (strlen($productoLimpio) >= 3) {
+                            // 🔧 Normalizar acentos para consistencia
+                            $productoLimpio = self::removeAccents($productoLimpio);
                             $routeData['producto'] = strtoupper(trim($productoLimpio));
                         }
                     }
                     
                     // Extraer cantidad del contextoDespues PRIMERO
-                    if (preg_match('/(\d+)\s*unidades?/ui', $contextoDespues, $cantMatch)) {
+                    // 🔧 MEJORADO: Buscar diferentes tipos de unidades (unidades, bultos, sacos, cajas)
+                    if (preg_match('/(\d+)\s*(?:unidades?|bultos?|sacos?|cajas?)/ui', $contextoDespues, $cantMatch)) {
                         $routeData['cantidad'] = (int)$cantMatch[1];
+                        Log::info("📊 Cantidad extraída (Ruta #{$routeData['ruta_numero']})", [
+                            'cantidad' => $routeData['cantidad'],
+                            'tipo' => $cantMatch[0],
+                            'contexto' => substr($contextoDespues, 0, 100)
+                        ]);
                     }
                     // 🔧 FIX: NO usar fallback de contextoAntes para cantidad
                     // La cantidad es específica de cada ruta, no se debe compartir
@@ -4125,16 +4141,21 @@ class MCPAssistantService
                     }
                     
                     // Extraer vehículo (priorizar contextoDespues)
+                    // 🔧 MEJORADO: Buscar más patrones y usar solo contextoDespues para rutas específicas
                     if (preg_match('/veh[ií]culo\s+([a-záéíóúñ]+)/ui', $contextoDespues, $vehMatch)) {
                         $routeData['vehiculo'] = strtoupper($vehMatch[1]);
-                    } elseif (preg_match('/en\s+(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)/ui', $contextoDespues, $vehMatch)) {
+                        Log::info("🚛 Vehículo extraído (Ruta #{$routeData['ruta_numero']})", ['vehiculo' => $routeData['vehiculo']]);
+                    } elseif (preg_match('/\b(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)\b/ui', $contextoDespues, $vehMatch)) {
                         $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                        Log::info("🚛 Vehículo extraído sin 'en' (Ruta #{$routeData['ruta_numero']})", ['vehiculo' => $routeData['vehiculo']]);
                     }
-                    // Fallback: buscar en contextoAntes
-                    elseif (preg_match('/veh[ií]culo\s+([a-záéíóúñ]+)/ui', $contextoAntes, $vehMatch)) {
-                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
-                    } elseif (preg_match('/en\s+(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)/ui', $contextoAntes, $vehMatch)) {
-                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                    // Fallback: buscar en contextoAntes solo para primera ruta
+                    elseif ($idx === 0) {
+                        if (preg_match('/veh[ií]culo\s+([a-záéíóúñ]+)/ui', $contextoAntes, $vehMatch)) {
+                            $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                        } elseif (preg_match('/\b(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)\b/ui', $contextoAntes, $vehMatch)) {
+                            $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                        }
                     }
                     
                     // Detectar tara (buscar en ambos contextos)
@@ -7176,5 +7197,20 @@ Falta: cantidad y valor declarado. ¿Cuántas unidades y valor?"
 EOT;
 
         return $basePrompt;
+    }
+    
+    /**
+     * Eliminar acentos de una cadena
+     * @param string $str
+     * @return string
+     */
+    private static function removeAccents($str)
+    {
+        $replacements = [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'ñ' => 'n', 'Ñ' => 'N'
+        ];
+        return strtr($str, $replacements);
     }
 }
