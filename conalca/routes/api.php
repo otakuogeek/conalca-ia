@@ -456,6 +456,11 @@ Route::prefix('chat')->group(function () {
     Route::get('/quote/routes/{groupId}', [App\Http\Controllers\Api\QuoteRoutesController::class, 'getQuoteRoutes'])
         ->middleware('auth')
         ->name('api.quote.get.routes');
+    
+    // 🆕 Actualizar extracted_data (para cambios de tara en tiempo real)
+    Route::post('/chat/update-extracted-data', [App\Http\Controllers\Api\ChatController::class, 'updateExtractedData'])
+        ->middleware('auth')
+        ->name('api.chat.update.extracted.data');
         
     // Debug endpoint para verificar rutas (temporal)
     Route::get('/quote/debug/{groupId}', function($groupId) {

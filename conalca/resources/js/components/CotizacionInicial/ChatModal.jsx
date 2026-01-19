@@ -1924,27 +1924,48 @@ const ChatModal = ({
             if (isEditingSingleRoute && editingRouteIndex < prevArray.length) {
               // 🆕 EDICIÓN DE RUTA INDIVIDUAL - Fusionar cambios solo en la ruta seleccionada
               const editedRoute = routesArray[0];
+              let taraWasModified = false; // Rastrear si se modificó la tara
+              
               const updatedRoutes = prevArray.map((existingRoute, idx) => {
                 if (idx === editingRouteIndex) {
                   // Esta es la ruta que se está editando - fusionar cambios SOLO de campos que vienen
                   const pesoBase = Number(editedRoute.peso_kg ?? existingRoute.pesoMercancia ?? 0) || 0;
                   const backendYaTieneTara = editedRoute.incluye_tara === true;
                   const existingIncluyeTara = existingRoute.incluye_tara === true;
+                  
+                  // 🆕 COMANDO EXPLÍCITO: Si el usuario dice "agrega tara" o "suma tara", SIEMPRE sumar
+                  const comandoExplicitoAgregar = 
+                    mensajeLower.includes('agrega tara') ||
+                    mensajeLower.includes('añade tara') ||
+                    mensajeLower.includes('suma tara') ||
+                    mensajeLower.includes('suma el tara') ||
+                    mensajeLower.includes('suma la tara') ||
+                    mensajeLower.includes('sumar tara') ||
+                    mensajeLower.includes('pon tara') ||
+                    mensajeLower.includes('coloca tara');
+                  
                   const wantsRemoveTara = noIncluyeTara
                     || mensajeLower.includes('quita la tara')
                     || mensajeLower.includes('quita tara')
                     || mensajeLower.includes('remueve la tara')
                     || mensajeLower.includes('remover la tara')
-                    || mensajeLower.includes('elimina la tara');
+                    || mensajeLower.includes('elimina la tara')
+                    || mensajeLower.includes('sin tara');
 
-                  const willAddTara = !wantsRemoveTara && mencionaTara && !backendYaTieneTara && !existingIncluyeTara;
+                  // Si es comando explícito, SIEMPRE agregar (ignorar si ya existe)
+                  const willAddTara = !wantsRemoveTara && (
+                    comandoExplicitoAgregar || 
+                    (mencionaTara && !backendYaTieneTara && !existingIncluyeTara)
+                  );
                   const willRemoveTara = wantsRemoveTara && existingIncluyeTara;
 
                   let pesoFinal = pesoBase;
                   if (willAddTara && pesoBase > 0) {
                     pesoFinal = parseFloat(pesoBase) + TARA_KG;
+                    console.log(`🏋️ TARA AGREGADA - Ruta ${idx + 1}: ${pesoBase} kg + ${TARA_KG} kg (tara) = ${pesoFinal} kg`);
                   } else if (willRemoveTara && pesoBase > TARA_KG) {
                     pesoFinal = parseFloat(pesoBase) - TARA_KG;
+                    console.log(`🏋️ TARA REMOVIDA - Ruta ${idx + 1}: ${pesoBase} kg - ${TARA_KG} kg (tara) = ${pesoFinal} kg`);
                   }
 
                   const incluyeTara = willRemoveTara
@@ -1981,10 +2002,31 @@ const ChatModal = ({
                     origen: editedRoute.origen !== undefined,
                     destino: editedRoute.destino !== undefined,
                     peso: editedRoute.peso_kg !== undefined,
+                    pesoFinal,
+                    willAddTara,
+                    willRemoveTara,
                     cantidad: editedRoute.cantidad !== undefined,
                     producto: editedRoute.producto !== undefined
                   });
                   console.log('🔍 Resultado merge:', mergedRoute);
+                  
+                  // 🆕 Mensaje de confirmación cuando se agrega/quita tara
+                  if ((willAddTara || willRemoveTara) && onUpdateMessages) {
+                    taraWasModified = true; // Marcar que hubo modificación de tara
+                    setTimeout(() => {
+                      onUpdateMessages(prevMessages => [
+                        ...prevMessages,
+                        {
+                          role: 'system',
+                          text: willAddTara 
+                            ? `✅ Tara agregada a Ruta ${idx + 1}: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg + 3,400 kg = ${pesoFinal.toLocaleString('es-CO')} kg total`
+                            : `✅ Tara removida de Ruta ${idx + 1}: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg - 3,400 kg = ${pesoFinal.toLocaleString('es-CO')} kg`,
+                          created_at: new Date().toLocaleTimeString()
+                        }
+                      ]);
+                    }, 300);
+                  }
+                  
                   return mergedRoute;
                 }
                 // Rutas no editadas permanecen igual
@@ -1992,6 +2034,40 @@ const ChatModal = ({
               });
 
               console.log(`📊 Rutas actualizadas (1 editada, ${updatedRoutes.length - 1} sin cambios):`, updatedRoutes);
+
+              // 🆕 Si se agregó/quitó tara, guardar extracted_data en BD
+              if (taraWasModified) {
+                const extractedDataToSave = updatedRoutes.map(r => ({
+                  origen: r.ciudadOrigen,
+                  destino: r.ciudadDestino,
+                  peso_kg: r.pesoMercancia,
+                  cantidad: r.cantidadMercancia,
+                  valor_declarado: r.valorMercancia,
+                  vehiculo: r.claseVehiculo,
+                  empaque: r.empaque,
+                  producto: r.producto,
+                  incluye_tara: r.incluye_tara
+                }));
+
+                // Guardar en BD de manera asíncrona
+                fetch('/api/chat/update-extracted-data', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+                  },
+                  body: JSON.stringify({
+                    group_id: clientData.groupId,
+                    extracted_data: extractedDataToSave
+                  })
+                }).then(resp => resp.json())
+                  .then(data => {
+                    if (data.success) {
+                      console.log('✅ extracted_data actualizado en BD');
+                    }
+                  })
+                  .catch(err => console.error('❌ Error guardando extracted_data:', err));
+              }
 
               // Notificar al usuario
               if (onUpdateMessages) {

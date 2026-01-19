@@ -968,12 +968,16 @@ class MCPAssistantService
                     
                     if ($campoEditadoTemprano === 'tara') {
                         // Lógica especial para Tara
+                        // 🆕 COMANDO EXPLÍCITO: Si dice "agrega tara" o "suma tara", SIEMPRE sumar
+                        $comandoExplicitoSumar = preg_match('/(?:agrega|añade|suma|pon|coloca)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit);
                         $yaConTara = !empty($extractedData[$selectedRouteIndex]['incluye_tara']);
-                        if (!$yaConTara) {
+                        
+                        if ($comandoExplicitoSumar || !$yaConTara) {
                             $peso = floatval(str_replace(',', '', (string)($extractedData[$selectedRouteIndex]['peso_kg'] ?? 0)));
                             $extractedData[$selectedRouteIndex]['peso_kg'] = $peso + 3400;
                             $extractedData[$selectedRouteIndex]['incluye_tara'] = true;
-                            $valorEditadoTemprano = "Sí (+3400kg)";
+                            $valorEditadoTemprano = $comandoExplicitoSumar ? "Sumado (+3400kg)" : "Sí (+3400kg)";
+                            Log::info('✅ Tara agregada', ['ruta' => $selectedRouteIndex, 'peso_anterior' => $peso, 'peso_nuevo' => $peso + 3400]);
                         } else {
                             $valorEditadoTemprano = "Ya incluido";
                         }
@@ -1003,18 +1007,22 @@ class MCPAssistantService
                     }
                     
                     if ($campoEditadoTemprano === 'tara') {
+                         // 🆕 COMANDO EXPLÍCITO: Si dice "agrega tara" o "suma tara", SIEMPRE sumar
+                         $comandoExplicitoSumar = preg_match('/(?:agrega|añade|suma|pon|coloca)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit);
+                         
                          foreach ($extractedData as $idx => &$ruta) {
                             if (is_array($ruta) && is_numeric($idx)) {
                                 $yaConTara = !empty($ruta['incluye_tara']);
-                                if (!$yaConTara) {
+                                if ($comandoExplicitoSumar || !$yaConTara) {
                                     $peso = floatval(str_replace(',', '', (string)($ruta['peso_kg'] ?? 0)));
                                     $ruta['peso_kg'] = $peso + 3400;
                                     $ruta['incluye_tara'] = true;
+                                    Log::info('✅ Tara agregada a ruta', ['ruta' => $idx, 'peso_anterior' => $peso, 'peso_nuevo' => $peso + 3400]);
                                 }
                             }
                          }
                          unset($ruta);
-                         $valorEditadoTemprano = "Sí (+3400kg)";
+                         $valorEditadoTemprano = $comandoExplicitoSumar ? "Sumado (+3400kg)" : "Sí (+3400kg)";
                     } else {
                         foreach ($extractedData as $idx => &$ruta) {
                             if (is_array($ruta) && is_numeric($idx)) {

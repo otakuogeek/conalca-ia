@@ -809,6 +809,72 @@ class ChatController extends Controller
     }
     
     /**
+     * Actualizar extracted_data de un grupo (para cambios de tara en tiempo real)
+     */
+    public function updateExtractedData(Request $request)
+    {
+        try {
+            $groupId = $request->group_id;
+            $extractedData = $request->extracted_data;
+            
+            if (!$groupId || !$extractedData) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'group_id y extracted_data son requeridos'
+                ], 400);
+            }
+
+            $group = GroupCotization::findOrFail($groupId);
+            
+            // Verificar permisos
+            if ($group->user_id !== Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No tienes permisos para modificar este grupo'
+                ], 403);
+            }
+
+            // Actualizar extracted_data
+            $group->extracted_data = json_encode($extractedData);
+            $group->save();
+            
+            // 🆕 También actualizar peso_mercancia en cotizacion_models si existe
+            $cotizaciones = $group->cotizaciones()->get();
+            foreach ($cotizaciones as $index => $cotizacion) {
+                if (isset($extractedData[$index]['peso_kg'])) {
+                    $cotizacion->peso_mercancia = $extractedData[$index]['peso_kg'];
+                    $cotizacion->save();
+                    Log::info('Peso actualizado en cotizacion', [
+                        'cotizacion_id' => $cotizacion->id,
+                        'peso_nuevo' => $extractedData[$index]['peso_kg']
+                    ]);
+                }
+            }
+            
+            Log::info('extracted_data actualizado', [
+                'group_id' => $groupId,
+                'routes_count' => count($extractedData)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'extracted_data actualizado correctamente'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error actualizando extracted_data', [
+                'error' => $e->getMessage(),
+                'group_id' => $request->group_id ?? 'unknown'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Error al actualizar extracted_data'
+            ], 500);
+        }
+    }
+    
+    /**
      * 🆕 CHAT USANDO ASSISTANT API DE OPENAI
      * Usa el asistente asst_MnJ08tJG6NKOjbqFLvsYMqEp con herramientas configuradas
      */
