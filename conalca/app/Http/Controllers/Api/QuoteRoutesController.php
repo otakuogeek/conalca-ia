@@ -81,6 +81,15 @@ class QuoteRoutesController extends Controller
                         ->first();
                 }
 
+                // 🆕 Extraer producto con prioridad: producto_mencionado > producto > tipo_producto
+                $producto = mb_substr(
+                    $routeData['producto_mencionado'] 
+                        ?? $routeData['producto'] 
+                        ?? $routeData['tipo_producto'] 
+                        ?? 'Mercancía general',
+                    0, 191
+                );
+
                 if ($cotization) {
                     // UPDATE existing
                     $cotization->update([
@@ -89,7 +98,7 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'    => mb_substr($routeData['tipo_producto'] ?? 'Mercancía general', 0, 191), // Truncar a 191 caracteres (límite de la columna)
+                        'tipo_producto'    => $producto, // 🔥 Usar producto con prioridad correcta
                         'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                         'valor_declarado'  => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'       => $routeData['pricing_id'] ?? null,
@@ -108,7 +117,7 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'       => mb_substr($routeData['tipo_producto'] ?? 'Mercancía general', 0, 191), // Truncar a 191 caracteres (límite de la columna)
+                        'tipo_producto'       => $producto, // 🔥 Usar producto con prioridad correcta
                         'vehiculo_requerido'  => $routeData['vehiculo_requerido'] ?? 'Sencillo',
                         'valor_declarado'     => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'          => $routeData['pricing_id'] ?? null,

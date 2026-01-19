@@ -94,8 +94,9 @@ class TextPreprocessorService
         // Palabra + "de" + siguiente palabra (ej: "cajasde" -> "cajas de")
         '/([a-záéíóúñ]{3,})(de)\s/ui' => '$1 $2 ',
         
-        // Palabra + "en" + siguiente palabra (ej: "cajsen" -> si aplica)
-        '/([a-záéíóúñ]{3,})(en)\s/ui' => '$1 $2 ',
+        // 🔧 DESACTIVADO: Patrón peligroso que divide "origen" incorrectamente
+        // El patrón '/([a-záéíóúñ]{3,})(en)\s/ui' => '$1 $2 ' causaba "origen" → "orig en"
+        // Si se necesita separar "en", agregar casos específicos (ej: "cajsen" -> "cajas en")
         
         // Palabra + "con" + siguiente palabra
         '/([a-záéíóúñ]{3,})(con)\s/ui' => '$1 $2 ',

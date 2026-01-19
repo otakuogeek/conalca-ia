@@ -359,6 +359,13 @@ class QuoteSaveController extends Controller
                             ->first();
                     }
 
+                    // 🆕 Extraer producto con prioridad: producto_mencionado > producto > tipo_producto
+                    // Esto asegura que productos personalizados (ej: "PRODUCTOS DE ASEO") se guarden correctamente
+                    $producto = $routeData['producto_mencionado'] 
+                        ?? $routeData['producto'] 
+                        ?? $routeData['tipo_producto'] 
+                        ?? '';
+
                     $payload = [
                         'pricing_id'            => $pricingId,
                         'group_cotization_id'   => $group->id,
@@ -366,7 +373,7 @@ class QuoteSaveController extends Controller
                         'ciudad_origen'         => $routeData['ciudad_origen'],
                         'ciudad_destino'        => $routeData['ciudad_destino'],
                         'peso_mercancia'        => $this->extractNumericValue($routeData['peso_mercancia'] ?? ''),
-                        'tipo_producto'         => $routeData['tipo_producto'] ?? '',
+                        'tipo_producto'         => $producto, // 🔥 Usar el producto con prioridad correcta
                         'vehiculo_requerido'    => $routeData['vehiculo_requerido'] ?? 'Camión sencillo',
                         'valor_declarado'       => $this->extractNumericValue($routeData['valor_declarado'] ?? '0'),
                         'valor'                 => $finalValue,

@@ -457,6 +457,21 @@ class MCPAssistantService
         $lastUserMessageForEdit = preg_replace('/\s*NOTA\s+IMPORTANTE:.*$/us', '', $lastUserMessageForEdit);
         $lastUserMessageForEdit = trim($lastUserMessageForEdit);
         
+        // 🔧 FIX: DETECTAR NÚMERO DE RUTA EN EL MENSAJE ANTES DE PROCESAR
+        // Ejemplo: "Cambia el origen de la ruta 3 a Medellín" → detectar ruta 3 (índice 2)
+        if ($selectedRouteIndex === null && preg_match('/(?:ruta|opci[oó]n)\s*(\d+)/ui', $lastUserMessageForEdit, $rutaMatch)) {
+            $rutaMencionada = intval($rutaMatch[1]) - 1; // Convertir a 0-based
+            // Verificar si existe esa ruta en los datos anteriores
+            if (!empty($previousExtractedData) && isset($previousExtractedData[$rutaMencionada])) {
+                $selectedRouteIndex = $rutaMencionada;
+                Log::info('📍 Ruta detectada explícitamente en mensaje (antes de merge)', [
+                    'ruta_numero' => $rutaMatch[1],
+                    'ruta_index' => $selectedRouteIndex,
+                    'mensaje' => substr($lastUserMessageForEdit, 0, 60)
+                ]);
+            }
+        }
+        
         // 🆕 LIMPIAR PRODUCTOS PENDIENTES si el mensaje NO es sobre productos
         // Esto evita que aparezcan opciones de producto cuando el usuario edita otro campo
         $mensajeEsProducto = preg_match('/(?:producto|opci[oó]n\s*\d|selecciono?\s+\d|la\s+\d|el\s+\d|dame\s+(?:la\s+)?opci[oó]n)/ui', $lastUserMessageForEdit);
@@ -1197,9 +1212,21 @@ class MCPAssistantService
                          unset($ruta);
                          $valorEditadoTemprano = $comandoExplicitoSumar ? "Sumado (+3400kg)" : "Sí (+3400kg)";
                     } else {
+                        // 🔧 FIX: Mapear campos duplicados también en múltiples rutas
+                        $camposAActualizarMulti = $camposAActualizar;
+                        if ($campoEditadoTemprano === 'origen') {
+                            $camposAActualizarMulti = ['origen', 'ciudad_origen'];
+                        } elseif ($campoEditadoTemprano === 'destino') {
+                            $camposAActualizarMulti = ['destino', 'ciudad_destino'];
+                        } elseif ($campoEditadoTemprano === 'producto') {
+                            $camposAActualizarMulti = ['producto', 'tipo_producto'];
+                        } elseif ($campoEditadoTemprano === 'vehiculo') {
+                            $camposAActualizarMulti = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
+                        }
+                        
                         foreach ($extractedData as $idx => &$ruta) {
                             if (is_array($ruta) && is_numeric($idx)) {
-                                foreach ($camposAActualizar as $campo) {
+                                foreach ($camposAActualizarMulti as $campo) {
                                     if ($esEliminacion) {
                                         unset($ruta[$campo]);
                                     } else {
@@ -1317,6 +1344,13 @@ class MCPAssistantService
             
             // 🆕 EDICIÓN DE RUTA ESPECÍFICA: Si hay una ruta seleccionada y los nuevos datos
             // son para una sola ruta (no multi-ruta), aplicar solo a esa ruta
+            
+            // 🔧 FIX: Recalcular existingRoutesCount automáticamente si es necesario
+            if ($isPreviousMultiRoute && $existingRoutesCount === 0) {
+                $existingRoutesCount = count(array_filter(array_keys($extractedData), 'is_numeric'));
+                Log::info('📊 Rutas existentes contadas automáticamente', ['count' => $existingRoutesCount]);
+            }
+            
             $isSingleRouteEdit = $selectedRouteIndex !== null && 
                                  !$isNewMultiRoute && 
                                  $isPreviousMultiRoute && 
@@ -1338,6 +1372,16 @@ class MCPAssistantService
                             // Solo aplicar campos de datos (no índices numéricos)
                             $oldValue = $extractedData[$selectedRouteIndex][$key] ?? null;
                             $extractedData[$selectedRouteIndex][$key] = $value;
+                            
+                            // 🔧 FIX: Sincronizar campos duplicados
+                            if ($key === 'ciudad_origen' || $key === 'origen') {
+                                $extractedData[$selectedRouteIndex]['origen'] = $value;
+                                $extractedData[$selectedRouteIndex]['ciudad_origen'] = $value;
+                            } elseif ($key === 'ciudad_destino' || $key === 'destino') {
+                                $extractedData[$selectedRouteIndex]['destino'] = $value;
+                                $extractedData[$selectedRouteIndex]['ciudad_destino'] = $value;
+                            }
+                            
                             Log::info("✏️ Ruta {$selectedRouteIndex}: {$key} = {$value}" . ($oldValue ? " (antes: {$oldValue})" : " (nuevo)"));
                         }
                     }
@@ -1382,6 +1426,15 @@ class MCPAssistantService
                 foreach ($newExtractedData as $key => $value) {
                     if (!empty($value) && !is_numeric($key)) {
                         $extractedData[0][$key] = $value;
+                        
+                        // 🔧 FIX: Sincronizar campos duplicados
+                        if ($key === 'ciudad_origen' || $key === 'origen') {
+                            $extractedData[0]['origen'] = $value;
+                            $extractedData[0]['ciudad_origen'] = $value;
+                        } elseif ($key === 'ciudad_destino' || $key === 'destino') {
+                            $extractedData[0]['destino'] = $value;
+                            $extractedData[0]['ciudad_destino'] = $value;
+                        }
                     }
                 }
             } elseif (!$isNewMultiRoute && $isPreviousMultiRoute) {
@@ -1397,6 +1450,15 @@ class MCPAssistantService
                     foreach ($newExtractedData as $key => $value) {
                         if (!empty($value) && !is_numeric($key)) {
                             $extractedData[$selectedRouteIndex][$key] = $value;
+                            
+                            // 🔧 FIX: Sincronizar campos duplicados
+                            if ($key === 'ciudad_origen' || $key === 'origen') {
+                                $extractedData[$selectedRouteIndex]['origen'] = $value;
+                                $extractedData[$selectedRouteIndex]['ciudad_origen'] = $value;
+                            } elseif ($key === 'ciudad_destino' || $key === 'destino') {
+                                $extractedData[$selectedRouteIndex]['destino'] = $value;
+                                $extractedData[$selectedRouteIndex]['ciudad_destino'] = $value;
+                            }
                         }
                     }
                 } else {
@@ -1405,6 +1467,15 @@ class MCPAssistantService
                         foreach ($newExtractedData as $key => $value) {
                             if (!empty($value) && !is_numeric($key)) {
                                 $extractedData[0][$key] = $value;
+                                
+                                // 🔧 FIX: Sincronizar campos duplicados
+                                if ($key === 'ciudad_origen' || $key === 'origen') {
+                                    $extractedData[0]['origen'] = $value;
+                                    $extractedData[0]['ciudad_origen'] = $value;
+                                } elseif ($key === 'ciudad_destino' || $key === 'destino') {
+                                    $extractedData[0]['destino'] = $value;
+                                    $extractedData[0]['ciudad_destino'] = $value;
+                                }
                             }
                         }
                     }
@@ -3916,6 +3987,191 @@ class MCPAssistantService
             }
         }
         
+        // 🆕 CRÍTICO: Detectar MÚLTIPLES PARES "ciudad a ciudad" en el mismo texto
+        // Ejemplo: "cali a bucaramanga, 14 toneladas de alimentos... bogotá a ipiales, 4 toneladas de pescado"
+        // Este patrón detecta TODOS los pares origen→destino en el texto
+        // 🔧 FIX: Excluir palabras numéricas/monetarias como "millones" de los nombres de ciudad
+        $patronCiudadACiudad = '/\b(?!(?:millones?|mil|cientos?|miles)\b)([a-záéíóúñ]+(?:\s+(?!(?:millones?|mil|cientos?|miles)\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\b/ui';
+        
+        if (preg_match_all($patronCiudadACiudad, $text, $matchesCiudades, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            Log::info('🔍 Pares "ciudad a ciudad" detectados', [
+                'cantidad' => count($matchesCiudades),
+                'pares' => array_map(function($m) { 
+                    return $m[1][0] . ' → ' . $m[2][0]; 
+                }, $matchesCiudades)
+            ]);
+            
+            // Si encontramos 2 o más pares de ciudades, probablemente son múltiples rutas
+            if (count($matchesCiudades) >= 2) {
+                $rutasDetectadas = [];
+                
+                foreach ($matchesCiudades as $idx => $match) {
+                    $origen = self::normalizeCityName(trim($match[1][0]));
+                    $destino = self::normalizeCityName(trim($match[2][0]));
+                    
+                    // Obtener el contexto después de este par de ciudades (hasta el siguiente par o fin de texto)
+                    $matchStart = $match[0][1];
+                    $matchEnd = $matchStart + strlen($match[0][0]);
+                    
+                    // 🆕 MEJORA: Incluir también el contexto ANTES del par de ciudades
+                    // para capturar datos como "valor declarado de 13.5 millones" que aparecen antes del segundo par
+                    $contextoAntes = '';
+                    if ($idx > 0) {
+                        // Para rutas después de la primera, obtener texto desde el final de la ruta anterior
+                        $prevMatchEnd = $matchesCiudades[$idx - 1][0][1] + strlen($matchesCiudades[$idx - 1][0][0]);
+                        $contextoAntes = substr($text, $prevMatchEnd, $matchStart - $prevMatchEnd);
+                    } else {
+                        // Para la primera ruta, obtener texto desde el inicio
+                        $contextoAntes = substr($text, 0, $matchStart);
+                    }
+                    
+                    // Buscar el siguiente par de ciudades para delimitar el contexto DESPUÉS
+                    $nextMatchStart = isset($matchesCiudades[$idx + 1]) 
+                        ? $matchesCiudades[$idx + 1][0][1] 
+                        : strlen($text);
+                    
+                    $contextoDespues = substr($text, $matchEnd, $nextMatchStart - $matchEnd);
+                    
+                    // Extraer datos de esta ruta desde el contexto
+                    $routeData = [
+                        'ruta_numero' => $idx + 1,
+                        'origen' => $origen,
+                        'destino' => $destino
+                    ];
+                    
+                    // 🔧 CRÍTICO: Extraer datos específicos SOLO del contextoDespues (datos que vienen DESPUÉS del par de ciudades)
+                    // Esto evita que se mezclen datos de la ruta anterior
+                    
+                    // Extraer peso del contextoDespues PRIMERO
+                    if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $contextoDespues, $pesoMatch)) {
+                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]) * 1000;
+                    } elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?)/ui', $contextoDespues, $pesoMatch)) {
+                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]);
+                    }
+                    // Si no se encuentra peso después, buscar antes (fallback)
+                    elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $contextoAntes, $pesoMatch)) {
+                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]) * 1000;
+                    }
+                    
+                    // Extraer producto del contextoDespues PRIMERO
+                    // 🔧 MEJORADO: Regex más robusto con múltiples terminadores comunes
+                    if (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+empaquetad|\s+y\s+|$)/ui', $contextoDespues, $prodMatch)) {
+                        $productoRaw = trim($prodMatch[1]);
+                        // Limpiar palabras no relevantes
+                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante'];
+                        $palabras = explode(' ', strtolower($productoRaw));
+                        $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
+                            return !in_array($p, $excluir);
+                        });
+                        $productoLimpio = implode(' ', $palabrasLimpias);
+                        
+                        if (strlen($productoLimpio) >= 3) {
+                            $routeData['producto'] = strtoupper(trim($productoLimpio));
+                            Log::info("📦 Producto extraído de contextoDespues (Ruta #{$routeData['ruta_numero']})", [
+                                'raw' => $productoRaw,
+                                'limpio' => $routeData['producto'],
+                                'contexto' => substr($contextoDespues, 0, 100)
+                            ]);
+                        }
+                    }
+                    // Si no se encuentra producto después, buscar antes (fallback)
+                    elseif (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|$)/ui', $contextoAntes, $prodMatch)) {
+                        $productoRaw = trim($prodMatch[1]);
+                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante'];
+                        $palabras = explode(' ', strtolower($productoRaw));
+                        $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
+                            return !in_array($p, $excluir);
+                        });
+                        $productoLimpio = implode(' ', $palabrasLimpias);
+                        
+                        if (strlen($productoLimpio) >= 3) {
+                            $routeData['producto'] = strtoupper(trim($productoLimpio));
+                        }
+                    }
+                    
+                    // Extraer cantidad del contextoDespues PRIMERO
+                    if (preg_match('/(\d+)\s*unidades?/ui', $contextoDespues, $cantMatch)) {
+                        $routeData['cantidad'] = (int)$cantMatch[1];
+                    }
+                    // 🔧 FIX: NO usar fallback de contextoAntes para cantidad
+                    // La cantidad es específica de cada ruta, no se debe compartir
+                    
+                    // 🆕 FIX CRÍTICO: Valor declarado en múltiples rutas
+                    // Para PRIMERA RUTA (idx=0): buscar en contextoAntes O contextoDespues
+                    // Para RUTAS SIGUIENTES: SOLO buscar en contextoDespues (su propio contexto)
+                    $valorDeclaradoEncontrado = false;
+                    
+                    if ($idx === 0) {
+                        // Primera ruta: puede tener valor antes o después
+                        if (preg_match('/valor(?:\s+declarado)?\s+(?:de\s+)?(?:\$\s*)?(\d+(?:[.,]\d+)?)\s*millones?/ui', $contextoDespues, $valorMatch)) {
+                            $routeData['valor_declarado'] = (float)str_replace(',', '.', $valorMatch[1]) * 1000000;
+                            $valorDeclaradoEncontrado = true;
+                        } elseif (preg_match('/valor(?:\s+declarado)?\s+(?:de\s+)?(?:\$\s*)?(\d+(?:[.,]\d+)?)\s*millones?/ui', $contextoAntes, $valorMatch)) {
+                            $routeData['valor_declarado'] = (float)str_replace(',', '.', $valorMatch[1]) * 1000000;
+                            $valorDeclaradoEncontrado = true;
+                        }
+                    } else {
+                        // Rutas siguientes: SOLO buscar en contextoDespues
+                        if (preg_match('/valor(?:\s+declarado)?\s+(?:de\s+)?(?:\$\s*)?(\d+(?:[.,]\d+)?)\s*millones?/ui', $contextoDespues, $valorMatch)) {
+                            $routeData['valor_declarado'] = (float)str_replace(',', '.', $valorMatch[1]) * 1000000;
+                            $valorDeclaradoEncontrado = true;
+                            Log::info("💰 Valor declarado encontrado en contextoDespues para ruta #{$routeData['ruta_numero']}", [
+                                'valor' => $routeData['valor_declarado'],
+                                'contexto_despues' => substr($contextoDespues, 0, 100)
+                            ]);
+                        }
+                        // 🔧 NO buscar en contextoAntes para rutas siguientes
+                        // El valor en contextoAntes pertenece a la ruta anterior
+                    }
+                    
+                    // Extraer vehículo (priorizar contextoDespues)
+                    if (preg_match('/veh[ií]culo\s+([a-záéíóúñ]+)/ui', $contextoDespues, $vehMatch)) {
+                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                    } elseif (preg_match('/en\s+(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)/ui', $contextoDespues, $vehMatch)) {
+                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                    }
+                    // Fallback: buscar en contextoAntes
+                    elseif (preg_match('/veh[ií]culo\s+([a-záéíóúñ]+)/ui', $contextoAntes, $vehMatch)) {
+                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                    } elseif (preg_match('/en\s+(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)/ui', $contextoAntes, $vehMatch)) {
+                        $routeData['vehiculo'] = strtoupper($vehMatch[1]);
+                    }
+                    
+                    // Detectar tara (buscar en ambos contextos)
+                    $contextoCompleto = $contextoAntes . ' ' . $contextoDespues;
+                    if (preg_match('/(?:el\s+)?peso\s+(?:no\s+)?incluy(?:e|a)\s+(?:la\s+)?tara/ui', $contextoCompleto, $taraMatch)) {
+                        $routeData['incluye_tara'] = !preg_match('/no\s+incluy/ui', $taraMatch[0]);
+                    }
+                    
+                    // Extraer empaque (priorizar contextoDespues)
+                    if (preg_match('/en\s+(bolsas?|cajas?|sacos?|bultos?|toneles?|canecas?)/ui', $contextoDespues, $empMatch)) {
+                        $routeData['empaque'] = strtoupper($empMatch[1]);
+                    }
+                    // Fallback: buscar en contextoAntes
+                    elseif (preg_match('/en\s+(bolsas?|cajas?|sacos?|bultos?|toneles?|canecas?)/ui', $contextoAntes, $empMatch)) {
+                        $routeData['empaque'] = strtoupper($empMatch[1]);
+                    }
+                    
+                    $rutasDetectadas[] = $routeData;
+                    
+                    Log::info("✅ Ruta #{$routeData['ruta_numero']} extraída de par ciudad-ciudad", [
+                        'origen' => $origen,
+                        'destino' => $destino,
+                        'peso_kg' => $routeData['peso_kg'] ?? 'N/A',
+                        'producto' => $routeData['producto'] ?? 'N/A',
+                        'valor_declarado' => $routeData['valor_declarado'] ?? 'N/A',
+                        'contexto_antes_preview' => substr($contextoAntes, -50),
+                        'contexto_despues_preview' => substr($contextoDespues, 0, 50)
+                    ]);
+                }
+                
+                if (count($rutasDetectadas) >= 2) {
+                    Log::info('✅ Múltiples rutas detectadas por pares ciudad-ciudad', ['total' => count($rutasDetectadas)]);
+                    return $rutasDetectadas;
+                }
+            }
+        }
+        
         // 🆕 NUEVO: Detectar si el texto tiene separadores de múltiples cotizaciones
         // Separadores: "adicional", "también", "además", "aparte", "y también", saltos de línea
         $separadores = [
@@ -4866,7 +5122,8 @@ class MCPAssistantService
         $terminadorOrigen = '(?:\s*[.,;\n]|\s+y\s+|\s+destino|\s+NOTA|\s{2,}|$)';
         
         // Patrón: "cambia el origen a X" o "origen cambialo a X" o "origen cambia y ponga X" o "origen cambia a X"
-        if (preg_match('/(?:cambia|cambiar)(?:\s+el)?\s+origen\s+(?:a|por)\s+([a-záéíóúñ]+)' . $terminadorOrigen . '/ui', $text, $matches)) {
+        // 🔧 FIX: Permitir texto intermedio como "de la ruta 1" o "de la ruta 2" entre "origen" y "a/por"
+        if (preg_match('/(?:cambia|cambiar)(?:\s+el)?\s+origen(?:\s+de\s+la\s+ruta\s+\d+)?\s+(?:a|por)\s+([a-záéíóúñ]+)' . $terminadorOrigen . '/ui', $text, $matches)) {
             $origenCorreccion = self::normalizeCityName(trim($matches[1]));
             Log::info('🏙️ Origen detectado (patrón 1: cambia el origen)', ['origen' => $origenCorreccion, 'raw' => $matches[1]]);
         }
@@ -4882,8 +5139,9 @@ class MCPAssistantService
             $origenCorreccion = self::normalizeCityName(trim($matches[1]));
             Log::info('🏙️ Origen detectado (patrón 4: origen cambia a)', ['origen' => $origenCorreccion, 'raw' => $matches[1]]);
         }
-        // Patrón: "origen es X" o "origen: X"
-        elseif (preg_match('/(?:el\s+)?origen\s*(?:es|será|sea|queda|:)\s*([a-záéíóúñ]+)' . $terminadorOrigen . '/ui', $text, $matches)) {
+        // Patrón: "origen es X" o "origen: X"  
+        // 🔧 FIX: Permitir "el origen de la ruta X es/: Y"
+        elseif (preg_match('/(?:el\s+)?origen(?:\s+de\s+la\s+ruta\s+\d+)?\s*(?:es|será|sea|queda|:)\s*([a-záéíóúñ]+)' . $terminadorOrigen . '/ui', $text, $matches)) {
             $origenCorreccion = self::normalizeCityName(trim($matches[1]));
             Log::info('🏙️ Origen detectado (patrón 5: origen es)', ['origen' => $origenCorreccion, 'raw' => $matches[1]]);
         }
@@ -4900,7 +5158,8 @@ class MCPAssistantService
         $terminadorDestino = '(?:\s*[.,;\n]|\s+y\s+|\s+origen|\s+NOTA|\s{2,}|$)';
         
         // Patrón: "cambia el destino a X" o "destino cambialo a X" o "destino cambia y ponga X" o "destino cambia a X"
-        if (preg_match('/(?:cambia|cambiar)(?:\s+el)?\s+destino\s+(?:a|por)\s+([a-záéíóúñ]+)' . $terminadorDestino . '/ui', $text, $matches)) {
+        // 🔧 FIX: Permitir texto intermedio como "de la ruta 1" o "de la ruta 2" entre "destino" y "a/por"
+        if (preg_match('/(?:cambia|cambiar)(?:\s+el)?\s+destino(?:\s+de\s+la\s+ruta\s+\d+)?\s+(?:a|por)\s+([a-záéíóúñ]+)' . $terminadorDestino . '/ui', $text, $matches)) {
             $destinoCorreccion = self::normalizeCityName(trim($matches[1]));
             Log::info('🏙️ Destino detectado (patrón 1: cambia el destino)', ['destino' => $destinoCorreccion, 'raw' => $matches[1]]);
         }
@@ -4917,7 +5176,8 @@ class MCPAssistantService
             Log::info('🏙️ Destino detectado (patrón 4: destino cambia a)', ['destino' => $destinoCorreccion, 'raw' => $matches[1]]);
         }
         // Patrón: "destino es X" o "destino: X"
-        elseif (preg_match('/(?:el\s+)?destino\s*(?:es|será|sea|queda|:)\s*([a-záéíóúñ]+)' . $terminadorDestino . '/ui', $text, $matches)) {
+        // 🔧 FIX: Permitir "el destino de la ruta X es/: Y"
+        elseif (preg_match('/(?:el\s+)?destino(?:\s+de\s+la\s+ruta\s+\d+)?\s*(?:es|será|sea|queda|:)\s*([a-záéíóúñ]+)' . $terminadorDestino . '/ui', $text, $matches)) {
             $destinoCorreccion = self::normalizeCityName(trim($matches[1]));
             Log::info('🏙️ Destino detectado (patrón 5: destino es)', ['destino' => $destinoCorreccion, 'raw' => $matches[1]]);
         }
@@ -5143,8 +5403,8 @@ class MCPAssistantService
         }
         
         // Patrón 1: "de X a Y" o "desde X hasta Y" - MEJORADO con terminador
-        // Terminador: número, "toneladas", "kg", "con", "en un", coma, punto, etc.
-        $terminadorRuta = '(?=\s*(?:\d|toneladas?|kg|kilos?|con\s|en\s+un|,|\.|;|$))';
+        // Terminador: número, "toneladas", "kg", "para", "con", "vamos", "en un", coma, punto, etc.
+        $terminadorRuta = '(?=\s*(?:\d|toneladas?|kg|kilos?|para\s|con\s|vamos\s|en\s+un|,|\.|;|$))';
         if (preg_match('/(?:de|desde)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s+(?:a|hasta)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,1})' . $terminadorRuta . '/ui', $text, $matches)) {
             // 🆕 Palabras que NUNCA pueden ser ciudades (incluye campos de formulario, acciones, meses, tiempo)
             $forbiddenWords = [
@@ -5168,9 +5428,14 @@ class MCPAssistantService
             $origenIsForbidden = false;
             $destinoIsForbidden = false;
             
+            // 🔧 FIX: Verificar palabras completas, no subcadenas
+            // Dividir en palabras y verificar si alguna palabra completa es prohibida
+            $origenWords = preg_split('/\s+/', $origenLower);
+            $destinoWords = preg_split('/\s+/', $destinoLower);
+            
             foreach ($forbiddenWords as $forbidden) {
-                if (strpos($origenLower, $forbidden) !== false) $origenIsForbidden = true;
-                if (strpos($destinoLower, $forbidden) !== false) $destinoIsForbidden = true;
+                if (in_array($forbidden, $origenWords)) $origenIsForbidden = true;
+                if (in_array($forbidden, $destinoWords)) $destinoIsForbidden = true;
             }
             
             // Si alguno es palabra prohibida, no extraer ciudades de este patrón
@@ -5234,9 +5499,9 @@ class MCPAssistantService
             $destino = trim($matches[2]);
             
             // 🆕 LIMPIAR palabras conectoras ANTES de validar
-            // Eliminar frases como "ruta de", "para llevar", "viaje de", etc.
+            // Eliminar frases como "ruta de", "para llevar", "viaje de", "cotización de", etc.
             // Usar un solo patrón grande con alternativas (|) para eliminar todo de una vez
-            $patronPrefijos = '/^(?:distribuci[oó]n\s+nacionalizada\s+(?:de\s+)?|importaci[oó]n\s+(?:de\s+)?|exportaci[oó]n\s+(?:de\s+)?|ruta\s+(?:de\s+)?|viaje\s+(?:de\s+)?|destino\s+(?:de\s+)?|origen\s+(?:de\s+)?|de\s+la\s+|desde\s+|hacia\s+|de\s+)/ui';
+            $patronPrefijos = '/^(?:cotizaci[oó]n\s+(?:de\s+)?|distribuci[oó]n\s+nacionalizada\s+(?:de\s+)?|importaci[oó]n\s+(?:de\s+)?|exportaci[oó]n\s+(?:de\s+)?|ruta\s+(?:de\s+)?|viaje\s+(?:de\s+)?|destino\s+(?:de\s+)?|origen\s+(?:de\s+)?|de\s+la\s+|desde\s+|hacia\s+|de\s+)/ui';
             $patronSufijos = '/(?:\s+para\s+(?:llevar|cargar|descargar)|\s+a\s+las\s+|\s+por\s+|\s+con\s+).*/ui';
             
             $origen = preg_replace($patronPrefijos, '', $origen);
@@ -5510,7 +5775,7 @@ class MCPAssistantService
         // 🔴 IMPORTANTE: Guardar como producto_mencionado (sin validar en BD)
         
         // Patrón PRIORITARIO: "sin/con tara de PRODUCTO" (puede ser múltiples palabras)
-        if (preg_match('/(?:sin|con)\s+tara\s+de\s+([a-záéíóúñ\s]+?)(?=\s+por\s+un\s+valor|\s+empaque|\s+en\s|$)/ui', $text, $taraProductoMatch)) {
+        if (preg_match('/(?:sin|con)\s+tara\s+de\s+([a-záéíóúñ\s]+?)(?=,|\s+por\s+un\s+valor|\s+empaque|\s+en\s|$)/ui', $text, $taraProductoMatch)) {
             $prod = trim($taraProductoMatch[1]);
             // Limpiar y validar
             $prod = preg_replace('/\s+/', ' ', $prod); // Normalizar espacios
@@ -5523,7 +5788,7 @@ class MCPAssistantService
         }
         
         // Patrón 1: "N kg/toneladas de PRODUCTO" (captura hasta 3 palabras)
-        if (empty($route['producto']) && preg_match('/(?:\d+\s*(?:mil\s+)?)?(?:toneladas?|ton|kg|kilos?|kilogramos?)\s+de\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?=\s+por|\s+empaque|\s+en\s|$)/ui', $text, $productoMatch)) {
+        if (empty($route['producto']) && preg_match('/(?:\d+\s*(?:mil\s+)?)?(?:toneladas?|ton|kg|kilos?|kilogramos?)\s+de\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?=\s+(?:por|con|sin|empaque|en)\s|\s+y\s|,|$)/ui', $text, $productoMatch)) {
             $prod = trim($productoMatch[1]);
             // Excluir palabras que NO son productos
             if (!preg_match('/\b(valor|peso|incluye|tara|por|un|con|en|sin)\b/ui', $prod) && strlen($prod) >= 3) {
@@ -5716,10 +5981,11 @@ class MCPAssistantService
         $cityName = preg_replace('/\b(por\s+favor|gracias|porfavor|ok|bien|nota|importante)\b/ui', '', $cityName);
         $cityName = trim($cityName);
         
-        // 🆕 Extraer ciudad de "Puerto de X" o "Aeropuerto de X"
-        if (preg_match('/(?:Puerto|Aeropuerto|Terminal)\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $cityName, $puertoMatch)) {
+        // 🆕 Extraer ciudad de "Aeropuerto de X" o "Terminal de X" (pero NO "Puerto X")
+        // "Puerto Asís", "Puerto Carreño" son nombres de ciudades válidos
+        if (preg_match('/(?:Aeropuerto|Terminal)\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $cityName, $puertoMatch)) {
             $cityName = trim($puertoMatch[1]);
-            Log::info('📍 Ciudad extraída de Puerto/Aeropuerto', ['original' => $cityName, 'ciudad' => $puertoMatch[1]]);
+            Log::info('📍 Ciudad extraída de Aeropuerto/Terminal', ['original' => $cityName, 'ciudad' => $puertoMatch[1]]);
         }
         
         // Mapeo de caracteres especiales
@@ -5940,7 +6206,7 @@ class MCPAssistantService
         }
         
         // Patrón PRIORITARIO: "[cantidad] toneladas de PRODUCTO"
-        if (preg_match('/\d+\s*toneladas?\s+de\s+([a-záéíóúñ\s]+?)(?:\s+por\s+|\s+empaquetad|\s+empacad|en\s+(?:cajas|sacos|bultos)|\s+y\s+|\.|,|$)/ui', $text, $matches)) {
+        if (preg_match('/\d+\s*toneladas?\s+de\s+([a-záéíóúñ\s]+?)(?:\s+(?:por|con|sin|empaquetad|empacad|en\s+(?:cajas|sacos|bultos)|y)\s+|\.|,|$)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
             $producto = preg_replace('/\b(para|llevar|transportar|toneladas?|de|cada\s+una)\b/ui', '', $producto);
             $producto = trim($producto);
