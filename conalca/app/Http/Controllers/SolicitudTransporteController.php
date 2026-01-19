@@ -681,6 +681,15 @@ class SolicitudTransporteController extends Controller
                 $primera_cotizacion->ciudad_destino
             );
 
+            // 🔧 Resolver código de vehículo desde nombre
+            $claseVehiculoCodigo = null;
+            if ($primera_cotizacion->vehiculo_requerido) {
+                $vehiculo = \DB::table('vehicle_class')
+                    ->where('Nombre', 'LIKE', '%' . $primera_cotizacion->vehiculo_requerido . '%')
+                    ->first();
+                $claseVehiculoCodigo = $vehiculo ? $vehiculo->Codigo : null;
+            }
+
             $data = [
                 // Step 1
                 'cliente_codigo' => $grupo->client?->codigo,
@@ -696,7 +705,7 @@ class SolicitudTransporteController extends Controller
                 'valor_mercancia'    => $primera_cotizacion->valor_declarado,
                 'descripcion_mercancia' => $primera_cotizacion->tipo_mercancia,
                 'vehiculo_requerido' => $primera_cotizacion->vehiculo_requerido,
-                'clase_vehiculo'     => $primera_cotizacion->clase_vehiculo,
+                'clase_vehiculo'     => $claseVehiculoCodigo, // 🔧 Usar código resuelto desde nombre
                 'tipo_carga'         => $primera_cotizacion->tipo_carga,
                 'clasificacion_contenedor' => $primera_cotizacion->clasificacion_contenedor,
                 'tipo_contenedor'    => $primera_cotizacion->tipo_contenedor,

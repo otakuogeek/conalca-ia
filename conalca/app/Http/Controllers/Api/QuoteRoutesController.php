@@ -181,29 +181,59 @@ class QuoteRoutesController extends Controller
                 ], 403);
             }
 
-            $routes = $group->cotizaciones()->get()->map(function ($cotization) {
+            // 🆕 Obtener extracted_data del grupo para incluir producto_mencionado y otros campos IA
+            $extractedData = [];
+            if ($group->extracted_data) {
+                $extractedData = is_string($group->extracted_data) 
+                    ? json_decode($group->extracted_data, true) 
+                    : $group->extracted_data;
+                
+                // Asegurar que es un array indexado
+                if (is_array($extractedData) && !isset($extractedData[0])) {
+                    $extractedData = array_values($extractedData);
+                }
+            }
+
+            $routes = $group->cotizaciones()->get()->map(function ($cotization, $index) use ($extractedData) {
+                // Buscar datos extraídos correspondientes a esta ruta
+                $extracted = $extractedData[$index] ?? [];
+                
                 return [
                     'id' => $cotization->id,
+                    'ruta_numero' => $index + 1,
                     'ciudad_origen' => $cotization->ciudad_origen,
+                    'ciudadOrigen' => $cotization->ciudad_origen,
                     'ciudad_destino' => $cotization->ciudad_destino,
+                    'ciudadDestino' => $cotization->ciudad_destino,
                     'peso_mercancia' => $cotization->peso_mercancia,
+                    'pesoMercancia' => $cotization->peso_mercancia,
                     'cantidad' => $cotization->cantidad,
+                    'cantidadMercancia' => $cotization->cantidad,
                     'tipo_embajale' => $cotization->tipo_embajale,
-                    'tipo_producto' => $cotization->tipo_producto,
+                    'empaque' => $extracted['empaque'] ?? $cotization->tipo_embajale,
+                    'empaque_id' => $extracted['empaque_id'] ?? null,
+                    // 🔥 CRÍTICO: Priorizar producto_mencionado del extracted_data sobre tipo_producto de BD
+                    'producto' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? $cotization->tipo_producto,
+                    'producto_mencionado' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? null,
+                    'tipo_producto' => $extracted['tipo_producto'] ?? $cotization->tipo_producto,
+                    'producto_codigo' => $extracted['producto_codigo'] ?? null,
+                    'producto_nombre' => $extracted['producto_nombre'] ?? null,
                     'vehiculo_requerido' => $cotization->vehiculo_requerido,
+                    'vehiculo' => $cotization->vehiculo_requerido,
+                    'claseVehiculo' => $cotization->vehiculo_requerido,
                     'valor_declarado' => $cotization->valor_declarado,
+                    'valorMercancia' => $cotization->valor_declarado,
                     'active' => $cotization->active,
                     'decision_cliente' => $cotization->decision_cliente,
+                    'incluye_tara' => $extracted['incluye_tara'] ?? false,
                 ];
             });
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'group_id' => $group->id,
-                    'routes_count' => $routes->count(),
-                    'routes' => $routes
-                ]
+                'group_id' => $group->id,
+                'routes_count' => $routes->count(),
+                'routes' => $routes
             ]);
 
         } catch (\Exception $e) {

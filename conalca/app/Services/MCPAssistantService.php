@@ -4073,7 +4073,8 @@ class MCPAssistantService
         // 🆕 NUEVO PATRÓN: "Una cotización de X a Y, son N kg/toneladas de PRODUCTO..."
         // Formato: "Necesito una cotización de distribución nacionalizada de Medellín a Bogota, son 7 mil kilogramos de vacas..."
         // IMPORTANTE: Usa lookahead (?=\s+por\s+un\s+valor) para capturar correctamente el nombre del producto
-        $patronCotizacion = '/(?:una\s+)?cotizaci[oó]n(?:\s+de\s+distribuci[oó]n(?:\s+nacionalizada)?)?\s+(?:de|desde)\s+([a-záéíóúñ\s]+?)\s+(?:a|hasta|hacia)\s+([a-záéíóúñ\s]+?),?\s+(?:son\s+)?(\d+(?:\s*mil)?)\s*(?:kilogramos?|kg|toneladas?|ton)\s+(?:sin\s+tara\s+de\s+|con\s+tara\s+de\s+|de\s+)?([a-záéíóúñ\s]+?)(?=\s+por\s+un\s+valor)/ui';
+        // NOTA: El patrón NO captura "distribución nacionalizada" - estas palabras van antes de "de [CIUDAD]"
+        $patronCotizacion = '/(?:una\s+)?cotizaci[oó]n(?:\s+de\s+distribuci[oó]n(?:\s+nacionalizada)?)?\s+(?:de|desde)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s+(?:a|hasta|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,1}),?\s+(?:son\s+)?(\d+(?:\s*mil)?)\s*(?:kilogramos?|kg|toneladas?|ton)\s+(?:sin\s+tara\s+de\s+|con\s+tara\s+de\s+|de\s+)?([a-záéíóúñ\s]+?)(?=\s+por\s+un\s+valor)/ui';
         
         if (preg_match_all($patronCotizacion, $text, $matchesCotizacion, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
             Log::info('✅ Patrón COTIZACIÓN encontró rutas', [
@@ -4082,8 +4083,19 @@ class MCPAssistantService
             ]);
             
             foreach ($matchesCotizacion as $idx => $match) {
-                $origen = self::normalizeCityName(trim($match[1][0]));
-                $destino = self::normalizeCityName(trim($match[2][0]));
+                // Limpiar prefijos comunes de las ciudades capturadas
+                $origenRaw = trim($match[1][0]);
+                $destinoRaw = trim($match[2][0]);
+                
+                // Remover palabras clave que no son parte del nombre de la ciudad
+                $prefijosARemover = ['distribución', 'distribucion', 'nacionalizada', 'nacionalizada de', 'importación', 'importacion', 'exportación', 'exportacion'];
+                foreach ($prefijosARemover as $prefijo) {
+                    $origenRaw = preg_replace('/^' . preg_quote($prefijo, '/') . '\s+(?:de\s+)?/ui', '', $origenRaw);
+                    $destinoRaw = preg_replace('/^' . preg_quote($prefijo, '/') . '\s+(?:de\s+)?/ui', '', $destinoRaw);
+                }
+                
+                $origen = self::normalizeCityName(trim($origenRaw));
+                $destino = self::normalizeCityName(trim($destinoRaw));
                 
                 // Parsear peso (puede tener "mil")
                 $pesoRaw = trim($match[3][0]);
@@ -4481,11 +4493,11 @@ class MCPAssistantService
                         'origen' => $origen,
                         'destino' => $destino,
                         'peso_kg' => $peso,
-                        'producto' => $route['producto'] ?? 'N/A',
-                        'cantidad' => $route['cantidad'] ?? 'N/A',
-                        'empaque' => $route['empaque'] ?? 'N/A',
-                        'vehiculo' => $route['vehiculo'] ?? 'N/A',
-                        'valor' => $route['valor_declarado'] ?? 'N/A'
+                        'producto' => $route['producto'] ?? '-',
+                        'cantidad' => $route['cantidad'] ?? '-',
+                        'empaque' => $route['empaque'] ?? '-',
+                        'vehiculo' => $route['vehiculo'] ?? '-',
+                        'valor' => $route['valor_declarado'] ?? '-'
                     ]);
                 }
                 
@@ -4546,10 +4558,10 @@ class MCPAssistantService
                         'origen' => $origen,
                         'destino' => $destino,
                         'peso_kg' => $peso,
-                        'producto' => $route['producto'] ?? 'N/A',
-                        'cantidad' => $route['cantidad'] ?? 'N/A',
-                        'empaque' => $route['empaque'] ?? 'N/A',
-                        'vehiculo' => $route['vehiculo'] ?? 'N/A'
+                        'producto' => $route['producto'] ?? '-',
+                        'cantidad' => $route['cantidad'] ?? '-',
+                        'empaque' => $route['empaque'] ?? '-',
+                        'vehiculo' => $route['vehiculo'] ?? '-'
                     ]);
                 }
                 
@@ -4707,12 +4719,12 @@ class MCPAssistantService
             Log::info("✅ Ruta #{$completeRoute['ruta_numero']} procesada", [
                 'origen' => $completeRoute['origen'],
                 'destino' => $completeRoute['destino'],
-                'peso_kg' => $completeRoute['peso_kg'] ?? 'N/A',
-                'cantidad' => $completeRoute['cantidad'] ?? 'N/A',
-                'valor' => $completeRoute['valor_declarado'] ?? 'N/A',
-                'producto' => $completeRoute['producto'] ?? 'N/A',
-                'empaque' => $completeRoute['empaque'] ?? 'N/A',
-                'vehiculo' => $completeRoute['vehiculo'] ?? 'N/A'
+                'peso_kg' => $completeRoute['peso_kg'] ?? '-',
+                'cantidad' => $completeRoute['cantidad'] ?? '-',
+                'valor' => $completeRoute['valor_declarado'] ?? '-',
+                'producto' => $completeRoute['producto'] ?? '-',
+                'empaque' => $completeRoute['empaque'] ?? '-',
+                'vehiculo' => $completeRoute['vehiculo'] ?? '-'
             ]);
         }
 
@@ -5146,7 +5158,7 @@ class MCPAssistantService
                 'las', 'los', 'del', 'dia', 'dias', 'hora', 'horas', 'manana', 'mañana', 'tarde', 'noche',
                 'am', 'pm', 'hoy', 'ayer', 'semana', 'mes', 'ano', 'año'
             ];
-            $commonWords = ['importación', 'exportación', 'nacionalizada', 'internacional', 'terrestre', 'marítima', 'aérea', 'carga', 'general'];
+            $commonWords = ['importación', 'exportación', 'distribución', 'distribucion', 'nacionalizada', 'internacional', 'terrestre', 'marítima', 'aérea', 'carga', 'general'];
             $origen = trim($matches[1]);
             $destino = trim($matches[2]);
             
@@ -5236,7 +5248,7 @@ class MCPAssistantService
                 'las', 'los', 'del', 'dia', 'dias', 'hora', 'horas', 'manana', 'mañana', 'tarde', 'noche',
                 'am', 'pm', 'hoy', 'ayer', 'semana', 'mes', 'ano', 'año'
             ];
-            $commonWords = ['necesito', 'quiero', 'solicito', 'cotización', 'importación', 'exportación', 'nacionalizada', 'carga'];
+            $commonWords = ['necesito', 'quiero', 'solicito', 'cotización', 'importación', 'exportación', 'distribución', 'distribucion', 'nacionalizada', 'carga'];
             
             // Verificar palabras prohibidas
             $origenLower = strtolower($origen);
@@ -5308,10 +5320,22 @@ class MCPAssistantService
         $textLower = mb_strtolower($text);
         
         // 🆕 PATRÓN: "de ORIGEN a DESTINO" o "desde ORIGEN hasta DESTINO"
-        // Más flexible para capturar ciudades con espacios
-        if (preg_match('/(?:cotizaci[oó]n\s+)?(?:de|desde|-)\s+([a-záéíóúñ\s]+?)\s+(?:a|hasta|hacia|-)\s+([a-záéíóúñ]+)/ui', $text, $ciudadesMatch)) {
-            $route['origen'] = self::normalizeCityName(trim($ciudadesMatch[1]));
-            $route['destino'] = self::normalizeCityName(trim($ciudadesMatch[2]));
+        // IMPORTANTE: Filtrar prefijos como "distribución nacionalizada de"
+        $patronCiudades = '/(?:cotizaci[oó]n\s+)?(?:de\s+)?(?:distribuci[oó]n\s+)?(?:nacionalizada\s+)?(?:de|desde)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s+(?:a|hasta|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui';
+        if (preg_match($patronCiudades, $text, $ciudadesMatch)) {
+            // Limpiar prefijos comunes que no son parte del nombre de la ciudad
+            $origenRaw = trim($ciudadesMatch[1]);
+            $destinoRaw = trim($ciudadesMatch[2]);
+            
+            // Remover palabras clave que pueden haber quedado capturadas
+            $prefijosARemover = ['distribución', 'distribucion', 'nacionalizada', 'importación', 'importacion', 'exportación', 'exportacion', 'de'];
+            foreach ($prefijosARemover as $prefijo) {
+                $origenRaw = preg_replace('/^' . preg_quote($prefijo, '/') . '\s+/ui', '', $origenRaw);
+                $destinoRaw = preg_replace('/^' . preg_quote($prefijo, '/') . '\s+/ui', '', $destinoRaw);
+            }
+            
+            $route['origen'] = self::normalizeCityName(trim($origenRaw));
+            $route['destino'] = self::normalizeCityName(trim($destinoRaw));
         }
         
         // 🆕 PATRÓN: "ORIGEN <sep> DESTINO"
@@ -5395,7 +5419,11 @@ class MCPAssistantService
         ];
         
         // Patrón numérico primero
-        if (preg_match('/(?:de|por)?\s*(\d+)\s*(?:toneladas?|ton(?:eladas)?)/ui', $text, $pesoMatch)) {
+        // 🆕 Soporte para "7 mil kilogramos", "26 mil kg", etc.
+        if (preg_match('/(?:son\s+)?(\d+)\s*mil\s*(?:kilogramos?|kg)/ui', $text, $pesoMatch)) {
+            $route['peso_kg'] = (int)$pesoMatch[1] * 1000;
+            Log::info('📦 Peso extraído (formato "X mil kg")', ['peso_raw' => $pesoMatch[0], 'peso_kg' => $route['peso_kg']]);
+        } elseif (preg_match('/(?:de|por)?\s*(\d+)\s*(?:toneladas?|ton(?:eladas)?)/ui', $text, $pesoMatch)) {
             $route['peso_kg'] = (int)$pesoMatch[1] * 1000;
         } elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)/ui', $text, $pesoMatch)) {
             $route['peso_kg'] = (int)str_replace(['.', ','], '', $pesoMatch[1]);
@@ -5466,26 +5494,42 @@ class MCPAssistantService
         
         // 🆕 PRODUCTO: múltiples patrones para mayor flexibilidad
         // 🔴 IMPORTANTE: Guardar como producto_mencionado (sin validar en BD)
-        // Patrón 1: "se transportan/transportar/llevar/cargar PRODUCTO"
-        if (preg_match('/(?:se\s+transporta[rn]?|transportar|transportando|llevar|cargar|con)\s+([a-záéíóúñ\s]+?)(?:\s*(?:por|con|en|empaquetados?|son|\d|vamos|$))/ui', $text, $productoMatch)) {
+        
+        // Patrón PRIORITARIO: "sin/con tara de PRODUCTO" (puede ser múltiples palabras)
+        if (preg_match('/(?:sin|con)\s+tara\s+de\s+([a-záéíóúñ\s]+?)(?=\s+por\s+un\s+valor|\s+empaque|\s+en\s|$)/ui', $text, $taraProductoMatch)) {
+            $prod = trim($taraProductoMatch[1]);
+            // Limpiar y validar
+            $prod = preg_replace('/\s+/', ' ', $prod); // Normalizar espacios
+            if (strlen($prod) >= 3 && !preg_match('/\b(valor|peso|incluye|por|millones?)\b/ui', $prod)) {
+                $route['producto'] = strtoupper($prod);
+                $route['producto_mencionado'] = strtoupper($prod);
+                $route['producto_validado'] = false;
+                Log::info('📦 Producto extraído (patrón "sin/con tara de PRODUCTO")', ['producto' => $route['producto']]);
+            }
+        }
+        
+        // Patrón 1: "N kg/toneladas de PRODUCTO" (captura hasta 3 palabras)
+        if (empty($route['producto']) && preg_match('/(?:\d+\s*(?:mil\s+)?)?(?:toneladas?|ton|kg|kilos?|kilogramos?)\s+de\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?=\s+por|\s+empaque|\s+en\s|$)/ui', $text, $productoMatch)) {
+            $prod = trim($productoMatch[1]);
+            // Excluir palabras que NO son productos
+            if (!preg_match('/\b(valor|peso|incluye|tara|por|un|con|en|sin)\b/ui', $prod) && strlen($prod) >= 3) {
+                $route['producto'] = strtoupper($prod);
+                $route['producto_mencionado'] = strtoupper($prod);
+                $route['producto_validado'] = false;
+                Log::info('📦 Producto extraído (patrón "X kg de PRODUCTO")', ['producto' => $route['producto']]);
+            }
+        }
+        
+        // Patrón 2: "se transportan/transportar/llevar/cargar PRODUCTO"
+        if (empty($route['producto']) && preg_match('/(?:se\s+transporta[rn]?|transportar|transportando|llevar|cargar|con)\s+([a-záéíóúñ\s]+?)(?:\s*(?:por|con|en|empaquetados?|son|\d|vamos|$))/ui', $text, $productoMatch)) {
             $producto = trim($productoMatch[1]);
             // Limpiar palabras no válidas
             $producto = preg_replace('/\b(empaquetados?|en\s+cajas?|una|un|dos|tres|ruta|viaje|cotizaci[oó]n|en\s+sacos?)\b/ui', '', $producto);
             // Validar que no sea "valor", "peso", "toneladas"
-             if (!preg_match('/\b(valor|peso|toneladas?|millones?|medida|cantidad|vamos)\b/ui', $producto) && strlen(trim($producto)) >= 3) {
+            if (!preg_match('/\b(valor|peso|toneladas?|millones?|medida|cantidad|vamos)\b/ui', $producto) && strlen(trim($producto)) >= 3) {
                 $route['producto'] = strtoupper(trim($producto));
-                $route['producto_mencionado'] = strtoupper(trim($producto)); // 🆕 Sin validar
-                $route['producto_validado'] = false; // 🆕 Flag
-            }
-        }
-        
-        // Patrón 2: "N toneladas de PRODUCTO" (muy común)
-        if (empty($route['producto']) && preg_match('/\d+\s*(?:toneladas?|ton|kg|kilos?)\s+(?:de\s+)?([a-záéíóúñ]+)/ui', $text, $productoMatch2)) {
-            $prod = trim($productoMatch2[1]);
-             if (!preg_match('/\b(valor|peso|incluye|tara)\b/ui', $prod)) {
-                $route['producto'] = strtoupper($prod);
-                $route['producto_mencionado'] = strtoupper($prod); // 🆕 Sin validar
-                $route['producto_validado'] = false; // 🆕 Flag
+                $route['producto_mencionado'] = strtoupper(trim($producto));
+                $route['producto_validado'] = false;
             }
         }
         
@@ -6228,9 +6272,19 @@ class MCPAssistantService
         $esContenedorDeVehiculo = preg_match('/(?:transportar|capacidad|veh[ií]culo.*?(?:tipo|para)).*contenedor/ui', $lowerText) ||
                                   preg_match('/contenedor.*(?:sin.*devoluci[oó]n|retorno)/ui', $lowerText);
         
+        // 🆕 FILTRAR: Si "varios" está en contexto de PRODUCTO, NO usar como empaque
+        // "productos varios enlatados", "productos varios"
+        $esVariosDeProducto = preg_match('/producto[s]?\s+varios/ui', $lowerText);
+        
         foreach ($empaques as $keyword => $empaqueType) {
             // 🆕 Si es contenedor de vehículo, NO usarlo como empaque
             if ($esContenedorDeVehiculo && strpos($keyword, 'contenedor') !== false) {
+                continue;
+            }
+            
+            // 🆕 Si "varios" está como parte de un producto, NO usarlo como empaque
+            if ($esVariosDeProducto && $keyword === 'varios') {
+                Log::info('📦 Empaque "VARIOS" ignorado (es parte del producto)', ['texto' => substr($lowerText, 0, 100)]);
                 continue;
             }
             
@@ -6664,8 +6718,75 @@ Cuando el usuario proporciona información PARCIAL o ADICIONAL:
 5. Si el usuario dice "cantidad 60", actualiza cantidad = 60
 6. Si el usuario dice "valor 10 millones", actualiza valor_declarado = 10000000
 
-� AJUSTES Y CORRECCIONES:
-Cuando el usuario pide AJUSTES a datos ya capturados:
+� AJUSTES Y CORRECCIONES (CRÍTICO):
+🚨 DETECTAR SI ES EDICIÓN vs CREACIÓN 🚨
+
+**CUANDO EL USUARIO ESTÁ EDITANDO CAMPOS:**
+Si el usuario dice:
+- "cambia el destino a Cali"
+- "origen es Barranquilla"  
+- "peso 5000 kg"
+- "producto neumáticos"
+- "embalaje contenedor, cantidad 5645, vehículo tractomula"
+- "valor 10 millones"
+
+**LO QUE DEBES HACER:**
+1. ✅ ACTUALIZAR SOLO el/los campo(s) mencionado(s)
+2. ✅ PRESERVAR todos los demás campos sin cambios
+3. ✅ CONFIRMAR el cambio: "✅ Actualizado: Embalaje → CONTENEDOR, Cantidad → 5645, Vehículo → TRACTOMULA"
+4. ✅ MOSTRAR preview actualizado de la ruta
+5. ❌ NO llamar a create_cotizacion ni create_quote
+6. ❌ NO buscar productos automáticamente
+7. ❌ NO preguntar por otros campos
+8. ❌ NO devolver "null", "N/A" o valores vacíos para campos no mencionados
+
+**REGLA CRÍTICA AL EDITAR:**
+Cuando el usuario edita campos de una ruta:
+- ✅ SI menciona "cantidad 5645" → Actualizar SOLO cantidad
+- ✅ SI menciona "embalaje contenedor" → Actualizar SOLO embalaje
+- ✅ SI menciona "vehículo tractomula" → Actualizar SOLO vehículo
+- ✅ SI menciona "producto X" → Actualizar SOLO producto
+- ❌ NO devolver origen, destino, producto, peso u otros campos como null
+- ❌ NO extraer TODOS los campos de nuevo
+- ❌ **NO cambiar el producto si el usuario NO menciona "producto"**
+- ❌ **NO extraer producto de palabras como "sacos", "contenedor" si son embalajes**
+- ✅ Los campos NO mencionados deben MANTENERSE EXACTAMENTE IGUAL
+
+**🔥 REGLA CRÍTICA - PRODUCTOS PERSONALIZADOS:**
+Si una ruta tiene un producto como "PRODUCTOS PERSONALIZADOS DE LA ANDA" u otro producto no estándar:
+- ❌ **NUNCA lo cambies** si el usuario está editando otros campos
+- ❌ **NO lo reemplaces** por productos de la lista estándar
+- ✅ **SOLO cámbialo** si el usuario dice: "producto X" o "cambia el producto a Y"
+
+Formato de respuesta al editar (SOLO campos modificados):
+{
+  "cantidad": 5645,
+  "empaque": "CONTENEDOR (1) 20 PIES",
+  "vehiculo": "TRACTOMULA"
+}
+NO incluir campos no editados en la respuesta (incluyendo producto si no fue mencionado).
+
+**EJEMPLO CRÍTICO - NO TOCAR PRODUCTO:**
+Usuario: "cantidad 5000, embalaje contenedor"
+Producto actual: "PRODUCTOS PERSONALIZADOS DE LA ANDA"
+✅ Respuesta: {"cantidad": 5000, "empaque": "CONTENEDOR (1) 20 PIES"}
+❌ NO devolver: {"producto": "CONTENEDOR"} o cambiar el producto existente
+
+**SOLO CREAR COTIZACIONES CUANDO:**
+- ✅ Usuario EXPLÍCITAMENTE dice: "crea las cotizaciones", "genera las cotizaciones", "procede"
+- ✅ Usuario confirma después de mostrar el resumen completo
+
+Ejemplo de EDICIÓN:
+Usuario: "embalaje contenedor, cantidad 5645, vehículo tractomula"
+Tú: "✅ Ruta 3 actualizada:
+• Embalaje: CONTENEDOR (1) 20 PIES
+• Cantidad: 5,645
+• Vehículo: TRACTOMULA
+
+¿Deseas hacer más cambios o crear las cotizaciones?"
+[FIN - NO crear cotizaciones]
+
+⚠️ Reglas de ajustes:
 - "agrega la tara" → DÉJALO ESTAR, el sistema lo sumará automáticamente. Solo confirma.
 - "cambia el producto" → SOLO si menciona un NUEVO producto
 - "modifica el peso" → Actualiza el peso con el nuevo valor
@@ -6680,6 +6801,35 @@ Cuando el usuario pide AJUSTES a datos ya capturados:
 - Si el usuario dice "peso 20 toneladas con tara", extrae "peso: 20000", "incluye_tara: true".
 - Si el usuario dice "agrega tara", el sistema lo hará.
 
+�� VALORES POR DEFECTO - NUEVA REGLA (CRÍTICA):
+🚨 NUNCA INVENTAR DATOS QUE EL USUARIO NO PROPORCIONÓ 🚨
+
+❌ NO asumir valores por defecto para:
+- Embalaje: Si no se menciona, mostrar "-" y PREGUNTAR
+- Vehículo: Si no se especifica, mostrar "-" (solo sugerir según peso, pero confirmar)
+- Cantidad: Si no se especifica, mostrar "-" y PREGUNTAR (NO asumir 1)
+- Valor declarado: Si no se menciona, mostrar "-" y PREGUNTAR
+- Producto: Si no se detecta claramente, mostrar "-" y PREGUNTAR
+
+✅ CORRECTO - mostrar preview con "-" para campos vacíos:
+"📦 Datos capturados:
+• Origen: MEDELLÍN → Destino: BOGOTÁ
+• Peso: 15,000 kg (15 ton)
+• Producto: CAFÉ
+• Embalaje: - (no especificado)
+• Vehículo: - (no especificado)
+• Cantidad: - (no especificado)
+
+Para continuar necesito:
+¿Qué tipo de embalaje? (SACOS, CAJAS, GRANEL, etc.)"
+
+❌ INCORRECTO - NO hacer esto:
+"Embalaje: VARIOS (asumido)"
+"Cantidad: 1 (por defecto)"
+"Valor: 1,000,000 (estimado)"
+
+REGLA: Si el campo está vacío, mostrarlo como "-" y PREGUNTAR antes de crear cotización.
+
 �🚛 SUGERENCIA AUTOMÁTICA DE VEHÍCULO:
 Basado en el peso detectado, sugiere automáticamente:
 - Hasta 1.5 ton: CAMIONETA
@@ -6689,12 +6839,8 @@ Basado en el peso detectado, sugiere automáticamente:
 - 17-25 ton: TRACTOCAMION
 - Más de 25 ton: MINIMULA
 
-💡 VALORES POR DEFECTO INTELIGENTES:
-Si faltan datos y el usuario NO los proporciona después de 1 pregunta:
-- Cantidad: 1 unidad (si no se especifica)
-- Valor declarado: USD 1,000 por tonelada (SIEMPRE usar "USD" no "$")
-- Empaque: GRANEL SOLIDO (deducir según producto)
-- Vehículo: AUTO-CALCULADO según peso
+⚠️ IMPORTANTE: Solo SUGERIR el vehículo según peso, pero SIEMPRE confirmar con el usuario.
+Si el usuario no especifica vehículo, mostrar la sugerencia: "Sugiero TURBO según el peso, ¿está bien?"
 
 FORMATO DE VALORES MONETARIOS:
 - SIEMPRE usa "USD" para valores en dólares, NUNCA uses "$"

@@ -194,17 +194,19 @@ const ChatModal = ({
       }
 
       if (pending.producto) {
+        // 🔥 PRIORIDAD: producto_mencionado > producto > tipo_producto
+        // ❌ NO usar producto_nombre (es de BD, no del usuario)
         routeFieldLocksRef.current[idx].producto = {
           producto:
+            route?.producto_mencionado ||
             route?.producto ||
             route?.tipo_producto ||
-            route?.producto_nombre ||
             null,
           producto_codigo: route?.producto_codigo || null,
           tipo_producto:
+            route?.producto_mencionado ||
             route?.tipo_producto ||
             route?.producto ||
-            route?.producto_nombre ||
             null
         };
       }
@@ -466,12 +468,23 @@ const ChatModal = ({
     // Caso 1: quoteData es array (multi-ruta)
     if (Array.isArray(quoteData) && quoteData.length > 0) {
       return quoteData.map((route, index) => {
+        // 🔥 PRIORIDAD DE PRODUCTOS:
+        // 1. producto_mencionado (el que el usuario dijo explícitamente)
+        // 2. producto (valor actual/personalizado)
+        // 3. tipo_producto (valor alternativo)
+        // 4. selectedProduct (solo para primera ruta)
+        // ❌ NUNCA usar producto_nombre como fallback principal (es de BD, no del usuario)
+        const productoFinal = route.producto_mencionado 
+          || route.producto 
+          || route.tipo_producto 
+          || (index === 0 ? selectedProduct?.nombre : null);
+
         return {
           ...route,
           // Priorizar el producto de la ruta sobre selectedProduct global
-          producto: route.producto || route.tipo_producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+          producto: productoFinal,
           producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
-          tipo_producto: route.tipo_producto || route.producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
+          tipo_producto: productoFinal,
           // Priorizar el empaque de la ruta sobre selectedEmpaque global
           empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
           tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
@@ -480,11 +493,16 @@ const ChatModal = ({
     }
     // Caso 2: quoteData es objeto con datos
     else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
+      const productoFinal = quoteData.producto_mencionado 
+        || selectedProduct?.nombre 
+        || quoteData.producto 
+        || quoteData.tipo_producto;
+
       return [{
         ...quoteData,
-        producto: selectedProduct?.nombre || quoteData.producto || quoteData.tipo_producto,
+        producto: productoFinal,
         producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
-        tipo_producto: selectedProduct?.nombre || quoteData.tipo_producto || quoteData.producto,
+        tipo_producto: productoFinal,
         empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
         tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
       }];
@@ -661,8 +679,10 @@ const ChatModal = ({
                   valorMercancia: route.valor_mercancia ?? route.valor_declarado ?? null,
                   vehiculo: route.vehiculo ?? null, // Para compatibilidad
                   claseVehiculo: route.vehiculo ?? route.claseVehiculo ?? route.vehiculo_requerido ?? null, // 🆕 Para el panel
-                  producto: route.tipo_producto ?? route.producto ?? null,
-                  tipo_producto: route.tipo_producto ?? route.producto ?? null,
+                  // 🔥 PRIORIDAD PRODUCTO: producto_mencionado > producto > tipo_producto
+                  producto: route.producto_mencionado ?? route.producto ?? route.tipo_producto ?? null,
+                  tipo_producto: route.producto_mencionado ?? route.tipo_producto ?? route.producto ?? null,
+                  producto_mencionado: route.producto_mencionado ?? route.producto ?? null, // Preservar el original
                   empaque: route.empaque ?? null,
                   empaque_id: route.empaque_id ?? null,
                   contenedor: route.tipo_contenedor ?? route.contenedor ?? null,
@@ -673,13 +693,70 @@ const ChatModal = ({
 
               console.log(`✅ ${processedRoutes.length} rutas procesadas para QuoteDetailsPanel:`, processedRoutes);
 
+              // 🔥 CRÍTICO: CONSULTAR BD PRIMERO para evitar usar cache desactualizado
+              // Esto previene que campos se sobrescriban con null por estados locales obsoletos
+              const fetchCurrentDataFromDB = async () => {
+                try {
+                  const currentGroupId = groupCotizacion || groupIdRef.current;
+                  if (!currentGroupId) {
+                    console.warn('⚠️ No hay group_id, usando estado local');
+                    return null;
+                  }
+
+                  const response = await fetch(`/api/chat/quote/routes/${currentGroupId}`, {
+                    headers: {
+                      'Accept': 'application/json',
+                      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                    }
+                  });
+                  
+                  if (response.ok) {
+                    const data = await response.json();
+                    if (data.success && Array.isArray(data.routes)) {
+                      console.log('✅ Datos actuales de BD obtenidos:', data.routes.length, 'rutas');
+                      // Convertir formato de BD a formato del componente
+                      return data.routes.map(r => ({
+                        ruta_numero: r.ruta_numero,
+                        ciudadOrigen: r.ciudad_origen || r.ciudadOrigen,
+                        ciudadDestino: r.ciudad_destino || r.ciudadDestino,
+                        pesoMercancia: r.peso_mercancia || r.pesoMercancia,
+                        cantidadMercancia: r.cantidad || r.cantidadMercancia,
+                        valorMercancia: r.valor_declarado || r.valorMercancia,
+                        producto: r.producto_mencionado || r.producto,
+                        tipo_producto: r.producto_mencionado || r.tipo_producto || r.producto,
+                        producto_mencionado: r.producto_mencionado || r.producto,
+                        empaque: r.empaque,
+                        empaque_id: r.empaque_id,
+                        claseVehiculo: r.vehiculo || r.claseVehiculo,
+                        vehiculo: r.vehiculo
+                      }));
+                    }
+                  }
+                } catch (error) {
+                  console.warn('⚠️ Error al obtener datos de BD, usando estado local:', error);
+                }
+                return null;
+              };
+
+              // Obtener datos actuales de BD
+              const currentDataFromDB = await fetchCurrentDataFromDB();
+              
               // Persistir inmediatamente en BD para evitar desfaces en panel/modal
               persistRoutesToDb(processedRoutes);
 
-              // 🆕 LÓGICA DE FUSIÓN INTELIGENTE (SMART MERGE)
+              // 🆕 LÓGICA DE FUSIÓN INTELIGENTE (SMART MERGE) - Usando datos de BD
               updateQuoteData(prevData => {
-                const prevArray = Array.isArray(prevData) ? prevData : [];
+                // Priorizar datos de BD sobre estado local
+                const prevArray = currentDataFromDB !== null 
+                  ? currentDataFromDB 
+                  : (Array.isArray(prevData) ? prevData : []);
                 
+                console.log('📊 Datos base para merge:', {
+                  fuente: currentDataFromDB !== null ? 'BD' : 'Estado local',
+                  rutas_existentes: prevArray.length,
+                  rutas_nuevas: processedRoutes.length
+                });
+
                 // Si no hay datos previos, usar los nuevos directamente
                 if (prevArray.length === 0) {
                   console.log('🔄 Reemplazo completo de quoteData (estado vacío)');
@@ -712,16 +789,37 @@ const ChatModal = ({
                     const existing = nextData[idx] || {};
                     const merged = { ...existing };
 
+                    console.log(`🔀 Fusionando en ruta ${idx + 1}:`);
+                    console.log('   📦 Datos existentes:', existing);
+                    console.log('   🆕 Datos nuevos:', newRoute);
+
                     Object.keys(newRoute).forEach(key => {
                       const val = newRoute[key];
+                      const existingVal = existing[key];
+                      
                       if (key === '_originalValues') return;
-                      // Evitar sobreescribir con null/undefined o string vacío
-                      if (val === null || val === undefined || val === '') return;
-                      merged[key] = val;
+                      
+                      // 🔥 CRÍTICO: SOLO actualizar si el valor es válido (no null/undefined/vacío)
+                      // Si el nuevo valor es inválido, PRESERVAR el valor existente
+                      if (val === null || val === undefined || val === '') {
+                        // NO sobrescribir - mantener valor existente
+                        if (existingVal !== undefined && existingVal !== null && existingVal !== '') {
+                          console.log(`   🛡️ PRESERVANDO ${key}: "${existingVal}" (nuevo valor inválido: ${val})`);
+                        }
+                        return; // NO actualizar este campo
+                      }
+                      
+                      // Actualizar solo si el nuevo valor es diferente y válido
+                      if (existingVal !== val) {
+                        console.log(`   🔄 ACTUALIZANDO ${key}: "${existingVal}" → "${val}"`);
+                        merged[key] = val;
+                      } else {
+                        console.log(`   ✓ ${key} sin cambios: "${val}"`);
+                      }
                     });
 
                     nextData[idx] = merged;
-                    console.log(`✅ Ruta ${idx + 1} fusionada`, merged);
+                    console.log(`   ✅ Ruta ${idx + 1} fusionada:`, merged);
                   };
 
                   if (targetIdx >= 0 && targetIdx < nextData.length) {
@@ -1323,9 +1421,10 @@ const ChatModal = ({
                                       if (newRoute) {
                                         return {
                                           ...route,
-                                          producto: newRoute.producto_nombre || newRoute.producto || route.producto,
+                                          producto: newRoute.producto_mencionado || newRoute.producto || route.producto,
                                           producto_codigo: newRoute.producto_codigo || route.producto_codigo,
-                                          tipo_producto: newRoute.producto_nombre || newRoute.producto || route.tipo_producto
+                                          tipo_producto: newRoute.producto_mencionado || newRoute.producto || newRoute.tipo_producto || route.tipo_producto,
+                                          producto_nombre: newRoute.producto_nombre || route.producto_nombre
                                         };
                                       }
                                       return route;
@@ -1464,9 +1563,10 @@ const ChatModal = ({
               cantidad: route.cantidad || route.cantidad_unidades || null,
               contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
               tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
-              producto: route.producto_nombre || route.producto || route.tipo_producto || null, // 🆕 Priorizar producto_nombre
-              tipo_producto: route.producto_nombre || route.producto || route.tipo_producto || null,
+              producto: route.producto_mencionado || route.producto || route.tipo_producto || null, // 🔥 Priorizar producto_mencionado (usuario) NUNCA producto_nombre (BD)
+              tipo_producto: route.producto_mencionado || route.producto || route.tipo_producto || null,
               producto_codigo: route.producto_codigo || null,
+              producto_nombre: route.producto_nombre || null,
               valorMercancia: route.valor || route.valor_mercancia || route.valor_declarado || null,
               valor_declarado: route.valor || route.valor_mercancia || route.valor_declarado || null,
               vehiculo: route.vehiculo || null, // Para compatibilidad
