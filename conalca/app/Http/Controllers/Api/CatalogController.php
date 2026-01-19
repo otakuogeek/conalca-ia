@@ -95,11 +95,18 @@ class CatalogController extends Controller
     public function empaques(Request $r) {
         $q = $r->input('q', '');
 
-        $result = Packing::where('Nombre', 'like', "%$q%")
-                    ->orWhere('Codigo', 'like', "%$q%")
-                    ->orWhere('Codigo Ministerio', 'like', "%$q%")
+        // 🔧 FIX: Usar nombres de columnas reales de tb_empaque (portugués)
+        $result = Packing::where('nome', 'like', "%$q%")
+                    ->orWhere('codigo_ministerio', 'like', "%$q%")
                     ->limit(15)
-                    ->get(['Codigo', 'Codigo Ministerio', 'Nombre']);
+                    ->get(['id', 'codigo_ministerio', 'nome'])
+                    ->map(function($empaque) {
+                        return [
+                            'Codigo' => $empaque->id, // ID como código principal
+                            'Codigo Ministerio' => $empaque->codigo_ministerio,
+                            'Nombre' => $empaque->nome
+                        ];
+                    });
 
         \Log::info('[EMPAQUES] Búsqueda con q="'.$q.'", resultados: ' . $result->count());
         

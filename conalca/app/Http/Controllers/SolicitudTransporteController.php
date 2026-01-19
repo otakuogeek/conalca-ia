@@ -691,10 +691,12 @@ class SolicitudTransporteController extends Controller
                 // Step 2 – use numeric codes
                 'origen'             => $origenCode,
                 'destino'            => $destinoCode,
-                'peso'               => $primera_cotizacion->peso,
+                'cantidad_mercancia' => $primera_cotizacion->cantidad_mercancia,
+                'peso'               => $primera_cotizacion->peso_mercancia ?: $primera_cotizacion->peso,
                 'valor_mercancia'    => $primera_cotizacion->valor_declarado,
                 'descripcion_mercancia' => $primera_cotizacion->tipo_mercancia,
                 'vehiculo_requerido' => $primera_cotizacion->vehiculo_requerido,
+                'clase_vehiculo'     => $primera_cotizacion->clase_vehiculo,
                 'tipo_carga'         => $primera_cotizacion->tipo_carga,
                 'clasificacion_contenedor' => $primera_cotizacion->clasificacion_contenedor,
                 'tipo_contenedor'    => $primera_cotizacion->tipo_contenedor,

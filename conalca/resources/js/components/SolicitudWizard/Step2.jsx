@@ -35,40 +35,40 @@ const buildStep2State = (formData = {}, detalle = {}, data = {}) => {
   const flow = formData.operation_flow || data.operation_flow || {};
 
   return {
-    origen        : normalizeCityCode(formData.origen ?? detalle.origen),
-    origen_label           : formData.origen_label           || detalle.origen_label           || '',
-    destino       : normalizeCityCode(formData.destino ?? detalle.destino),
-    destino_label          : formData.destino_label          || detalle.destino_label          || '',
+    origen        : normalizeCityCode(formData.origen ?? detalle.origen ?? data.origen),
+    origen_label           : formData.origen_label           || detalle.origen_label           || data.origen_label || '',
+    destino       : normalizeCityCode(formData.destino ?? detalle.destino ?? data.destino),
+    destino_label          : formData.destino_label          || detalle.destino_label          || data.destino_label || '',
     lugar_recogida_contenedor: normalizeCityCode(
-      formData.lugar_recogida_contenedor ?? detalle.lugar_recogida_contenedor
+      formData.lugar_recogida_contenedor ?? detalle.lugar_recogida_contenedor ?? data.lugar_recogida_contenedor
     ),
-    lugar_recogida_contenedor_label : formData.lugar_recogida_contenedor_label || detalle.lugar_recogida_contenedor_label || '',
-    tipo_carga             : formData.tipo_carga             || detalle.tipo_carga             || '',
-    cantidad_mercancia     : formData.cantidad_mercancia     || detalle.cantidad_mercancia     || '',
-    peso                   : formData.peso                   || detalle.peso                   || '',
-    valor_mercancia        : formData.valor_mercancia        || detalle.valor_mercancia        || '',
-    producto               : formData.producto               || detalle.producto               || '',
-    producto_label         : formData.producto_label         || detalle.producto_label         || '',
-    empaque                : formData.empaque                || detalle.empaque                || '',
-    empaque_label          : formData.empaque_label          || detalle.empaque_label          || '',
-    cantidad_vehiculos     : formData.cantidad_vehiculos     || detalle.cantidad_vehiculos     || '',
-    clase_vehiculo         : formData.clase_vehiculo         || detalle.clase_vehiculo         || '',
-    clase_vehiculo_label   : formData.clase_vehiculo_label   || detalle.clase_vehiculo_label   || '',
-    carroceria             : formData.carroceria             || detalle.carroceria             || '',
-    carroceria_label       : formData.carroceria_label       || detalle.carroceria_label       || '',
-    minimo_modelo          : formData.minimo_modelo          || detalle.minimo_modelo          || '',
-    tipo_flete             : formData.tipo_flete             || detalle.tipo_flete             || '',
-    flete_conductor        : formData.flete_conductor        || detalle.flete_conductor        || '',
-    flete_ministerio       : formData.flete_ministerio       || detalle.flete_ministerio       || '',
-    tipo_tarifa            : formData.tipo_tarifa            || detalle.tipo_tarifa            || '',
-    tarifa_cliente         : formData.tarifa_cliente         || detalle.tarifa_cliente         || '',
-    cargue_cuenta_de       : formData.cargue_cuenta_de       || detalle.cargue_cuenta_de       || '',
-    descargue_cuenta_de    : formData.descargue_cuenta_de    || detalle.descargue_cuenta_de    || '',
-    seguro_cuenta_de       : formData.seguro_cuenta_de       || detalle.seguro_cuenta_de       || '',
-    descripcion_mercancia  : formData.descripcion_mercancia  || detalle.descripcion_mercancia  || '',
-    kit_seguridad          : formData.kit_seguridad          || detalle.kit_seguridad          || '',
-    sub_cliente            : formData.sub_cliente            || detalle.sub_cliente            || '',
-    tipo_remesa_rndc       : formData.tipo_remesa_rndc       || detalle.tipo_remesa_rndc       || '',
+    lugar_recogida_contenedor_label : formData.lugar_recogida_contenedor_label || detalle.lugar_recogida_contenedor_label || data.lugar_recogida_contenedor_label || '',
+    tipo_carga             : formData.tipo_carga             || detalle.tipo_carga             || data.tipo_carga || '',
+    cantidad_mercancia     : formData.cantidad_mercancia     || detalle.cantidad_mercancia     || data.cantidad_mercancia || '',
+    peso                   : formData.peso                   || detalle.peso                   || data.peso || '',
+    valor_mercancia        : formData.valor_mercancia        || detalle.valor_mercancia        || data.valor_mercancia || '',
+    producto               : formData.producto               || detalle.producto               || data.producto || '',
+    producto_label         : formData.producto_label         || detalle.producto_label         || data.producto_label || '',
+    empaque                : formData.empaque                || detalle.empaque                || data.empaque || '',
+    empaque_label          : formData.empaque_label          || detalle.empaque_label          || data.empaque_label || '',
+    cantidad_vehiculos     : formData.cantidad_vehiculos     || detalle.cantidad_vehiculos     || data.cantidad_vehiculos || '',
+    clase_vehiculo         : formData.clase_vehiculo         || detalle.clase_vehiculo         || data.clase_vehiculo || '',
+    clase_vehiculo_label   : formData.clase_vehiculo_label   || detalle.clase_vehiculo_label   || data.clase_vehiculo_label || '',
+    carroceria             : formData.carroceria             || detalle.carroceria             || data.carroceria || '',
+    carroceria_label       : formData.carroceria_label       || detalle.carroceria_label       || data.carroceria_label || '',
+    minimo_modelo          : formData.minimo_modelo          || detalle.minimo_modelo          || data.minimo_modelo || '',
+    tipo_flete             : formData.tipo_flete             || detalle.tipo_flete             || data.tipo_flete || '',
+    flete_conductor        : formData.flete_conductor        || detalle.flete_conductor        || data.flete_conductor || '',
+    flete_ministerio       : formData.flete_ministerio       || detalle.flete_ministerio       || data.flete_ministerio || '',
+    tipo_tarifa            : formData.tipo_tarifa            || detalle.tipo_tarifa            || data.tipo_tarifa || '',
+    tarifa_cliente         : formData.tarifa_cliente         || detalle.tarifa_cliente         || data.tarifa_cliente || '',
+    cargue_cuenta_de       : formData.cargue_cuenta_de       || detalle.cargue_cuenta_de       || data.cargue_cuenta_de || '',
+    descargue_cuenta_de    : formData.descargue_cuenta_de    || detalle.descargue_cuenta_de    || data.descargue_cuenta_de || '',
+    seguro_cuenta_de       : formData.seguro_cuenta_de       || detalle.seguro_cuenta_de       || data.seguro_cuenta_de || '',
+    descripcion_mercancia  : formData.descripcion_mercancia  || detalle.descripcion_mercancia  || data.descripcion_mercancia || '',
+    kit_seguridad          : formData.kit_seguridad          || detalle.kit_seguridad          || data.kit_seguridad || '',
+    sub_cliente            : formData.sub_cliente            || detalle.sub_cliente            || data.sub_cliente || '',
+    tipo_remesa_rndc       : formData.tipo_remesa_rndc       || detalle.tipo_remesa_rndc       || data.tipo_remesa_rndc || '',
     operation_flow         : flow
   };
 };
@@ -353,6 +353,7 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
   const getPackingName = async code => {
     if (!code) return '';
     const { data } = await searchEmpaques(code);
+    // 🔧 FIX: Buscar por Codigo (que ahora es el ID)
     const f = data.find(e => String(e.Codigo) === String(code));
     return f ? f.Nombre : '';
   };
