@@ -5233,6 +5233,20 @@ class MCPAssistantService
             $origen = trim($matches[1]);
             $destino = trim($matches[2]);
             
+            // 🆕 LIMPIAR palabras conectoras ANTES de validar
+            // Eliminar frases como "ruta de", "para llevar", "viaje de", etc.
+            // Usar un solo patrón grande con alternativas (|) para eliminar todo de una vez
+            $patronPrefijos = '/^(?:distribuci[oó]n\s+nacionalizada\s+(?:de\s+)?|importaci[oó]n\s+(?:de\s+)?|exportaci[oó]n\s+(?:de\s+)?|ruta\s+(?:de\s+)?|viaje\s+(?:de\s+)?|destino\s+(?:de\s+)?|origen\s+(?:de\s+)?|de\s+la\s+|desde\s+|hacia\s+|de\s+)/ui';
+            $patronSufijos = '/(?:\s+para\s+(?:llevar|cargar|descargar)|\s+a\s+las\s+|\s+por\s+|\s+con\s+).*/ui';
+            
+            $origen = preg_replace($patronPrefijos, '', $origen);
+            $destino = preg_replace($patronPrefijos, '', $destino);
+            $origen = preg_replace($patronSufijos, '', $origen);
+            $destino = preg_replace($patronSufijos, '', $destino);
+            
+            $origen = trim($origen);
+            $destino = trim($destino);
+            
             // 🆕 Palabras prohibidas que NUNCA pueden ser ciudades
             // Incluye: campos de formulario, acciones, productos comunes, meses del año, palabras de tiempo/hora
             $forbiddenWords = [
@@ -5253,10 +5267,10 @@ class MCPAssistantService
             // Verificar palabras prohibidas
             $origenLower = strtolower($origen);
             $destinoLower = strtolower($destino);
-            $origenIsForbidden = in_array($origenLower, $forbiddenWords) || 
-                                 array_filter($forbiddenWords, fn($w) => strpos($origenLower, $w) !== false);
-            $destinoIsForbidden = in_array($destinoLower, $forbiddenWords) ||
-                                  array_filter($forbiddenWords, fn($w) => strpos($destinoLower, $w) !== false);
+            
+            // 🆕 Verificar si TODA la palabra es exactamente una palabra prohibida (no subcadena)
+            $origenIsForbidden = in_array($origenLower, $forbiddenWords);
+            $destinoIsForbidden = in_array($destinoLower, $forbiddenWords);
             
             $isOriginCommon = in_array($origenLower, $commonWords);
             $isDestinationCommon = in_array($destinoLower, $commonWords);

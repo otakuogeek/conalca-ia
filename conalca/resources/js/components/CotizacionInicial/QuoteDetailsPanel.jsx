@@ -391,7 +391,7 @@ const QuoteDetailsPanel = ({
                   <p className={`text-sm font-bold ${
                     productoMostrar ? 'text-gray-900' : 'text-red-500'
                   }`}>
-                    {productoMostrar || '❌ Faltante'}
+                    {productoMostrar ? productoMostrar.toUpperCase() : '❌ Faltante'}
                   </p>
                 </div>
               </div>
