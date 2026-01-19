@@ -92,6 +92,205 @@ const ChatModal = ({
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
   const selectedRouteIndexRef = useRef(null);
   const lastProcessedDataHashRef = useRef(null);
+  const routeFieldLocksRef = useRef({});
+  const pendingFieldLocksRef = useRef({});
+
+  const resetRouteLocks = () => {
+    routeFieldLocksRef.current = {};
+    pendingFieldLocksRef.current = {};
+  };
+
+  // Guarda rutas en BD para mantener QuoteDetailsPanel sincronizado sin depender de cache local
+  const persistRoutesToDb = useCallback(async (routes) => {
+    if (!clientData?.groupId || !routes || !routes.length) return;
+    
+    // Normalizar rutas para asegurar que extracted_data tenga formato consistente
+    const normalizedRoutes = routes.map((r, idx) => ({
+      origen: r.ciudadOrigen || r.ciudad_origen || r.origen,
+      destino: r.ciudadDestino || r.ciudad_destino || r.destino,
+      empaque: r.empaque || r.tipo_embajale || r.tipo_embalaje,
+      empaque_id: r.empaque_id || r.empaqueId,
+      peso_kg: r.pesoMercancia || r.peso_mercancia || r.peso_kg || r.peso,
+      cantidad: r.cantidadMercancia || r.cantidad || r.cantidad_unidades,
+      producto: r.producto || r.tipo_producto,
+      producto_codigo: r.producto_codigo || r.codigoProducto,
+      producto_nombre: r.producto_nombre || r.productoNombre,
+      vehiculo: r.claseVehiculo || r.vehiculo || r.vehiculo_requerido,
+      valor_declarado: r.valorMercancia || r.valor_declarado || r.valor_mercancia,
+      incluye_tara: r.incluye_tara === true,
+      ruta_numero: idx + 1
+    }));
+    
+    console.log('💾 Persistiendo rutas en BD:', normalizedRoutes);
+    
+    try {
+      const response = await fetch('/api/chat/quote/save-routes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          group_id: clientData.groupId,
+          routes,
+          extracted_data: normalizedRoutes, // mantener sincronizada la columna extracted_data
+        }),
+      });
+      
+      const result = await response.json();
+      console.log('✅ Rutas persistidas exitosamente:', result);
+    } catch (err) {
+      console.warn('⚠️ No se pudieron persistir rutas:', err.message);
+    }
+  }, [clientData?.groupId]);
+
+  const registerPendingFieldLocks = (routeIndex, fields = {}) => {
+    if (routeIndex === null || routeIndex === undefined || routeIndex < 0) return;
+    pendingFieldLocksRef.current[routeIndex] = {
+      ...(pendingFieldLocksRef.current[routeIndex] || {}),
+      ...fields
+    };
+  };
+
+  const commitPendingLocks = (routes) => {
+    routes.forEach((route, idx) => {
+      const pending = pendingFieldLocksRef.current[idx];
+      if (!pending) return;
+
+      if (!routeFieldLocksRef.current[idx]) {
+        routeFieldLocksRef.current[idx] = {};
+      }
+
+      const resolvePesoValue = () => {
+        const raw =
+          route?.peso ??
+          route?.peso_kg ??
+          route?.pesoMercancia ??
+          route?.peso_mercancia;
+
+        if (raw === undefined || raw === null || raw === '') {
+          return null;
+        }
+
+        if (typeof raw === 'number') {
+          return raw;
+        }
+
+        const numeric = parseFloat(String(raw).replace(/[^\d.-]/g, ''));
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+
+      if (pending.peso || pending.tara) {
+        const existingPesoLock = routeFieldLocksRef.current[idx].peso || {};
+        const pesoValue = resolvePesoValue();
+        routeFieldLocksRef.current[idx].peso = {
+          value: pending.peso
+            ? pesoValue ?? existingPesoLock.value ?? null
+            : existingPesoLock.value ?? pesoValue ?? null,
+          incluye_tara:
+            route?.incluye_tara ?? existingPesoLock.incluye_tara ?? null
+        };
+      }
+
+      if (pending.producto) {
+        routeFieldLocksRef.current[idx].producto = {
+          producto:
+            route?.producto ||
+            route?.tipo_producto ||
+            route?.producto_nombre ||
+            null,
+          producto_codigo: route?.producto_codigo || null,
+          tipo_producto:
+            route?.tipo_producto ||
+            route?.producto ||
+            route?.producto_nombre ||
+            null
+        };
+      }
+
+      delete pendingFieldLocksRef.current[idx];
+    });
+  };
+
+  const applyLocksToRoute = (route, idx) => {
+    const locks = routeFieldLocksRef.current[idx];
+    if (!locks || Object.keys(locks).length === 0) return route;
+
+    let updatedRoute = route;
+
+    if (locks.peso) {
+      const pesoValue = locks.peso.value;
+      if (pesoValue !== null && pesoValue !== undefined) {
+        updatedRoute = {
+          ...updatedRoute,
+          peso: pesoValue,
+          peso_kg: pesoValue,
+          pesoMercancia: pesoValue,
+          peso_mercancia: pesoValue,
+          incluye_tara:
+            locks.peso.incluye_tara ?? updatedRoute?.incluye_tara
+        };
+      } else if (
+        locks.peso.incluye_tara !== undefined &&
+        locks.peso.incluye_tara !== null
+      ) {
+        updatedRoute = {
+          ...updatedRoute,
+          incluye_tara: locks.peso.incluye_tara
+        };
+      }
+    }
+
+    if (locks.producto) {
+      updatedRoute = {
+        ...updatedRoute,
+        producto: locks.producto.producto ?? updatedRoute?.producto,
+        producto_nombre:
+          locks.producto.producto ?? updatedRoute?.producto_nombre,
+        tipo_producto:
+          locks.producto.tipo_producto ??
+          locks.producto.producto ??
+          updatedRoute?.tipo_producto,
+        producto_codigo:
+          locks.producto.producto_codigo ?? updatedRoute?.producto_codigo
+      };
+    }
+
+    return updatedRoute;
+  };
+
+  const finalizeQuoteDataUpdate = (value) => {
+    if (!value) return value;
+
+    const isArrayValue = Array.isArray(value);
+    const isObjectValue = typeof value === 'object';
+
+    if (!isArrayValue && !isObjectValue) {
+      return value;
+    }
+
+    if (!isArrayValue && Object.keys(value || {}).length === 0) {
+      return value;
+    }
+
+    const routes = (isArrayValue ? value : [value]).map(route => ({ ...route }));
+    commitPendingLocks(routes);
+    const lockedRoutes = routes.map((route, idx) => applyLocksToRoute(route, idx));
+    return isArrayValue ? lockedRoutes : lockedRoutes[0];
+  };
+
+  const updateQuoteData = useCallback(
+    (updater) => {
+      if (!setQuoteData) return;
+      setQuoteData(prev => {
+        const nextValue =
+          typeof updater === 'function' ? updater(prev) : updater;
+        return finalizeQuoteDataUpdate(nextValue);
+      });
+    },
+    [setQuoteData]
+  );
 
   // Función para manejar selección de ruta
   const handleSelectRoute = useCallback((index) => {
@@ -146,9 +345,7 @@ const ChatModal = ({
       }
 
       // Limpiar datos de cotización para empezar fresco
-      if (setQuoteData) {
-        setQuoteData({});
-      }
+      updateQuoteData({});
 
       // Limpiar hash de datos procesados para evitar falsos positivos
       lastProcessedDataHashRef.current = null;
@@ -156,6 +353,7 @@ const ChatModal = ({
       // Resetear selección de producto y empaque
       setSelectedProduct(null);
       setSelectedEmpaque(null);
+      resetRouteLocks();
 
       // Usar threadId existente si hay, sino null
       setThreadId(clientData.threadId || null);
@@ -450,7 +648,7 @@ const ChatModal = ({
             const allRoutes = data.data.extracted_data;
             console.log('📦 Rutas extraídas:', allRoutes.length, allRoutes);
 
-            if (setQuoteData && allRoutes.length > 0) {
+            if (allRoutes.length > 0) {
               // 🆕 PROCESAR TODAS LAS RUTAS COMO ARRAY
               const processedRoutes = allRoutes.map((route, idx) => {
                 console.log(`📍 Procesando ruta ${idx + 1}:`, route);
@@ -475,61 +673,67 @@ const ChatModal = ({
 
               console.log(`✅ ${processedRoutes.length} rutas procesadas para QuoteDetailsPanel:`, processedRoutes);
 
+              // Persistir inmediatamente en BD para evitar desfaces en panel/modal
+              persistRoutesToDb(processedRoutes);
+
               // 🆕 LÓGICA DE FUSIÓN INTELIGENTE (SMART MERGE)
-              setQuoteData(prevData => {
+              updateQuoteData(prevData => {
                 const prevArray = Array.isArray(prevData) ? prevData : [];
                 
-                // 1. Si no hay datos previos, o si la nueva data parece ser un reset completo (ej: multiples rutas), reemplazar todo
-                if (prevArray.length === 0 || (processedRoutes.length > 1 && processedRoutes.length >= prevArray.length)) {
-                  console.log('🔄 Reemplazo completo de quoteData (Reset o detección inicial)');
+                // Si no hay datos previos, usar los nuevos directamente
+                if (prevArray.length === 0) {
+                  console.log('🔄 Reemplazo completo de quoteData (estado vacío)');
                   return processedRoutes;
                 }
 
-                // 2. Si son actualizaciones parciales (ej: 1 ruta en respuesta), fusionar
-                console.log('🔀 Iniciando fusión parcial de datos...');
+                console.log('🔀 Iniciando fusión segura de datos...');
                 const nextData = [...prevArray];
-                
+
                 processedRoutes.forEach(newRoute => {
                   let targetIdx = -1;
-                  
-                  // Intentar coincidir por número de ruta
+
+                  // Coincidencia directa por número de ruta
                   if (newRoute.ruta_numero) {
                     targetIdx = newRoute.ruta_numero - 1;
-                  } 
-                  
-                  // Si no hay ruta_numero pero es una sola actualización, asumir la ruta activa actual
-                  if (targetIdx === -1 && processedRoutes.length === 1) {
-                    // Usamos selectedRouteIndexRef para asegurar el valor más reciente
-                    const currentSelection = selectedRouteIndexRef.current;
-                    if (currentSelection !== null) {
-                        targetIdx = currentSelection;
-                    } else {
-                        // Si no hay selección explicita, asumir índice 0
-                        targetIdx = 0;
-                    }
                   }
 
+                  // Si solo llegó una actualización, respetar la ruta seleccionada
+                  if (targetIdx === -1 && processedRoutes.length === 1) {
+                    const currentSelection = selectedRouteIndexRef.current;
+                    targetIdx = currentSelection !== null ? currentSelection : 0;
+                  }
+
+                  // Si seguimos sin índice, y hay mismo número de rutas, usar la posición
+                  if (targetIdx === -1 && processedRoutes.length === prevArray.length) {
+                    targetIdx = processedRoutes.indexOf(newRoute);
+                  }
+
+                  const mergeInto = (idx) => {
+                    const existing = nextData[idx] || {};
+                    const merged = { ...existing };
+
+                    Object.keys(newRoute).forEach(key => {
+                      const val = newRoute[key];
+                      if (key === '_originalValues') return;
+                      // Evitar sobreescribir con null/undefined o string vacío
+                      if (val === null || val === undefined || val === '') return;
+                      merged[key] = val;
+                    });
+
+                    nextData[idx] = merged;
+                    console.log(`✅ Ruta ${idx + 1} fusionada`, merged);
+                  };
+
                   if (targetIdx >= 0 && targetIdx < nextData.length) {
-                     const existing = nextData[targetIdx];
-                     const merged = { ...existing };
-                     
-                     // Fusionar solo campos no nulos/vacíos
-                     Object.keys(newRoute).forEach(key => {
-                        const val = newRoute[key];
-                        // Ignorar nulos, undefined se tratan como nulos. String vacios se ignoran? 
-                        // Depende, a veces queremos borrar. Pero en extracción IA partial, null suele significar "no mencionado".
-                        if (val !== null && val !== undefined && key !== '_originalValues') {
-                          merged[key] = val;
-                        }
-                     });
-                     
-                     console.log(`✅ Ruta ${targetIdx + 1} actualizada por fusión`, merged);
-                     nextData[targetIdx] = merged;
+                    mergeInto(targetIdx);
+                  } else if (targetIdx === nextData.length) {
+                    // Nueva ruta detectada, agregar preservando datos existentes
+                    mergeInto(targetIdx);
                   } else {
-                     console.warn(`⚠️ No se pudo fusionar la ruta con ruta_numero=${newRoute.ruta_numero}. Índice fuera de rango.`);
+                    console.warn(`⚠️ No se pudo fusionar la ruta con ruta_numero=${newRoute.ruta_numero}. Índice fuera de rango.`);
                   }
                 });
-                
+
                 return nextData;
               });
 
@@ -669,7 +873,7 @@ const ChatModal = ({
 
         // 🆕 NO sobrescribir si ya hay múltiples rutas (evitar perder multi-ruta),
         // EXCEPTO si estamos editando una ruta específica
-        setQuoteData(prev => {
+        updateQuoteData(prev => {
           const activeRouteIdx = selectedRouteIndexRef.current;
             
           if (Array.isArray(prev) && prev.length > 1) {
@@ -728,6 +932,56 @@ const ChatModal = ({
 
     const messageText = inputMessage.trim();
 
+    const inferRouteIndexForIntent = () => {
+      if (selectedRouteIndex !== null && selectedRouteIndex !== undefined) {
+        return selectedRouteIndex;
+      }
+      const detectedFromMessage = detectRouteFromMessage(messageText);
+      if (detectedFromMessage !== null && detectedFromMessage !== undefined) {
+        return detectedFromMessage;
+      }
+      if (Array.isArray(quoteData)) {
+        return quoteData.length === 1 ? 0 : null;
+      }
+      if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
+        return 0;
+      }
+      return null;
+    };
+
+    const intentRouteIndex = inferRouteIndexForIntent();
+
+    const pesoCommandRegex = /(?:cambia|modifica|ajusta|actualiza|sube|baja|reduce|incrementa)\s+(?:el\s+)?peso/i;
+    const pesoValueRegex = /peso\s*(?:es|=|a|de|:)?.*?\d+/i;
+    const taraAddRegex = /(?:agrega|añade|suma|incluye|pon|coloca)\s+(?:la\s+)?tara/i;
+    const taraRemoveRegex = /(?:quita|remueve|elimina|descuenta|sin)\s+(?:la\s+)?tara/i;
+    const productoCommandRegex = /(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?producto/i;
+    const productoValueRegex = /producto\s*(?:es|=|a|de|:)/i;
+
+    const wantsWeightChange = pesoCommandRegex.test(messageText) || pesoValueRegex.test(messageText);
+    const wantsTaraChange = taraAddRegex.test(messageText) || taraRemoveRegex.test(messageText);
+    const wantsProductChange = productoCommandRegex.test(messageText) || productoValueRegex.test(messageText);
+
+    if (intentRouteIndex !== null && (wantsWeightChange || wantsTaraChange || wantsProductChange)) {
+      console.log('🛡️ Registrando lock manual', {
+        route: intentRouteIndex,
+        wantsWeightChange,
+        wantsTaraChange,
+        wantsProductChange
+      });
+
+      if (wantsWeightChange || wantsTaraChange) {
+        registerPendingFieldLocks(intentRouteIndex, {
+          peso: wantsWeightChange || wantsTaraChange,
+          tara: wantsTaraChange
+        });
+      }
+
+      if (wantsProductChange) {
+        registerPendingFieldLocks(intentRouteIndex, { producto: true });
+      }
+    }
+
     // 🔍 BÚSQUEDA PROACTIVA DE PRODUCTOS - Busca CUALQUIER producto mencionado
     const buscarProductoProactivamente = async (texto) => {
       // Regex mejorado para capturar productos mencionados después de palabras clave
@@ -775,7 +1029,7 @@ const ChatModal = ({
                 producto_codigo: producto.codigo
               });
 
-              setQuoteData(prev => ({
+              updateQuoteData(prev => ({
                 ...prev,
                 producto: producto.nombre,
                 producto_codigo: producto.codigo,
@@ -791,7 +1045,7 @@ const ChatModal = ({
                 producto_codigo: producto.codigo
               });
 
-              setQuoteData(prev => ({
+              updateQuoteData(prev => ({
                 ...prev,
                 producto: producto.nombre,
                 producto_codigo: producto.codigo,
@@ -965,7 +1219,18 @@ const ChatModal = ({
                             // Actualizar quoteData con el producto seleccionado
                             // FIX: Usar ref para obtener el valor actual (evitar closure obsoleto)
                             const currentRouteIndex = selectedRouteIndexRef.current;
-                            setQuoteData(prev => {
+                            if (currentRouteIndex !== null) {
+                              routeFieldLocksRef.current[currentRouteIndex] = {
+                                ...(routeFieldLocksRef.current[currentRouteIndex] || {}),
+                                producto: {
+                                  producto: prod.nombre,
+                                  producto_codigo: prod.codigo,
+                                  tipo_producto: prod.nombre
+                                }
+                              };
+                            }
+
+                            updateQuoteData(prev => {
                               if (Array.isArray(prev) && prev.length > 0) {
                                 // Si hay una ruta seleccionada, actualizar SOLO esa
                                 if (currentRouteIndex !== null && currentRouteIndex < prev.length) {
@@ -1050,8 +1315,8 @@ const ChatModal = ({
                                     Object.values(backendData).filter(v => typeof v === 'object' && v.origen) :
                                     [backendData]);
 
-                                if (routesArray.length > 0 && setQuoteData) {
-                                  setQuoteData(prev => {
+                                if (routesArray.length > 0) {
+                                  updateQuoteData(prev => {
                                     if (!Array.isArray(prev)) return routesArray;
                                     return prev.map((route, idx) => {
                                       const newRoute = routesArray[idx];
@@ -1107,7 +1372,7 @@ const ChatModal = ({
           (!Array.isArray(data.data.extracted_data) && Object.keys(data.data.extracted_data).length > 0)
         );
 
-        if (hasRealExtractedData && setQuoteData) {
+        if (hasRealExtractedData) {
           console.log('✅ Datos extraídos recibidos, auto-llenando campos:', data.data.extracted_data);
 
           // 🆕 DETECTAR SI ES ARRAY (MULTI-RUTA) O OBJETO (RUTA ÚNICA)
@@ -1236,8 +1501,8 @@ const ChatModal = ({
           const backendEditIndex = data.data.edited_route_index;
 
           if (mappedRoutes.length > 0) {
-            console.log('🚀 Llamando setQuoteData con merge:', mappedRoutes);
-            setQuoteData(prev => {
+            console.log('🚀 Llamando updateQuoteData con merge:', mappedRoutes);
+            updateQuoteData(prev => {
               // Si no hay datos previos, usar los nuevos directamente (sanitizados)
               if (!prev || (Array.isArray(prev) && prev.length === 0) || (typeof prev === 'object' && Object.keys(prev).length === 0)) {
                 console.log('🆕 No hay datos previos, usando nuevos directamente (sanitizados)');
@@ -1323,7 +1588,7 @@ const ChatModal = ({
               console.log('✅ DATOS MERGEADOS (ESTADO FINAL):', nextState);
               return nextState;
             });
-            console.log('✅ SETQUOTEDATA EJECUTADO CON MERGE INTELIGENTE');
+            console.log('✅ updateQuoteData EJECUTADO CON MERGE INTELIGENTE');
           } else {
             console.warn('⚠️ No hay rutas mapeadas para actualizar');
           }
@@ -1386,7 +1651,18 @@ const ChatModal = ({
                       });
                     }
 
-                    setQuoteData(prev => {
+                    if (targetIndex !== null && targetIndex >= 0) {
+                      routeFieldLocksRef.current[targetIndex] = {
+                        ...(routeFieldLocksRef.current[targetIndex] || {}),
+                        producto: {
+                          producto: producto.nombre,
+                          producto_codigo: producto.codigo,
+                          tipo_producto: producto.nombre
+                        }
+                      };
+                    }
+
+                    updateQuoteData(prev => {
                       if (Array.isArray(prev) && prev.length > 0) {
                         // Actualizar SOLO la ruta objetivo
                         if (targetIndex < prev.length) {
@@ -1445,15 +1721,26 @@ const ChatModal = ({
                                       // 1. Actualizar selectedProduct (global para referencia)
                                       // 🆕 FIX: Solo actualizar si es la ruta 0 para evitar efectos colaterales
                                       if (targetIndexClick === 0) {
-                                          setSelectedProduct({
-                                            codigo: prod.codigo,
-                                            nombre: prod.nombre,
-                                            producto_codigo: prod.codigo
-                                          });
+                                        setSelectedProduct({
+                                          codigo: prod.codigo,
+                                          nombre: prod.nombre,
+                                          producto_codigo: prod.codigo
+                                        });
+                                      }
+
+                                      if (targetIndexClick !== null && targetIndexClick >= 0) {
+                                        routeFieldLocksRef.current[targetIndexClick] = {
+                                          ...(routeFieldLocksRef.current[targetIndexClick] || {}),
+                                          producto: {
+                                            producto: prod.nombre,
+                                            producto_codigo: prod.codigo,
+                                            tipo_producto: prod.nombre
+                                          }
+                                        };
                                       }
 
                                       // 2. Actualizar routes con el producto seleccionado
-                                      setQuoteData(prev => {
+                                      updateQuoteData(prev => {
                                         if (Array.isArray(prev) && prev.length > 0) {
                                           if (targetIndexClick < prev.length) {
                                             const updated = prev.map((r, i) => {
@@ -1472,10 +1759,10 @@ const ChatModal = ({
                                         }
                                         // Fallback objeto
                                         return {
-                                            ...prev,
-                                            producto: prod.nombre,
-                                            producto_codigo: prod.codigo, 
-                                            tipo_producto: prod.nombre
+                                          ...prev,
+                                          producto: prod.nombre,
+                                          producto_codigo: prod.codigo,
+                                          tipo_producto: prod.nombre
                                         };
                                       });
                                     }}
@@ -1512,7 +1799,7 @@ const ChatModal = ({
           });
 
           // 2️⃣ Actualizar quoteData - AHORA MANEJA MULTI-RUTA Y EDICIÓN INDIVIDUAL
-          console.log('🚀 Antes de setQuoteData - routesArray:', routesArray, 'length:', routesArray.length);
+          console.log('🚀 Antes de updateQuoteData - routesArray:', routesArray, 'length:', routesArray.length);
 
           // 🆕 Detectar si el backend indica que fue edición de una sola ruta
           const backendIndicaSingleEdit = data.data.is_single_route_edit === true;
@@ -1534,7 +1821,7 @@ const ChatModal = ({
           // PERO sanitizar para evitar ciudades inválidas (ej: "ENERO", "LAS" de fechas)
           if (backendIndicaSingleEdit && routesArray.length > 1) {
             console.log('✅ Backend ya procesó edición individual - usando datos directamente (con sanitización)');
-            setQuoteData(prev => {
+            updateQuoteData(prev => {
               const prevArray = Array.isArray(prev) ? prev : [];
               return routesArray.map((route, idx) => {
                 const existingRoute = prevArray[idx] || {};
@@ -1569,8 +1856,8 @@ const ChatModal = ({
             return; // No continuar con la lógica normal
           }
 
-          setQuoteData(prev => {
-            console.log('📝 Dentro de setQuoteData - routesArray:', routesArray.length, 'elementos');
+          updateQuoteData(prev => {
+            console.log('📝 Dentro de updateQuoteData - routesArray:', routesArray.length, 'elementos');
             console.log('📍 selectedRouteIndex actual:', selectedRouteIndex);
             console.log('📍 mentionedRouteIndex detectado:', mentionedRouteIndex);
 
@@ -1640,15 +1927,29 @@ const ChatModal = ({
               const updatedRoutes = prevArray.map((existingRoute, idx) => {
                 if (idx === editingRouteIndex) {
                   // Esta es la ruta que se está editando - fusionar cambios SOLO de campos que vienen
-                  const pesoBase = editedRoute.peso_kg ?? existingRoute.pesoMercancia ?? 0;
-                  // Solo calcular tara en frontend si el backend no la calculó ya
+                  const pesoBase = Number(editedRoute.peso_kg ?? existingRoute.pesoMercancia ?? 0) || 0;
                   const backendYaTieneTara = editedRoute.incluye_tara === true;
-                  const pesoFinal = (mencionaTara && pesoBase > 0 && !backendYaTieneTara)
-                    ? parseFloat(pesoBase) + TARA_KG
-                    : pesoBase;
+                  const existingIncluyeTara = existingRoute.incluye_tara === true;
+                  const wantsRemoveTara = noIncluyeTara
+                    || mensajeLower.includes('quita la tara')
+                    || mensajeLower.includes('quita tara')
+                    || mensajeLower.includes('remueve la tara')
+                    || mensajeLower.includes('remover la tara')
+                    || mensajeLower.includes('elimina la tara');
 
-                  // Determinar si incluye tara
-                  const incluyeTara = backendYaTieneTara || (mencionaTara && pesoBase > 0);
+                  const willAddTara = !wantsRemoveTara && mencionaTara && !backendYaTieneTara && !existingIncluyeTara;
+                  const willRemoveTara = wantsRemoveTara && existingIncluyeTara;
+
+                  let pesoFinal = pesoBase;
+                  if (willAddTara && pesoBase > 0) {
+                    pesoFinal = parseFloat(pesoBase) + TARA_KG;
+                  } else if (willRemoveTara && pesoBase > TARA_KG) {
+                    pesoFinal = parseFloat(pesoBase) - TARA_KG;
+                  }
+
+                  const incluyeTara = willRemoveTara
+                    ? false
+                    : (backendYaTieneTara || existingIncluyeTara || willAddTara);
 
                   const mergedRoute = {
                     ...existingRoute,
@@ -1673,7 +1974,7 @@ const ChatModal = ({
                       producto: editedRoute.producto,
                       tipo_producto: editedRoute.producto
                     }),
-                    incluye_tara: incluyeTara || existingRoute.incluye_tara || false,
+                    incluye_tara: incluyeTara,
                   };
 
                   console.log(`✏️ Ruta ${idx + 1} EDITADA - Campos actualizados:`, {
@@ -1736,13 +2037,28 @@ const ChatModal = ({
             });
 
             const processedRoutes = routesArray.map((routeData, idx) => {
-              const pesoBase = routeData.peso_kg || 0;
-              const pesoFinal = (mencionaTara && pesoBase > 0)
-                ? parseFloat(pesoBase) + TARA_KG
-                : pesoBase;
+              const pesoBase = Number(routeData.peso_kg ?? 0) || 0;
+              const backendIncluyeTara = routeData.incluye_tara === true;
+              const existingRoute = shouldReplace ? {} : (prevArray[idx] || {});
+              const existingIncluyeTara = existingRoute.incluye_tara === true;
+              const wantsRemoveTara = noIncluyeTara;
 
-              // Si es la primera ruta con tara, mostrar mensaje
-              if (idx === 0 && mencionaTara && pesoBase > 0 && onUpdateMessages) {
+              const willAddTara = !wantsRemoveTara && mencionaTara && !backendIncluyeTara && !existingIncluyeTara;
+              const willRemoveTara = wantsRemoveTara && existingIncluyeTara;
+
+              let pesoFinal = pesoBase;
+              if (willAddTara && pesoBase > 0) {
+                pesoFinal = parseFloat(pesoBase) + TARA_KG;
+              } else if (willRemoveTara && pesoBase > TARA_KG) {
+                pesoFinal = parseFloat(pesoBase) - TARA_KG;
+              }
+
+              const incluyeTara = willRemoveTara
+                ? false
+                : (backendIncluyeTara || existingIncluyeTara || willAddTara);
+
+              // Si es la primera ruta con tara agregada por el usuario, mostrar mensaje
+              if (idx === 0 && willAddTara && pesoBase > 0 && onUpdateMessages) {
                 console.log(`🏋️ TARA DETECTADA - Sumando ${TARA_KG} kg al peso base ${pesoBase} kg`);
                 setTimeout(() => {
                   onUpdateMessages(prevMessages => [
@@ -1755,12 +2071,6 @@ const ChatModal = ({
                   ]);
                 }, 500);
               }
-
-              // 🔴 Solo fusionar con existentes si NO es nueva solicitud
-              const existingRoute = shouldReplace ? {} : (prevArray[idx] || {});
-
-              // Determinar si incluye tara (ya sea del backend o calculada aquí)
-              const incluyeTara = routeData.incluye_tara === true || (mencionaTara && pesoBase > 0);
 
               return {
                 // Mantener datos existentes como base (solo si NO es reemplazo)
@@ -1779,7 +2089,7 @@ const ChatModal = ({
                 tipo_producto: routeData.producto || routeData.tipo_producto || existingRoute.tipo_producto || null,
                 volumen: routeData.volumen_m3 || existingRoute.volumen || null,
                 tipo_contenedor: routeData.tipo_contenedor || existingRoute.tipo_contenedor || null,
-                incluye_tara: incluyeTara || existingRoute.incluye_tara || false,
+                incluye_tara: incluyeTara,
               };
             });
 
@@ -1803,6 +2113,12 @@ const ChatModal = ({
             setSelectedEmpaque(empaqueObj);
             console.log('✅ Embalaje auto-seleccionado:', empaqueObj);
           }
+
+          // Persistir rutas procesadas del ciclo actual (con tara incluida si aplica)
+          setQuoteData(currentRoutes => {
+            persistRoutesToDb(currentRoutes);
+            return currentRoutes;
+          });
         }
 
         // Solo activar polling si hay run_id Y no está completado
@@ -2037,16 +2353,21 @@ const ChatModal = ({
     const routesToSave = routesArray.map((route, idx) => {
       const pesoMercancia = route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0;
       const vehiculoRecomendado = route.claseVehiculo || route.vehiculo || recommendVehicle(pesoMercancia);
+      const empaqueNombre = route.empaque || route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.nome || selectedEmpaque?.nombre || 'Caja';
+      const empaqueCodigo = route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.Codigo || selectedEmpaque?.codigo || empaqueNombre;
 
       return {
         ciudad_origen: route.ciudadOrigen || route.ciudad_origen || route.origen,
         ciudad_destino: route.ciudadDestino || route.ciudad_destino || route.destino,
         peso_mercancia: pesoMercancia,
         cantidad: route.cantidadMercancia || route.cantidad || 1,
-        tipo_embajale: route.empaque || selectedEmpaque?.Codigo || selectedEmpaque?.codigo || selectedEmpaque?.nome || 'Caja',
+        tipo_embajale: empaqueCodigo,
+        empaque: empaqueNombre,
+        empaque_id: route.empaque_id || route.empaqueId || selectedEmpaque?.id || null,
         tipo_producto: route.producto || route.tipo_producto || selectedProduct?.codigo || selectedProduct?.nombre || 'Mercancía general',
         vehiculo_requerido: vehiculoRecomendado,
         valor_declarado: route.valorMercancia || route.valor_declarado || 0,
+        incluye_tara: route.incluye_tara === true,
       };
     });
 
@@ -2100,7 +2421,7 @@ const ChatModal = ({
         if (saveResult.data?.routes && saveResult.data.routes.length > 0) {
           if (Array.isArray(quoteData)) {
             // Si es array, actualizar cada elemento con su ID correspondiente
-            setQuoteData(prev =>
+            updateQuoteData(prev =>
               prev.map((route, idx) => ({
                 ...route,
                 id: saveResult.data.routes[idx]?.id || route.id
@@ -2109,7 +2430,7 @@ const ChatModal = ({
           } else {
             // Si es objeto, actualizar con el primer ID
             const savedRoute = saveResult.data.routes[0];
-            setQuoteData(prev => ({
+            updateQuoteData(prev => ({
               ...prev,
               id: savedRoute.id
             }));
@@ -2191,10 +2512,19 @@ const ChatModal = ({
                       onClick={() => {
                         setSelectedProduct(producto);
                         // Actualizar quoteData automáticamente (Manejo robusto para Array/Objeto)
-                        setQuoteData(prev => {
+                        const targetIdx = selectedRouteIndexRef.current ?? 0;
+                        routeFieldLocksRef.current[targetIdx] = {
+                          ...(routeFieldLocksRef.current[targetIdx] || {}),
+                          producto: {
+                            producto: producto.nombre,
+                            producto_codigo: producto.codigo,
+                            tipo_producto: producto.nombre
+                          }
+                        };
+
+                        updateQuoteData(prev => {
                           if (Array.isArray(prev)) {
                             // Actualizar solo la ruta seleccionada (o la primera si no hay selección)
-                            const targetIdx = selectedRouteIndexRef.current ?? 0;
                             return prev.map((route, idx) => 
                               idx === targetIdx ? { 
                                 ...route, 
@@ -2270,7 +2600,7 @@ const ChatModal = ({
                       onClick={() => {
                         setSelectedEmpaque(empaque);
                         // Actualizar quoteData automáticamente (Manejo robusto para Array/Objeto)
-                        setQuoteData(prev => {
+                        updateQuoteData(prev => {
                           if (Array.isArray(prev)) {
                              // Actualizar solo la ruta seleccionada (o la primera si no hay selección)
                              const targetIdx = selectedRouteIndexRef.current ?? 0;
@@ -2329,9 +2659,9 @@ const ChatModal = ({
         console.log('✅ Cotización creada:', data.result);
 
         // Actualizar quoteData con los resultados
-        if (setQuoteData && data.result.cotizacion) {
+        if (data.result.cotizacion) {
           const cotizacion = data.result.cotizacion;
-          setQuoteData(prev => Array.isArray(prev) ? [{
+          updateQuoteData(prev => Array.isArray(prev) ? [{
             ciudad_origen: cotizacion.ciudad_origen || prev.ciudadOrigen,
             ciudad_destino: cotizacion.ciudad_destino || prev.ciudadDestino,
             peso_mercancia: cotizacion.peso_mercancia || prev.pesoMercancia,
@@ -2944,7 +3274,7 @@ const ChatModal = ({
                                     }`}
                                   onClick={() => {
                                     setSelectedProduct(productoData);
-                                    setQuoteData(prev => ({
+                                    updateQuoteData(prev => ({
                                       ...prev,
                                       producto: productoData.nombre,
                                       codigoProducto: productoData.codigo
@@ -3006,7 +3336,7 @@ const ChatModal = ({
                           type="text"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={quoteData.ciudadOrigen || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadOrigen: e.target.value }))}
+                          onChange={(e) => updateQuoteData(prev => ({ ...prev, ciudadOrigen: e.target.value }))}
                           placeholder="Ciudad origen"
                         />
                       </div>
@@ -3018,7 +3348,7 @@ const ChatModal = ({
                           type="text"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={quoteData.ciudadDestino || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, ciudadDestino: e.target.value }))}
+                          onChange={(e) => updateQuoteData(prev => ({ ...prev, ciudadDestino: e.target.value }))}
                           placeholder="Ciudad destino"
                         />
                       </div>
@@ -3030,7 +3360,7 @@ const ChatModal = ({
                           type="number"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={quoteData.pesoMercancia || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, pesoMercancia: parseInt(e.target.value) || 0 }))}
+                          onChange={(e) => updateQuoteData(prev => ({ ...prev, pesoMercancia: parseInt(e.target.value) || 0 }))}
                           placeholder="0"
                         />
                       </div>
@@ -3042,7 +3372,7 @@ const ChatModal = ({
                           type="number"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={quoteData.cantidadMercancia || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, cantidadMercancia: parseInt(e.target.value) || 0 }))}
+                          onChange={(e) => updateQuoteData(prev => ({ ...prev, cantidadMercancia: parseInt(e.target.value) || 0 }))}
                           placeholder="0"
                         />
                       </div>
@@ -3054,7 +3384,7 @@ const ChatModal = ({
                           type="number"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={quoteData.valorMercancia || ''}
-                          onChange={(e) => setQuoteData(prev => ({ ...prev, valorMercancia: parseInt(e.target.value) || 0 }))}
+                          onChange={(e) => updateQuoteData(prev => ({ ...prev, valorMercancia: parseInt(e.target.value) || 0 }))}
                           placeholder="0"
                         />
                       </div>
@@ -3067,7 +3397,7 @@ const ChatModal = ({
                             type="text"
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                             value={quoteData.claseVehiculo || ''}
-                            onChange={(e) => setQuoteData(prev => ({ ...prev, claseVehiculo: e.target.value }))}
+                            onChange={(e) => updateQuoteData(prev => ({ ...prev, claseVehiculo: e.target.value }))}
                             placeholder="Tipo de vehículo"
                           />
                         </div>

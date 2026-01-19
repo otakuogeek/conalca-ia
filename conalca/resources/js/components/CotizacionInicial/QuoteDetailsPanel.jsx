@@ -135,12 +135,23 @@ const QuoteDetailsPanel = ({
 
       {/* Cards individuales para cada ruta */}
       {routes.map((route, index) => {
-        // Resolver producto: priorizar route específico, luego selectedProduct
-        const productoMostrar = route.producto || route.tipo_producto || selectedProduct?.nombre || null;
+        // Resolver producto: priorizar la ruta; solo usar selección global cuando aplica a esta ruta o hay una sola
+        const productoMostrar = route.producto
+          || route.tipo_producto
+          || ((routes.length === 1 || selectedRouteIndex === index)
+                ? selectedProduct?.nombre
+                : null)
+          || null;
         const productoValido = !!productoMostrar;
         
-        // Resolver empaque: priorizar route específico, luego selectedEmpaque
-        const empaqueMostrar = route.empaque || route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.nome || selectedEmpaque?.nombre || null;
+        // Resolver empaque: priorizar la ruta; evitar mostrar el global en todas las cards
+        const empaqueMostrar = route.empaque
+          || route.tipo_embajale
+          || route.tipo_embalaje
+          || (routes.length === 1
+                ? (selectedEmpaque?.nome || selectedEmpaque?.nombre)
+                : null)
+          || null;
         
         // 🆕 Verificar si esta ruta está seleccionada para edición
         const isSelected = selectedRouteIndex === index;

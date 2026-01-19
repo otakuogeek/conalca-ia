@@ -55,8 +55,9 @@ export const prepareRoutesForPanel = (quoteData, selectedProduct, selectedEmpaqu
             producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
             tipo_producto: route.tipo_producto || route.producto || route.producto_nombre || (index === 0 ? selectedProduct?.nombre : null),
             // Priorizar el empaque de la ruta sobre selectedEmpaque global
-            empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
-            tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
+            empaque: route.empaque || route.tipo_embajale || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
+            empaque_id: route.empaque_id || route.empaqueId || null,
+            tipo_embalaje: route.tipo_embalaje || route.tipo_embajale || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
         }));
     }
 
@@ -67,8 +68,9 @@ export const prepareRoutesForPanel = (quoteData, selectedProduct, selectedEmpaqu
             producto: selectedProduct?.nombre || quoteData.producto || quoteData.tipo_producto,
             producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
             tipo_producto: selectedProduct?.nombre || quoteData.tipo_producto || quoteData.producto,
-            empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
-            tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
+            empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embajale || quoteData.tipo_embalaje,
+            empaque_id: quoteData.empaque_id || quoteData.empaqueId || null,
+            tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.tipo_embajale || quoteData.empaque
         }];
     }
 
@@ -79,6 +81,7 @@ export const prepareRoutesForPanel = (quoteData, selectedProduct, selectedEmpaqu
             producto_codigo: selectedProduct?.codigo,
             tipo_producto: selectedProduct?.nombre,
             empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre,
+            empaque_id: selectedEmpaque?.id || null,
             tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
         }];
     }

@@ -81,6 +81,70 @@ const EditRoutesModal = ({
     loadCatalogs();
   }, []);
 
+  // Normaliza una ruta usando extracted_data si viene como JSON/array en BD
+  const applyExtractedFallback = (route, idx = 0, allExtractedData = null) => {
+    // Si se pasa allExtractedData directamente desde el padre, usarlo
+    let extracted = allExtractedData || route.extracted_data;
+    
+    if (!extracted) {
+      console.log(`⚠️ Ruta ${idx}: No hay extracted_data, usando route tal cual`);
+      return route;
+    }
+
+    try {
+      if (typeof extracted === 'string') {
+        extracted = JSON.parse(extracted);
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo parsear extracted_data:', err);
+      return route;
+    }
+
+    const arr = Array.isArray(extracted)
+      ? extracted
+      : Object.values(extracted).filter(v => v && typeof v === 'object');
+
+    const extractedRoute = arr[idx];
+    if (!extractedRoute) {
+      console.warn(`⚠️ Ruta ${idx}: No se encontró extracted_data en índice ${idx}, usando route directamente`);
+      return route;
+    }
+
+    // PRIORIZAR extracted_data porque tiene los valores del prompt inicial
+    // route.empaque puede estar vacío o con valor incorrecto en la primera extracción
+    const empaqueValue = extractedRoute.empaque || extractedRoute.tipo_embajale || extractedRoute.embalaje || route.empaque || route.tipo_embajale || '';
+    
+    console.log(`🔧 applyExtractedFallback Ruta ${idx + 1}:`, {
+      '✅ USANDO': empaqueValue,
+      'extracted.empaque (PRIORIDAD)': extractedRoute.empaque,
+      'extracted.tipo_embajale': extractedRoute.tipo_embajale,
+      'route.empaque (fallback)': route.empaque,
+      'route.tipo_embajale': route.tipo_embajale,
+      'extracted.empaque_id': extractedRoute.empaque_id,
+      'route.empaque_id': route.empaque_id,
+      'incluye_tara': extractedRoute.incluye_tara || route.incluye_tara
+    });
+    
+    return {
+      ...route,
+      tipo_embajale: empaqueValue,
+      tipo_embalaje: empaqueValue,
+      empaque: empaqueValue,
+      // IGNORAR empaque_id de extracted_data - viene incorrecto (6 para todos)
+      // Usar SOLO el nombre del empaque
+      empaque_id: null,
+      producto: extractedRoute.producto || extractedRoute.tipo_producto || route.producto || '',
+      tipo_producto: extractedRoute.tipo_producto || extractedRoute.producto || route.tipo_producto || '',
+      producto_codigo: extractedRoute.producto_codigo || route.producto_codigo || '',
+      peso_mercancia: extractedRoute.peso_kg || extractedRoute.peso || extractedRoute.peso_mercancia || route.peso_mercancia || '',
+      cantidad: extractedRoute.cantidad || extractedRoute.cantidad_unidades || route.cantidad || '',
+      ciudad_origen: extractedRoute.origen || extractedRoute.ciudad_origen || route.ciudad_origen || '',
+      ciudad_destino: extractedRoute.destino || extractedRoute.ciudad_destino || route.ciudad_destino || '',
+      valor_declarado: extractedRoute.valor_declarado || extractedRoute.valor || extractedRoute.valor_mercancia || route.valor_declarado || '',
+      incluye_tara: extractedRoute.incluye_tara === true || route.incluye_tara === true
+    };
+  };
+
   // 2️⃣ SEGUNDO: Cargar rutas desde BD SOLO cuando catalogsLoaded sea true
   useEffect(() => {
     if (!catalogsLoaded) {
@@ -115,22 +179,39 @@ const EditRoutesModal = ({
         console.log('✅ Rutas recuperadas desde BD:', data);
         
         if (data.success && data.data?.routes) {
-          const routes = data.data.routes;
+          console.log('🔍 RUTAS CRUDAS ANTES DE APLICAR FALLBACK:', JSON.stringify(data.data.routes, null, 2));
+          
+          // Obtener extracted_data del primer elemento (todas las rutas comparten el mismo extracted_data)
+          const firstRoute = data.data.routes[0];
+          let parsedExtractedData = null;
+          
+          if (firstRoute?.extracted_data) {
+            try {
+              parsedExtractedData = typeof firstRoute.extracted_data === 'string'
+                ? JSON.parse(firstRoute.extracted_data)
+                : firstRoute.extracted_data;
+              console.log('📋 extracted_data parseado:', parsedExtractedData);
+            } catch (err) {
+              console.warn('⚠️ Error parseando extracted_data:', err);
+            }
+          }
+          
+          const routes = data.data.routes.map((r, i) => applyExtractedFallback(r, i, parsedExtractedData));
           console.log(`📦 ${routes.length} ruta(s) encontrada(s)`);
           
-          // Debug: verificar tipo_embajale
+          // Debug: verificar tipo_embajale Y que los IDs se preserven
           routes.forEach((r, i) => {
-            console.log(`Ruta ${i + 1} - tipo_embajale:`, r.tipo_embajale);
+            console.log(`Ruta ${i + 1} - id: ${r.id}, tipo_embajale: ${r.tipo_embajale}, empaque: ${r.empaque}`);
           });
           
           setLocalRoutes(routes);
-          setQuoteData(routes);
+          // NO actualizar quoteData aquí - solo trabajar con localRoutes para evitar duplicación
         } else {
           console.warn('⚠️ No se encontraron rutas guardadas');
           // Si no hay rutas en BD, usar quoteData pasado como prop
           if (normalizedRoutes.length > 0) {
             console.log('🔄 Usando rutas desde props (recién creadas)');
-            setLocalRoutes(normalizedRoutes);
+            setLocalRoutes(normalizedRoutes.map((r, i) => applyExtractedFallback(r, i)));
           } else {
             setError('No se encontraron rutas para este grupo');
           }
@@ -140,7 +221,7 @@ const EditRoutesModal = ({
         setError('Error de red al cargar rutas: ' + err.message);
         // Fallback: usar normalizedRoutes si hay error
         if (normalizedRoutes.length > 0) {
-          setLocalRoutes(normalizedRoutes);
+          setLocalRoutes(normalizedRoutes.map((r, i) => applyExtractedFallback(r, i)));
         }
       } finally {
         setLoading(false);
@@ -159,6 +240,22 @@ const EditRoutesModal = ({
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '') // Quitar tildes/acentos
       .trim();
+  };
+
+  // Normalizar con manejo de plural/singular para embalajes
+  const normalizePackingName = (text) => {
+    if (!text) return '';
+    let normalized = normalizeText(text);
+    
+    // Remover plural común en español (terminaciones -S, -ES)
+    if (normalized.endsWith('S') && normalized.length > 2) {
+      normalized = normalized.slice(0, -1); // BOLSAS -> BOLSA, CAJAS -> CAJA
+    }
+    if (normalized.endsWith('ES') && normalized.length > 3) {
+      normalized = normalized.slice(0, -2); // TONELES -> TONEL
+    }
+    
+    return normalized;
   };
 
   // Helpers to preselect if route has code or name
@@ -187,36 +284,81 @@ const EditRoutesModal = ({
 
   const resolvePackingCode = (routeValue) => {
     if (!routeValue) {
-      console.log('📦 resolvePackingCode: valor vacío');
+      console.log('📦 resolvePackingCode: valor vacío, retornando string vacío');
       return '';
     }
-    
-    console.log('🔍 resolvePackingCode:', {
-      routeValue,
-      packingsLength: packings.length,
-      packingsSample: packings.slice(0, 3)
+
+    const value = routeValue?.Codigo ?? routeValue?.codigo ?? routeValue?.empaque_id ?? routeValue?.id ?? routeValue;
+    const isNumeric = !isNaN(value) && !isNaN(parseFloat(value));
+
+    console.log('🔍 resolvePackingCode INPUT:', {
+      routeValueOriginal: routeValue,
+      valueExtraido: value,
+      tipo: typeof value,
+      esNumerico: isNumeric,
+      packingsDisponibles: packings.length,
+      todosLosEmbalajes: packings.map(p => ({ Codigo: p.Codigo, Nombre: p.Nombre }))
     });
     
-    // Buscar por código
-    const byCode = packings.find(p => String(p.Codigo) === String(routeValue));
+    // Si el valor es un string (nombre), buscar primero por nombre
+    if (!isNumeric) {
+      // Normalizar con manejo de plural/singular
+      const normalizedRoute = normalizePackingName(value);
+      console.log('🔤 Buscando por NOMBRE primero:', { original: value, normalizado: normalizedRoute });
+      
+      const byName = packings.find(p => {
+        const name = p.Nombre || p.nombre || p.nome || '';
+        const normalized = normalizePackingName(name);
+        const match = normalized === normalizedRoute;
+        console.log(`  "${normalizedRoute}" === "${normalized}" (${name})? ${match}`);
+        return match;
+      });
+      
+      if (byName) {
+        console.log('✅ Embalaje encontrado por NOMBRE:', byName);
+        return byName.Codigo;
+      }
+      
+      // Segundo intento: buscar con match parcial (contiene)
+      const byPartialMatch = packings.find(p => {
+        const name = p.Nombre || p.nombre || p.nome || '';
+        const normalized = normalizePackingName(name);
+        const match = normalized.includes(normalizedRoute) || normalizedRoute.includes(normalized);
+        if (match) console.log(`  Match parcial: "${normalizedRoute}" <-> "${normalized}" (${name})`);
+        return match;
+      });
+      
+      if (byPartialMatch) {
+        console.log('✅ Embalaje encontrado por MATCH PARCIAL:', byPartialMatch);
+        return byPartialMatch.Codigo;
+      }
+    }
+    
+    // Buscar por código solo si es numérico
+    const byCode = packings.find(p => String(p.Codigo ?? p.codigo ?? p.empaque_id ?? p.id) === String(value));
     if (byCode) {
-      console.log('✅ Embalaje encontrado por código:', byCode);
+      console.log('✅ Embalaje encontrado por CÓDIGO:', byCode);
       return byCode.Codigo;
     }
 
-    // Buscar por nombre normalizado
-    const normalizedRoute = normalizeText(routeValue);
+    // Último intento: buscar por nombre normalizado si no se encontró por código
+    const normalizedRoute = normalizePackingName(value);
+    console.log('🔤 Último intento por nombre normalizado:', { original: value, normalizado: normalizedRoute });
+    
     const byName = packings.find(p => {
       const name = p.Nombre || p.nombre || p.nome || '';
-      return normalizeText(name) === normalizedRoute;
+      const normalized = normalizePackingName(name);
+      console.log(`  Comparando: "${normalizedRoute}" === "${normalized}" (${name})`);
+      return normalized === normalizedRoute;
     });
     
     if (byName) {
-      console.log('✅ Embalaje encontrado por nombre:', byName);
+      console.log('✅ Embalaje encontrado por NOMBRE:', byName);
       return byName.Codigo;
     }
     
-    console.warn('⚠️ Embalaje NO encontrado para:', routeValue, 'en', packings.length, 'opciones');
+    console.warn('⚠️ Embalaje NO encontrado para:', value, 'en', packings.length, 'opciones');
+    console.warn('   Embalajes disponibles:', packings.map(p => p.Nombre || p.nome).join(', '));
     return '';
   };
 
@@ -336,20 +478,16 @@ const EditRoutesModal = ({
 
       // Actualizar IDs en localRoutes
       if (data.data?.routes) {
-        setLocalRoutes(prev =>
-          prev.map((r, i) => ({
-            ...r,
-            id: data.data.routes[i]?.id || r.id || null,
-          }))
-        );
-        
-        // IMPORTANTE: Actualizar quoteData completo para que PricingModal tenga los datos correctos
-        setQuoteData(localRoutes.map((r, i) => ({
+        const updatedRoutes = localRoutes.map((r, i) => ({
           ...r,
           id: data.data.routes[i]?.id || r.id || null,
-        })));
+        }));
         
-        console.log('✅ quoteData actualizado con rutas editadas:', localRoutes);
+        setLocalRoutes(updatedRoutes);
+        // Actualizar quoteData UNA SOLA VEZ al guardar
+        setQuoteData(updatedRoutes);
+        
+        console.log('✅ Rutas guardadas y actualizadas:', updatedRoutes.length, 'ruta(s)');
       }
       
       onNext && onNext();
@@ -367,8 +505,8 @@ const EditRoutesModal = ({
   }));
 
   const packingOptions = packings.map(p => ({
-    value: p.Codigo,
-    label: p.Nombre || p.nombre || p.nome || p.Codigo,
+    value: p.Codigo || p.codigo || p.empaque_id || p.id,
+    label: p.Nombre || p.nombre || p.nome || p.empaque || p.Codigo,
   }));
 
   const productOptions = products.map(prod => ({
@@ -429,14 +567,38 @@ const EditRoutesModal = ({
             {localRoutes.map((route, index) => {
               const selectedOriginCode = resolveCityCode(route.ciudad_origen);
               const selectedDestinationCode = resolveCityCode(route.ciudad_destino);
-              const selectedPackingCode = resolvePackingCode(route.tipo_embajale);
+              
+              // EMBALAJE: Usar NOMBRE directamente sin resolución a código
+              const packingName = route.empaque || route.tipo_embajale || route.tipo_embalaje || '';
+              
+              console.log(`🚨 DEBUG RUTA ${index + 1}:`, {
+                'route.empaque': route.empaque,
+                'route.tipo_embajale': route.tipo_embajale,
+                'packingName': packingName
+              });
+              
+              // Crear opción directamente con el nombre, sin buscar código
+              const selectedPackingOption = packingName 
+                ? { value: packingName, label: packingName }
+                : null;
+              
+              console.log(`🔍 selectedPackingOption:`, selectedPackingOption);
+              
+              // PRODUCTO: Lógica existente
               const selectedProductCode = resolveProductCode(route.tipo_producto);
               
               console.log(`📋 Ruta ${index + 1} - Valores resueltos:`, {
                 origen: { valor: route.ciudad_origen, codigo: selectedOriginCode },
                 destino: { valor: route.ciudad_destino, codigo: selectedDestinationCode },
-                embalaje: { valor: route.tipo_embajale, codigo: selectedPackingCode },
-                producto: { valor: route.tipo_producto, codigo: selectedProductCode }
+                embalaje: { 
+                  'route.empaque': route.empaque, 
+                  'route.tipo_embajale': route.tipo_embajale,
+                  'packingName': packingName,
+                  'selectedPackingCode': selectedPackingCode,
+                  'selectedPackingOption': selectedPackingOption
+                },
+                producto: { valor: route.tipo_producto, codigo: selectedProductCode },
+                incluye_tara: route.incluye_tara
               });
 
               return (
@@ -493,10 +655,16 @@ const EditRoutesModal = ({
                         classNamePrefix="rs"
                         placeholder="Seleccione embalaje"
                         options={packingOptions}
-                        value={packingOptions.find(o => String(o.value) === String(selectedPackingCode)) || null}
+                        value={selectedPackingOption}
                         onChange={(opt) => {
-                          const packing = packings.find(p => String(p.Codigo) === String(opt?.value));
-                          handleChange(index, 'tipo_embajale', packing ? packing.Codigo : '');
+                          const packing = packings.find(p => String(p.Codigo ?? p.codigo ?? p.empaque_id ?? p.id) === String(opt?.value));
+                          const packingCode = packing ? (packing.Codigo ?? packing.codigo ?? packing.empaque_id ?? packing.id) : '';
+                          const packingName = packing
+                            ? (packing.Nombre || packing.nombre || packing.nome || packing.empaque || '')
+                            : (opt?.label || opt?.value || '');
+                          handleChange(index, 'tipo_embajale', packingCode || packingName);
+                          handleChange(index, 'empaque', packingName);
+                          handleChange(index, 'empaque_id', packingCode || null);
                         }}
                         isClearable
                       />

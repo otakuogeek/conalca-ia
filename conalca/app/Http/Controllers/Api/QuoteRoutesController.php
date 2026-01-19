@@ -49,6 +49,20 @@ class QuoteRoutesController extends Controller
                 'routes_count' => count($request->routes)
             ]);
 
+            // ⚠️ PREVENIR DUPLICACIÓN: Obtener IDs existentes y eliminar los que no vienen en la petición
+            $existingIds = $group->cotizaciones()->pluck('id')->toArray();
+            $incomingIds = collect($request->routes)->pluck('id')->filter()->toArray();
+            $idsToDelete = array_diff($existingIds, $incomingIds);
+            
+            if (!empty($idsToDelete)) {
+                Log::info('Eliminando rutas que ya no existen en el frontend', [
+                    'ids_to_delete' => $idsToDelete
+                ]);
+                CotizacionModel::whereIn('id', $idsToDelete)
+                    ->where('group_cotization_id', $group->id)
+                    ->delete();
+            }
+
             $savedRoutes = [];
 
             foreach ($request->routes as $index => $routeData) {
