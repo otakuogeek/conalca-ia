@@ -6716,7 +6716,9 @@ class MCPAssistantService
         }
         
         // Patrón 2: "de/desde CIUDAD1 y CIUDAD2 a/hacia CIUDAD3 [y CIUDAD4]"
-        if (preg_match('/(?:de|desde)\s+(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s*[,;.]|$)/ui', $mensaje, $m)) {
+        // 🚫 NO procesar si comienza con "cotización de" (es ruta individual)
+        if (!preg_match('/^cotizaci[oó]n\s+de/ui', $mensaje) && 
+            preg_match('/(?:de|desde)\s+(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s*[,;.]|$)/ui', $mensaje, $m)) {
             $origenesText = trim($m[1]);
             $destinosText = trim($m[2]);
             
@@ -6785,7 +6787,9 @@ class MCPAssistantService
         // Ejemplo: "cali, medellín, ipiales a cota"
         // Formato: CIUDAD1, CIUDAD2, CIUDAD3 a/hacia CIUDAD4
         // 🔥 IMPORTANTE: Capturar solo nombres de ciudades, detener en palabras clave
-        if (preg_match('/^(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s+(?:son|es|será|de|vehículo|peso|cantidad|valor|producto|empaque|kg|ton|toneladas?|sacos?|cajas?|pallets?)|,\s*(?:son|es|vehículo)|$)/ui', $mensaje, $m)) {
+        // 🚫 NO procesar si comienza con "cotización de" (es ruta individual)
+        if (!preg_match('/^cotizaci[oó]n\s+de/ui', $mensaje) && 
+            preg_match('/^(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s+(?:son|es|será|de|vehículo|peso|cantidad|valor|producto|empaque|kg|ton|toneladas?|sacos?|cajas?|pallets?)|,\s*(?:son|es|vehículo)|$)/ui', $mensaje, $m)) {
             $origenesText = trim($m[1]);
             $destinosText = trim($m[2]);
             
