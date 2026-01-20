@@ -6638,7 +6638,8 @@ class MCPAssistantService
         
         // Patrón 5: "Origen: CIUDAD1 y CIUDAD2" + "Ciudad: CIUDAD3" (formato email multi-línea)
         // Este patrón busca "Origen:" en una línea y "Ciudad:" en otra línea
-        if (preg_match('/Origen:\s*(.+?)(?:\n|$)/ui', $mensaje, $mOrigen)) {
+        // 🔥 IMPORTANTE: Capturar SOLO hasta "Destino:" para evitar capturar direcciones
+        if (preg_match('/Origen:\s*(.+?)(?=\s*(?:Destino:|Ciudad:|\n|$))/uis', $mensaje, $mOrigen)) {
             $origenesText = trim($mOrigen[1]);
             
             // Buscar destino en línea "Ciudad:" (prioridad) o "Destino:"
@@ -6651,11 +6652,19 @@ class MCPAssistantService
             }
             
             if ($destinoText) {
-                // Separar orígenes por "y" o comas
+                // Separar orígenes por "y" o comas - SOLO tomar palabras simples (nombres de ciudades)
                 $origenes = preg_split('/\s*(?:y|,)\s*/ui', $origenesText);
                 $origenes = array_map(function($ciudad) {
-                    return self::normalizeCityName(trim($ciudad));
+                    $ciudad = trim($ciudad);
+                    // 🔥 FILTRAR: Solo tomar si parece nombre de ciudad (sin ":", sin números, máximo 3 palabras)
+                    if (strpos($ciudad, ':') !== false || preg_match('/\d{2,}/', $ciudad) || str_word_count($ciudad) > 3) {
+                        return null;
+                    }
+                    return self::normalizeCityName($ciudad);
                 }, array_filter($origenes));
+                
+                // Eliminar valores null
+                $origenes = array_values(array_filter($origenes));
                 
                 // Normalizar destino
                 $destinos = [self::normalizeCityName($destinoText)];
