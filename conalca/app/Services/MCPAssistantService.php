@@ -829,6 +829,12 @@ class MCPAssistantService
             // FIX: Usar vehículo EXACTO que dice el usuario (no mapear)
             $vehiculoRaw = trim($matchVehiculo[1]);
             $valorEditadoTemprano = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/^(?:el\s+)?veh[ií]culo\s+([a-záéíóúñ\s]+)$/ui', $lastUserMessageForEdit, $matchVehiculoSimple)) {
+            // 🆕 NUEVO: "vehículo turbo" o "el vehículo tractomula" (sin conector)
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'vehiculo';
+            $vehiculoRaw = trim($matchVehiculoSimple[1]);
+            $valorEditadoTemprano = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?peso\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $matchPeso)) {
             // 🆕 MEJORADO: Permite "peso es 900kg" sin espacio
             $esEdicionSimpleTemprana = true;
@@ -1598,13 +1604,28 @@ class MCPAssistantService
                         if (isset($route['peso_kg']) && !$yaConTara) {
                              $pesoAnterior = floatval(str_replace(',', '', (string)$route['peso_kg']));
                              
-                            $extractedData[$idx]['peso_kg'] = $pesoAnterior + 3400;
-                            $extractedData[$idx]['incluye_tara'] = true;
-                            Log::info('📦 TARA agregada a ruta (multi)', [
-                                'ruta' => $idx,
-                                'peso_anterior' => $pesoAnterior,
-                                'peso_con_tara' => $extractedData[$idx]['peso_kg']
-                            ]);
+                            // 🔧 HEURÍSTICA: Si peso-3400 es múltiplo exacto de 1000, OpenAI probablemente ya sumó tara
+                            // Ejemplos: 15400-3400=12000 (12 ton exactas), 27400-3400=24000 (24 ton exactas)
+                            $pesoSinPosibleTara = $pesoAnterior - 3400;
+                            $esProbablementeDuplicado = ($pesoSinPosibleTara > 0 && $pesoSinPosibleTara % 1000 == 0);
+                            
+                            if ($esProbablementeDuplicado) {
+                                // No agregar tara, OpenAI ya la sumó
+                                $extractedData[$idx]['incluye_tara'] = true;
+                                Log::info('📦 TARA NO agregada - OpenAI ya la sumó (heurística)', [
+                                    'ruta' => $idx,
+                                    'peso_actual' => $pesoAnterior,
+                                    'peso_base_detectado' => $pesoSinPosibleTara
+                                ]);
+                            } else {
+                                $extractedData[$idx]['peso_kg'] = $pesoAnterior + 3400;
+                                $extractedData[$idx]['incluye_tara'] = true;
+                                Log::info('📦 TARA agregada a ruta (multi)', [
+                                    'ruta' => $idx,
+                                    'peso_anterior' => $pesoAnterior,
+                                    'peso_con_tara' => $extractedData[$idx]['peso_kg']
+                                ]);
+                            }
                         }
                     }
                 }
@@ -1615,13 +1636,24 @@ class MCPAssistantService
                 if (isset($extractedData['peso_kg']) && !$yaConTara) {
                     $pesoAnterior = floatval(str_replace(',', '', (string)$extractedData['peso_kg']));
                     
-                    $extractedData['peso_kg'] = $pesoAnterior + 3400;
-                    $extractedData['incluye_tara'] = true;
-                    Log::info('📦 TARA agregada al peso', [
-                        'peso_anterior' => $pesoAnterior,
-                        'tara' => 3400,
-                        'peso_con_tara' => $extractedData['peso_kg']
-                    ]);
+                    // 🔧 FIX: Verificar si el peso ya tiene tara sumada (heurística: peso > 3400)
+                    // Si peso < 3400, definitivamente no tiene tara. Si peso >= 3400, verificar si ya parece tener tara
+                    $pareceYaTenerTara = ($pesoAnterior >= 3400 && preg_match('/incluye|con\s+tara|ya.*tara/ui', $lastUserMessage));
+                    
+                    if (!$pareceYaTenerTara) {
+                        $extractedData['peso_kg'] = $pesoAnterior + 3400;
+                        $extractedData['incluye_tara'] = true;
+                        Log::info('📦 TARA agregada al peso', [
+                            'peso_anterior' => $pesoAnterior,
+                            'tara' => 3400,
+                            'peso_con_tara' => $extractedData['peso_kg']
+                        ]);
+                    } else {
+                        $extractedData['incluye_tara'] = true;
+                        Log::info('📦 TARA no sumada - parece ya estar incluida', [
+                            'peso_kg' => $pesoAnterior
+                        ]);
+                    }
                 }
             }
         }
@@ -2569,7 +2601,14 @@ class MCPAssistantService
      * Procesar tool calls de OpenAI
      * @param int|null $selectedRouteIndex Índice de ruta seleccionada para aplicar productos
      */
-    private static function processToolCalls($threadId, $assistantMessage, $openaiResponse, $extractedData = [], $groupId = null, $selectedRouteIndex = null)
+    private static function processToolCalls(
+        $threadId, 
+        $assistantMessage, 
+        $openaiResponse, 
+        $extractedData = [], 
+        $groupId = null, 
+        $selectedRouteIndex = null
+    )
     {
         $session = ConversationSession::where('session_id', $threadId)->first();
         $toolCalls = $assistantMessage['tool_calls'];
@@ -2741,6 +2780,12 @@ class MCPAssistantService
                 'function' => $functionName,
                 'arguments' => $arguments
             ]);
+
+            // 🔧 FIX: Agregar pricing_id por defecto si es create_cotizacion y no está presente
+            if ($functionName === 'create_cotizacion' && !isset($arguments['pricing_id'])) {
+                $arguments['pricing_id'] = 43214; // Default pricing ID
+                Log::info('📝 pricing_id agregado por defecto', ['pricing_id' => 43214]);
+            }
 
             // Llamar a la herramienta MCP
             $result = self::callMCPTool($functionName, $arguments);
@@ -3929,7 +3974,122 @@ class MCPAssistantService
     }
 
     /**
-     * 🚚 DETECTAR MÚLTIPLES RUTAS EN EL TEXTO
+     * � APLICAR MODIFICACIONES A RUTAS EXISTENTES
+     * Detecta comandos de modificación como "la ruta de X cambia..." y actualiza campos específicos
+     * 
+     * @param array $rutasExistentes Rutas ya detectadas previamente
+     * @param string $textoModificacion Texto con instrucciones de modificación
+     * @return array Rutas con modificaciones aplicadas
+     */
+    private static function applyRouteModifications($rutasExistentes, $textoModificacion)
+    {
+        if (empty($rutasExistentes) || empty($textoModificacion)) {
+            return $rutasExistentes;
+        }
+        
+        $texto = strtolower($textoModificacion);
+        
+        // Detectar patrones de modificación: "la ruta de [ciudad]..."
+        if (!preg_match('/la\s+ruta\s+de\s+([a-záéíóúñ]+)/ui', $texto, $matchCiudad)) {
+            // No es un comando de modificación, retornar rutas sin cambios
+            return $rutasExistentes;
+        }
+        
+        $ciudadObjetivo = self::normalizeCityName($matchCiudad[1]);
+        
+        Log::info('🔧 Detectado comando de modificación', [
+            'ciudad_objetivo' => $ciudadObjetivo,
+            'texto' => substr($textoModificacion, 0, 100)
+        ]);
+        
+        // Buscar qué ruta corresponde a esa ciudad (origen o destino)
+        $rutaIdx = null;
+        foreach ($rutasExistentes as $idx => $ruta) {
+            if (($ruta['origen'] ?? '') === $ciudadObjetivo || ($ruta['destino'] ?? '') === $ciudadObjetivo) {
+                $rutaIdx = $idx;
+                break;
+            }
+        }
+        
+        if ($rutaIdx === null) {
+            Log::warning('⚠️ No se encontró ruta con ciudad', ['ciudad' => $ciudadObjetivo]);
+            return $rutasExistentes;
+        }
+        
+        Log::info('✓ Ruta encontrada para modificar', ['ruta_numero' => $rutaIdx + 1, 'origen' => $rutasExistentes[$rutaIdx]['origen']]);
+        
+        // Extraer modificaciones del texto
+        $modificaciones = [];
+        
+        // Peso: "el peso es X toneladas" o "cambia el peso a X ton"
+        if (preg_match('/(?:el\s+)?peso\s+(?:es|a|cambia)\s+(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $texto, $matchPeso)) {
+            $modificaciones['peso_kg'] = (float)str_replace(',', '.', $matchPeso[1]) * 1000;
+        } elseif (preg_match('/(?:el\s+)?peso\s+(?:es|a|cambia)\s+(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?)/ui', $texto, $matchPeso)) {
+            $modificaciones['peso_kg'] = (float)str_replace(',', '.', $matchPeso[1]);
+        }
+        
+        // Producto: "el producto es X" o "producto X"
+        if (preg_match('/(?:el\s+)?producto\s+(?:es|sera|:)?\s+([a-záéíóúñ]+)(?:\s+y\s+|\s+,|\s|$)/ui', $texto, $matchProd)) {
+            $producto = trim($matchProd[1]);
+            $producto = self::removeAccents($producto);
+            $modificaciones['producto'] = strtoupper($producto);
+        }
+        
+        // Cantidad: "X unidades/bultos/sacos/cajas" o "cantidad X"
+        if (preg_match('/(\d+)\s*(?:unidades?|bultos?|sacos?|cajas?)/ui', $texto, $matchCant)) {
+            $modificaciones['cantidad'] = (int)$matchCant[1];
+        } elseif (preg_match('/cantidad\s+(?:es\s+)?(\d+)/ui', $texto, $matchCant)) {
+            $modificaciones['cantidad'] = (int)$matchCant[1];
+        }
+        
+        // Valor declarado: "valor X millones" o "valor declarado X"
+        if (preg_match('/valor(?:\s+declarado)?\s+(?:de\s+)?(?:\$\s*)?(\d+(?:[.,]\d+)?)\s*millones?/ui', $texto, $matchValor)) {
+            $modificaciones['valor_declarado'] = (float)str_replace(',', '.', $matchValor[1]) * 1000000;
+        }
+        
+        // Vehículo: "vehículo X" o simplemente nombre del vehículo
+        if (preg_match('/veh[íi]culo\s+([a-záéíóúñ]+)/ui', $texto, $matchVeh)) {
+            $modificaciones['vehiculo'] = strtoupper($matchVeh[1]);
+        } elseif (preg_match('/\b(patineta|tractomula|turbo|sencillo|dobletroque|camioneta)\b/ui', $texto, $matchVeh)) {
+            $modificaciones['vehiculo'] = strtoupper($matchVeh[1]);
+        }
+        
+        // Destino: "ahora va a X" o "destino X"
+        if (preg_match('/(?:ahora\s+)?va\s+a\s+([a-záéíóúñ]+)/ui', $texto, $matchDest)) {
+            $modificaciones['destino'] = self::normalizeCityName($matchDest[1]);
+        } elseif (preg_match('/destino\s+(?:es\s+)?([a-záéíóúñ]+)/ui', $texto, $matchDest)) {
+            $modificaciones['destino'] = self::normalizeCityName($matchDest[1]);
+        }
+        
+        // Origen: "origen X" o "sale de X"
+        if (preg_match('/origen\s+(?:es\s+)?([a-záéíóúñ]+)/ui', $texto, $matchOrig)) {
+            $modificaciones['origen'] = self::normalizeCityName($matchOrig[1]);
+        } elseif (preg_match('/sale\s+de\s+([a-záéíóúñ]+)/ui', $texto, $matchOrig)) {
+            $modificaciones['origen'] = self::normalizeCityName($matchOrig[1]);
+        }
+        
+        if (empty($modificaciones)) {
+            Log::warning('⚠️ No se detectaron modificaciones específicas en el texto');
+            return $rutasExistentes;
+        }
+        
+        Log::info('✓ Modificaciones detectadas', $modificaciones);
+        
+        // Aplicar modificaciones a la ruta específica
+        foreach ($modificaciones as $campo => $valor) {
+            $rutasExistentes[$rutaIdx][$campo] = $valor;
+        }
+        
+        Log::info('✅ Modificaciones aplicadas a ruta', [
+            'ruta_numero' => $rutaIdx + 1,
+            'campos_modificados' => array_keys($modificaciones)
+        ]);
+        
+        return $rutasExistentes;
+    }
+
+    /**
+     * �🚚 DETECTAR MÚLTIPLES RUTAS EN EL TEXTO
      * Retorna array de rutas con origen, destino, peso, cantidad y valor EXPLÍCITOS por cada ruta
      */
     private static function detectMultipleRoutes($text)
@@ -3993,9 +4153,13 @@ class MCPAssistantService
         // 🔧 FIX: Excluir palabras numéricas/monetarias como "millones" de los nombres de ciudad
         // 🔧 FIX 2: Excluir palabras comunes que no son ciudades (toneladas, bultos, vehiculo, etc.)
         // 🔧 FIX 3: Agregar productos comunes para evitar capturarlos como ciudades
+        // 🔧 FIX 4: Agregar verbos/palabras comunes (son, es, hay, tiene) y medidas (kilos, kg, ton)
+        // 🔧 FIX 6: Agregar "importacion" y "exportacion" para evitar capturarlas como parte del nombre de ciudad
         $palabrasExcluidas = '(?:millones?|mil|cientos?|miles|toneladas?|bultos?|sacos?|unidades?|cajas?|vehiculos?|veh[íi]culo|turbo|patineta|camioneta?|tractomula|de|del|con|sin|y|para|desde|' .
+            'importaci[oó]n|exportaci[oó]n|cotizaci[oó]n|' .
             'alimentos?|pesca|pescados?|bananos?|cafe|cafés?|arroz|ma[íi]z|cemento|arena|carbon|ganado|lacteos?|frutas?|verduras?|granos?|legumbres?|carne|pollos?|huevos?|azucar|sal)';
-        $patronCiudadACiudad = '/\b(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+(?!' . $palabrasExcluidas . '\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\b/ui';
+        // 🔧 FIX 5: Capturar hasta 2 palabras para destino - No usar \b al final para permitir verbos después
+        $patronCiudadACiudad = '/\b(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+(?!' . $palabrasExcluidas . '\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui';
         
         if (preg_match_all($patronCiudadACiudad, $text, $matchesCiudades, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
             Log::info('🔍 Pares "ciudad a ciudad" detectados', [
@@ -4009,9 +4173,23 @@ class MCPAssistantService
             if (count($matchesCiudades) >= 2) {
                 $rutasDetectadas = [];
                 
+                // 🆕 DETECCIÓN DE TARA GLOBAL: Si "agrega tara" está al INICIO del prompt (antes de especificar rutas),
+                // debe aplicarse a TODAS las rutas, no solo a una específica
+                $contextoInicial = substr($text, 0, $matchesCiudades[0][0][1]);
+                $taraGlobal = false;
+                
+                if (preg_match('/(?:agrega|agregar|con|incluye|incluir|añade|añadir)\s+(?:la\s+)?tara/ui', $contextoInicial)) {
+                    $taraGlobal = true;
+                    Log::info('🔧 Tara GLOBAL detectada al inicio del prompt - se aplicará a TODAS las rutas');
+                }
+                
                 foreach ($matchesCiudades as $idx => $match) {
                     $origen = self::normalizeCityName(trim($match[1][0]));
-                    $destino = self::normalizeCityName(trim($match[2][0]));
+                    $destinoRaw = trim($match[2][0]);
+                    
+                    // 🔧 FIX: Limpiar destino - remover palabras comunes que se peguen
+                    $destinoRaw = preg_replace('/\s+(son|es|hay|tiene|kilos?|kgs?|kg|toneladas?|ton)\b.*/ui', '', $destinoRaw);
+                    $destino = self::normalizeCityName($destinoRaw);
                     
                     // Obtener el contexto después de este par de ciudades (hasta el siguiente par o fin de texto)
                     $matchStart = $match[0][1];
@@ -4158,10 +4336,20 @@ class MCPAssistantService
                         }
                     }
                     
-                    // Detectar tara (buscar en ambos contextos)
-                    $contextoCompleto = $contextoAntes . ' ' . $contextoDespues;
-                    if (preg_match('/(?:el\s+)?peso\s+(?:no\s+)?incluy(?:e|a)\s+(?:la\s+)?tara/ui', $contextoCompleto, $taraMatch)) {
-                        $routeData['incluye_tara'] = !preg_match('/no\s+incluy/ui', $taraMatch[0]);
+                    // Detectar tara
+                    // 🔧 FIX: Primero verificar si hay tara GLOBAL (mencionada al inicio del prompt)
+                    if ($taraGlobal) {
+                        $routeData['incluye_tara'] = true;
+                        Log::info("🔧 Tara GLOBAL aplicada a ruta #{$routeData['ruta_numero']}");
+                    }
+                    // Si no hay tara global, buscar tara específica SOLO en contextoDespues para evitar duplicación
+                    // 🔧 FIX: También detectar "agrega tara", "con tara", "incluye tara"
+                    elseif (preg_match('/(?:agrega|agregar|con|incluye|incluir|añade|añadir)\s+(?:la\s+)?tara/ui', $contextoDespues, $taraMatch)) {
+                        $routeData['incluye_tara'] = true;
+                    } elseif (preg_match('/(?:el\s+)?peso\s+incluy(?:e|a)\s+(?:la\s+)?tara/ui', $contextoDespues, $taraMatch)) {
+                        $routeData['incluye_tara'] = true;
+                    } elseif (preg_match('/(?:el\s+)?peso\s+no\s+incluy(?:e|a)\s+(?:la\s+)?tara/ui', $contextoDespues, $taraMatch)) {
+                        $routeData['incluye_tara'] = false;
                     }
                     
                     // Extraer empaque (priorizar contextoDespues)
@@ -5104,6 +5292,64 @@ class MCPAssistantService
                 Log::info('🚛 Vehículo sugerido por peso', ['vehiculo' => $vehiculo, 'peso' => $data['peso_kg']]);
             }
         }
+        
+        // 🔧 TARA - Por defecto debe agregarse si no se especifica
+        $noIncluyeTaraPatterns = [
+            'no incluye tara', 'no incluye la tara', 'sin tara', 'peso neto',
+            'el peso no incluye tara', 'el peso no incluye la tara', 
+            'peso no incluye tara', 'peso no incluye la tara'
+        ];
+        $yaIncluyeTaraPatterns = [
+            'ya incluye tara', 'ya incluye la tara', 'incluye la tara',
+            'con tara', 'peso con tara', 'peso bruto', 'tara incluida',
+            'el peso ya incluye la tara', 'el peso ya incluye tara',
+            'peso ya incluye la tara', 'peso ya incluye tara'
+        ];
+        
+        $detectoNoIncluyeTara = false;
+        $detectoYaIncluyeTara = false;
+        
+        foreach ($noIncluyeTaraPatterns as $pattern) {
+            if (strpos($lowerText, $pattern) !== false) {
+                $detectoNoIncluyeTara = true;
+                break;
+            }
+        }
+        
+        if (!$detectoNoIncluyeTara) {
+            foreach ($yaIncluyeTaraPatterns as $pattern) {
+                if (strpos($lowerText, $pattern) !== false) {
+                    $detectoYaIncluyeTara = true;
+                    break;
+                }
+            }
+        }
+        
+        if ($detectoNoIncluyeTara) {
+            $data['incluye_tara'] = false;
+            if (isset($data['peso_kg']) && $data['peso_kg'] > 0) {
+                $pesoOriginal = $data['peso_kg'];
+                $data['peso_kg'] = $pesoOriginal + 3400;
+                Log::info('📦 TARA SUMADA (no incluye tara)', [
+                    'peso_original' => $pesoOriginal,
+                    'peso_con_tara' => $data['peso_kg']
+                ]);
+            }
+        } elseif ($detectoYaIncluyeTara) {
+            $data['incluye_tara'] = true;
+            Log::info('📦 TARA ya incluida, peso se mantiene', ['peso_kg' => $data['peso_kg'] ?? 'N/A']);
+        } else {
+            // 🔧 FIX: Por defecto, si NO se menciona nada, debe agregar tara
+            $data['incluye_tara'] = false;
+            if (isset($data['peso_kg']) && $data['peso_kg'] > 0) {
+                $pesoOriginal = $data['peso_kg'];
+                $data['peso_kg'] = $pesoOriginal + 3400;
+                Log::info('📦 TARA SUMADA (default - no especificado)', [
+                    'peso_original' => $pesoOriginal,
+                    'peso_con_tara' => $data['peso_kg']
+                ]);
+            }
+        }
 
         Log::info('📦 Datos de ruta única extraídos', [
             'campos_detectados' => array_keys($data)
@@ -5790,6 +6036,18 @@ class MCPAssistantService
             Log::info('📦 TARA ya incluida, peso se mantiene', [
                 'peso_kg' => $route['peso_kg'] ?? 'N/A'
             ]);
+        } else {
+            // 🔧 FIX: Si NO se menciona nada sobre tara, por defecto DEBE agregarse
+            $route['incluye_tara'] = false;
+            if (isset($route['peso_kg']) && $route['peso_kg'] > 0) {
+                $pesoOriginal = $route['peso_kg'];
+                $route['peso_kg'] = $pesoOriginal + 3400;
+                Log::info('📦 TARA SUMADA automáticamente (no especificado - default)', [
+                    'peso_original' => $pesoOriginal,
+                    'tara' => 3400,
+                    'peso_con_tara' => $route['peso_kg']
+                ]);
+            }
         }
         
         // 🆕 PRODUCTO: múltiples patrones para mayor flexibilidad
@@ -5934,6 +6192,11 @@ class MCPAssistantService
      */
     private static function normalizeCityName($cityName)
     {
+        // 🔥 POST-PROCESAMIENTO: Eliminar prefijos "importacion", "exportacion", "cotizacion"
+        // DEBE HACERSE PRIMERO, antes de cualquier otra normalización
+        $cityName = preg_replace('/^(importaci[oó]n|exportaci[oó]n|cotizaci[oó]n(?:\s+de)?)\s+/ui', '', $cityName);
+        $cityName = trim($cityName);
+        
         // Abreviaciones comunes (Agregado solicitud usuario)
         $abbreviations = [
             'BOG' => 'BOGOTA',

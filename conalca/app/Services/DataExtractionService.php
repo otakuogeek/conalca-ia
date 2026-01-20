@@ -81,9 +81,20 @@ class DataExtractionService
             // 🆕 LÓGICA TARA (Manual, post-procesamiento para respuesta rápida)
             // Esto asegura que la respuesta inmediata tenga el cálculo aplicado
             $lastUserMessage = strtolower($userMessage);
-            $agregarTara = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar)\s+(?:la\s+)?tara/ui', $lastUserMessage);
             
-            if ($agregarTara) {
+            // 🔧 FIX: Detectar si debe agregar tara
+            // Casos que requieren agregar tara:
+            // 1. "agrega/incluye/suma tara" (explícito)
+            // 2. "el peso no incluye tara" o "sin tara" o "peso neto" (explícito negativo)
+            // 3. Default: si NO dice "tara incluida/con tara/peso bruto", agregar tara
+            $agregarTara = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar)\s+(?:la\s+)?tara/ui', $lastUserMessage);
+            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye/ui', $lastUserMessage);
+            $yaIncluyeTara = preg_match('/(?:tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye\s+tara|peso\s+ya\s+incluye)/ui', $lastUserMessage);
+            
+            // Determinar si se debe agregar tara
+            $debeAgregarTara = $agregarTara || $noIncluyeTara || (!$yaIncluyeTara);
+            
+            if ($debeAgregarTara && !$yaIncluyeTara) {
                 // Buscar peso en extracción actual o datos previos
                 $pesoActual = $extractedData['extracted']['peso'] ?? $currentData['peso_mercancia'] ?? $currentData['peso'] ?? 0;
                 
@@ -92,8 +103,19 @@ class DataExtractionService
                     $pesoActual = (float) preg_replace('/[^0-9.]/', '', $pesoActual);
                 }
                 
-                // Solo sumar si hay un peso base y no parece tener tara ya incluida (heurística simple)
-                if ($pesoActual > 0) {
+                // 🔥 HEURÍSTICO MEJORADO: Detectar si OpenAI ya sumó la tara
+                // Si (peso - 3400) es múltiplo exacto de 1000, probablemente ya tiene tara
+                // Ejemplos: 15400-3400=12000 (12 ton), 27400-3400=24000 (24 ton), 34200-3400=30800 (30.8 ton - ¡duplicado!)
+                $pesoSinPosibleTara = $pesoActual - 3400;
+                $esProbablementeDuplicado = ($pesoSinPosibleTara > 0 && $pesoSinPosibleTara % 1000 == 0);
+                
+                // También verificar si el mensaje menciona "con tara" o "ya tara"
+                $mensionaTara = preg_match('/(?<!no\s)(?:con\s+tara|ya.*tara|tara\s+incluida|peso\s+bruto)/ui', $lastUserMessage);
+                
+                $pareceYaTenerTara = ($pesoActual >= 3400 && ($esProbablementeDuplicado || $mensionaTara));
+                
+                // Solo sumar si hay un peso base y NO parece tener tara ya incluida
+                if ($pesoActual > 0 && !$pareceYaTenerTara) {
                      $nuevoPeso = $pesoActual + 3400;
                      $extractedData['extracted']['peso'] = $nuevoPeso;
                      // Asegurar que se incluya en la respuesta
@@ -104,6 +126,16 @@ class DataExtractionService
                          'nuevo_peso' => $nuevoPeso,
                          'selected_route_index' => $selectedRouteIndex
                      ]);
+                } else if ($pareceYaTenerTara) {
+                    Log::info('⚠️ TARA NO agregada: ya parece estar incluida', [
+                        'peso_actual' => $pesoActual,
+                        'peso_sin_posible_tara' => $pesoSinPosibleTara,
+                        'es_multiplo_1000' => $esProbablementeDuplicado,
+                        'menciona_tara' => $mensionaTara,
+                        'razon' => $esProbablementeDuplicado 
+                            ? 'Heurístico: (peso - 3400) es múltiplo de 1000, OpenAI probablemente ya sumó tara'
+                            : 'Mensaje menciona que tara ya está incluida'
+                    ]);
                 }
             }
             
@@ -155,6 +187,8 @@ REGLAS IMPORTANTES:
 ✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg
 ✓ Para números: 72.000 USD → 72000 (quita separadores)
 ✓ Para ciudades: normaliza a formato correcto (Cartagena, Medellín, Bogotá, etc.)
+✓ IGNORA palabras previas como "importacion", "exportacion", "cotización de" al extraer nombres de ciudades
+✓ Ejemplo: "importacion cartagena a bogotá" → origen: "Cartagena", destino: "Bogotá"
 ✓ Si dice "Gross Weight: 9900" → peso es 9900
 ✓ Si dice "1X40 HQ" → contenedor es "1X40 HQ"
 ✓ NUNCA inventes datos, solo extrae lo visible
@@ -330,6 +364,11 @@ EOT;
                     // 🆕 NORMALIZACIÓN EXTENDIDA: Abreviaturas y Mayúsculas
                     // Usar la misma lógica de MCPAssistantService si es posible, o replicarla
                     $val = trim($value);
+                    
+                    // 🔥 POST-PROCESAMIENTO: Eliminar prefijos "importacion", "exportacion", "cotizacion"
+                    $val = preg_replace('/^(importaci[oó]n|exportaci[oó]n|cotizaci[oó]n\s+de?)\s+/ui', '', $val);
+                    $val = trim($val);
+                    
                     $upperVal = mb_strtoupper($val);
                     
                     $abbreviations = [
