@@ -465,9 +465,15 @@ const ChatModal = ({
 
   // Calcular routesData para QuoteDetailsPanel (memoizado para evitar recálculos innecesarios)
   const routesData = useMemo(() => {
+    console.log('📊 routesData useMemo ejecutándose:', {
+      quoteData_type: Array.isArray(quoteData) ? 'array' : typeof quoteData,
+      quoteData_length: Array.isArray(quoteData) ? quoteData.length : 'N/A',
+      quoteData: quoteData
+    });
+
     // Caso 1: quoteData es array (multi-ruta)
     if (Array.isArray(quoteData) && quoteData.length > 0) {
-      return quoteData.map((route, index) => {
+      const result = quoteData.map((route, index) => {
         // 🔥 PRIORIDAD DE PRODUCTOS:
         // 1. producto_mencionado (el que el usuario dijo explícitamente)
         // 2. producto (valor actual/personalizado)
@@ -490,6 +496,11 @@ const ChatModal = ({
           tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
         };
       });
+      console.log('📊 routesData RESULTADO (Caso 1 - Array):', {
+        length: result.length,
+        data: result
+      });
+      return result;
     }
     // Caso 2: quoteData es objeto con datos
     else if (quoteData && typeof quoteData === 'object' && Object.keys(quoteData).length > 0) {
@@ -498,7 +509,7 @@ const ChatModal = ({
         || quoteData.producto 
         || quoteData.tipo_producto;
 
-      return [{
+      const result = [{
         ...quoteData,
         producto: productoFinal,
         producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
@@ -506,18 +517,33 @@ const ChatModal = ({
         empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
         tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
       }];
+      console.log('📊 routesData RESULTADO (Caso 2 - Objeto):', {
+        length: result.length,
+        data: result
+      });
+      return result;
     }
     // Caso 3: NO hay quoteData pero SÍ hay selectedProduct o selectedEmpaque
     else if (selectedProduct || selectedEmpaque) {
-      return [{
+      const result = [{
         producto: selectedProduct?.nombre,
         producto_codigo: selectedProduct?.codigo,
         tipo_producto: selectedProduct?.nombre,
         empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre,
         tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre
       }];
+      console.log('📊 routesData RESULTADO (Caso 3 - Solo selectedProduct/Empaque):', {
+        length: result.length,
+        data: result
+      });
+      return result;
     }
-    return [];
+    const result = [];
+    console.log('📊 routesData RESULTADO:', {
+      length: result.length,
+      data: result
+    });
+    return result;
   }, [quoteData, selectedProduct, selectedEmpaque]);
 
   // Helper para limpiar estado de procesamiento
@@ -738,14 +764,36 @@ const ChatModal = ({
                 return null;
               };
 
-              // Obtener datos actuales de BD
+              // 🔧 FIX: Persistir ANTES de obtener datos de BD
+              // Esto asegura que currentDataFromDB tenga los valores MÁS ACTUALIZADOS
+              await persistRoutesToDb(processedRoutes);
+              
+              // Obtener datos actuales de BD DESPUÉS de persistir
               const currentDataFromDB = await fetchCurrentDataFromDB();
               
-              // Persistir inmediatamente en BD para evitar desfaces en panel/modal
-              persistRoutesToDb(processedRoutes);
+              console.log('🔍 DEBUG fetchCurrentDataFromDB:', {
+                processedRoutes_count: processedRoutes.length,
+                currentDataFromDB_count: currentDataFromDB ? currentDataFromDB.length : 0,
+                processedRoutes: processedRoutes,
+                currentDataFromDB: currentDataFromDB
+              });
 
               // 🆕 LÓGICA DE FUSIÓN INTELIGENTE (SMART MERGE) - Usando datos de BD
               updateQuoteData(prevData => {
+                console.log('🔄 updateQuoteData INICIO:', {
+                  prevData_type: Array.isArray(prevData) ? 'array' : typeof prevData,
+                  prevData_length: Array.isArray(prevData) ? prevData.length : 'N/A',
+                  processedRoutes_count: processedRoutes.length,
+                  currentDataFromDB_count: currentDataFromDB ? currentDataFromDB.length : 0
+                });
+
+                // 🔥 CASO ESPECIAL: Si processedRoutes tiene MÚLTIPLES rutas pero currentDataFromDB no,
+                // usar processedRoutes directamente (creación inicial de múltiples rutas)
+                if (processedRoutes.length > 1 && (!currentDataFromDB || currentDataFromDB.length === 0)) {
+                  console.log('🆕 MÚLTIPLES RUTAS NUEVAS - Usando processedRoutes directamente', processedRoutes);
+                  return processedRoutes;
+                }
+                
                 // Priorizar datos de BD sobre estado local
                 const prevArray = currentDataFromDB !== null 
                   ? currentDataFromDB 
@@ -832,6 +880,10 @@ const ChatModal = ({
                   }
                 });
 
+                console.log('🎯 RESULTADO FINAL del merge:', {
+                  nextData_length: nextData.length,
+                  nextData: nextData
+                });
                 return nextData;
               });
 
