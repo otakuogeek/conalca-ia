@@ -82,6 +82,10 @@ class DataExtractionService
             // Esto asegura que la respuesta inmediata tenga el cálculo aplicado
             $lastUserMessage = strtolower($userMessage);
             
+            // 🔧 FIX #2: Detectar si estamos editando una ruta existente
+            // Si $currentData tiene datos, estamos en modo edición y NO debemos recalcular tara
+            $esEdicionCampo = !empty($currentData) && count($currentData) > 0;
+            
             // 🔧 FIX: Detectar si debe agregar tara
             // Casos que requieren agregar tara:
             // 1. "agrega/incluye/suma tara" (explícito)
@@ -91,8 +95,8 @@ class DataExtractionService
             $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye/ui', $lastUserMessage);
             $yaIncluyeTara = preg_match('/(?:tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye\s+tara|peso\s+ya\s+incluye)/ui', $lastUserMessage);
             
-            // Determinar si se debe agregar tara
-            $debeAgregarTara = $agregarTara || $noIncluyeTara || (!$yaIncluyeTara);
+            // Determinar si se debe agregar tara (pero NO si estamos editando)
+            $debeAgregarTara = !$esEdicionCampo && ($agregarTara || $noIncluyeTara || (!$yaIncluyeTara));
             
             if ($debeAgregarTara && !$yaIncluyeTara) {
                 // Buscar peso en extracción actual o datos previos
@@ -118,12 +122,15 @@ class DataExtractionService
                 if ($pesoActual > 0 && !$pareceYaTenerTara) {
                      $nuevoPeso = $pesoActual + 3400;
                      $extractedData['extracted']['peso'] = $nuevoPeso;
+                     // 🔥 FIX #3: Agregar peso_kg en toneladas para que frontend lo use correctamente
+                     $extractedData['extracted']['peso_kg'] = round($nuevoPeso / 1000, 2);
                      // Asegurar que se incluya en la respuesta
                      $extractedData['extracted']['incluye_tara'] = true;
                      
                      Log::info('📦 TARA agregada en Quick Extraction', [
                          'peso_anterior' => $pesoActual,
                          'nuevo_peso' => $nuevoPeso,
+                         'peso_kg_ton' => round($nuevoPeso / 1000, 2),
                          'selected_route_index' => $selectedRouteIndex
                      ]);
                 } else if ($pareceYaTenerTara) {
@@ -137,6 +144,13 @@ class DataExtractionService
                             : 'Mensaje menciona que tara ya está incluida'
                     ]);
                 }
+            } else if ($esEdicionCampo) {
+                // 🔧 FIX #2: Si estamos editando, NO recalcular tara
+                Log::info('🔧 DataExtractionService - Modo edición detectado: NO recalcular tara', [
+                    'es_edicion' => $esEdicionCampo,
+                    'current_data_keys' => array_keys($currentData),
+                    'peso_mantenido' => $currentData['peso_mercancia'] ?? $currentData['peso'] ?? null
+                ]);
             }
             
             Log::info('✅ DataExtractionService: Extracción completada', [

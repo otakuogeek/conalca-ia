@@ -23,11 +23,12 @@ const QuoteDetailsPanel = ({
     
     if (!route.ciudadOrigen && !route.ciudad_origen) missing.push('origen');
     if (!route.ciudadDestino && !route.ciudad_destino) missing.push('destino');
-    if (!route.pesoMercancia && !route.peso_mercancia) missing.push('peso');
+    // 🔧 FIX: Considerar peso_kg (en toneladas del backend)
+    if (!route.pesoMercancia && !route.peso_mercancia && !route.peso_kg) missing.push('peso');
     if (!route.producto && !route.tipo_producto && !selectedProduct) missing.push('producto');
     
     return missing;
-  };
+  }
 
   // 🆕 Función para obtener mensaje de campo faltante
   const getMissingFieldLabel = (field) => {
@@ -92,8 +93,12 @@ const QuoteDetailsPanel = ({
 
   // Calcular resumen total
   const totalRoutes = routes.length;
-  const totalPeso = routes.reduce((sum, r) => sum + (parseFloat(r.pesoMercancia) || 0), 0);
-  const totalValor = routes.reduce((sum, r) => sum + (parseFloat(r.valorMercancia) || 0), 0);
+  // 🔧 FIX: Considerar peso_kg (backend lo envía en toneladas, convertir a kg)
+  const totalPeso = routes.reduce((sum, r) => {
+    const peso = parseFloat(r.pesoMercancia || r.peso_mercancia || (r.peso_kg * 1000) || 0);
+    return sum + peso;
+  }, 0);
+  const totalValor = routes.reduce((sum, r) => sum + (parseFloat(r.valorMercancia || r.valor_declarado) || 0), 0);
 
   return (
     <div className="space-y-4">
@@ -256,7 +261,11 @@ const QuoteDetailsPanel = ({
                     </div>
                   )}
                   <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
-                    {(route.pesoMercancia || route.peso_mercancia) ? `${parseFloat(route.pesoMercancia || route.peso_mercancia).toLocaleString('es-CO')} kg` : 'Sin peso'}
+                    {(() => {
+                      // 🔧 FIX: peso_kg viene en toneladas, convertir a kg
+                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : 'Sin peso';
+                    })()}
                   </span>
                 </div>
               </div>
@@ -323,9 +332,16 @@ const QuoteDetailsPanel = ({
                     }`}>Peso</span>
                   </div>
                   <p className={`text-lg font-bold ${
-                    (route.pesoMercancia || route.peso_mercancia) ? 'text-gray-900' : 'text-red-500'
+                    (() => {
+                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      return peso ? 'text-gray-900' : 'text-red-500';
+                    })()
                   }`}>
-                    {(route.pesoMercancia || route.peso_mercancia) ? `${parseFloat(route.pesoMercancia || route.peso_mercancia).toLocaleString('es-CO')} kg` : '❌ Faltante'}
+                    {(() => {
+                      // 🔧 FIX: peso_kg viene en toneladas del backend
+                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : '❌ Faltante';
+                    })()}
                   </p>
                 </div>
 
@@ -364,7 +380,8 @@ const QuoteDetailsPanel = ({
                     <span className="text-xs text-gray-500 uppercase">Vehículo</span>
                   </div>
                   <p className="text-sm font-bold text-gray-900">
-                    {route.claseVehiculo || route.vehiculo_requerido || '-'}
+                    {/* 🔧 FIX: Considerar todos los campos de vehículo del backend */}
+                    {route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || '-'}
                   </p>
                 </div>
               </div>

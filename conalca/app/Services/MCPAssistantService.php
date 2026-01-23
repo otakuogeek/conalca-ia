@@ -607,18 +607,38 @@ class MCPAssistantService
                 Log::info('📦 Empaque común para todas las rutas', ['empaque' => $datosComunes['empaque']]);
             }
             
-            // 🆕 CALCULAR TARA AUTOMÁTICAMENTE solo si:
-            // 1. Hay peso detectado
-            // 2. NO se menciona "tara" explícitamente
-            // 3. NO dice "incluye la tara" o "ya incluye tara"
-            // 4. NO dice "no incluye tara" (este caso se maneja diferente)
+            // 🆕 CALCULAR TARA AUTOMÁTICAMENTE
+            // Lógica mejorada: Si el usuario dice "sin tara" o "no incluye tara", significa que DEBE sumarse la tara
+            // 🔧 FIX: NO recalcular tara si estamos editando campos de una ruta existente
+            $esEdicionCampo = !empty($previousExtractedData) && count($previousExtractedData) > 0;
             $mencionaTara = preg_match('/\btara\b/ui', $fullText);
             $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $fullText);
             $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara/ui', $fullText);
             
-            if ($peso && !$mencionaTara && !$incluyeTara && !$noIncluyeTara) {
-                // SOLO en contexto de múltiples rutas: calcular tara automáticamente
-                // Calcular tara como 10% del peso bruto (mínimo 3400 kg para contenedores)
+            // 🆕 CASO 1: Usuario dice "sin tara" o "no incluye tara" → SUMAR TARA (3400 kg estándar)
+            if ($peso && $noIncluyeTara && !$esEdicionCampo) {
+                $taraEstandar = 3400; // Tara estándar en kg
+                $pesoTotal = $peso + $taraEstandar;
+                
+                // Actualizar el peso con la tara incluida
+                $datosComunes['peso_mercancia'] = $pesoTotal;
+                $datosComunes['pesoMercancia'] = $pesoTotal;
+                $datosComunes['peso_bruto'] = $peso; // Guardar el peso original
+                $datosComunes['tara'] = $taraEstandar;
+                $datosComunes['incluye_tara'] = true;
+                
+                Log::info('⚖️ Usuario indicó "sin tara" - Tara estándar sumada', [
+                    'peso_original_sin_tara' => $peso,
+                    'tara_agregada' => $taraEstandar,
+                    'peso_total_con_tara' => $pesoTotal
+                ]);
+            } elseif ($peso && $incluyeTara && !$esEdicionCampo) {
+                // CASO 2: Usuario dice "incluye tara" → NO sumar nada
+                $datosComunes['incluye_tara'] = true;
+                Log::info('✅ Usuario indicó "incluye tara" - no se agregará tara adicional');
+            } elseif ($peso && !$mencionaTara && !$esEdicionCampo) {
+                // CASO 3: NO menciona tara → Calcular tara automática (10% del peso, mínimo 3400 kg)
+                // 🔧 SOLO si NO es edición de campo
                 $taraCalculada = max(round($peso * 0.10), 3400);
                 $pesoTotal = $peso + $taraCalculada;
                 
@@ -629,19 +649,20 @@ class MCPAssistantService
                 $datosComunes['tara'] = $taraCalculada;
                 $datosComunes['incluye_tara'] = true;
                 
-                Log::info('⚖️ Tara calculada y sumada al peso para todas las rutas', [
-                    'peso_bruto_original' => $peso,
+                Log::info('⚖️ Tara calculada automáticamente (no mencionó tara)', [
+                    'peso_original' => $peso,
                     'tara_calculada' => $taraCalculada,
                     'peso_total_con_tara' => $pesoTotal
                 ]);
-            } elseif ($peso && $noIncluyeTara) {
-                // Usuario explícitamente dice "no incluye tara" → marcar para agregar tara después
-                $datosComunes['requiere_tara'] = true;
-                Log::info('📝 Detectado "no incluye tara" - se agregará tara en procesamiento individual');
-            } elseif ($peso && $incluyeTara) {
-                // Usuario explícitamente dice "incluye tara" → NO hacer nada
-                $datosComunes['incluye_tara'] = true;
-                Log::info('✅ Detectado "incluye tara" - no se agregará tara adicional');
+            } elseif ($esEdicionCampo && $peso) {
+                // 🆕 CASO 4: Estamos editando campos - mantener el peso sin modificar
+                // No sumar tara porque ya fue procesada en la creación inicial
+                $datosComunes['peso_mercancia'] = $peso;
+                $datosComunes['pesoMercancia'] = $peso;
+                Log::info('🔧 Modo edición detectado - Peso mantenido sin recalcular tara', [
+                    'peso' => $peso,
+                    'es_edicion' => $esEdicionCampo
+                ]);
             }
             // Extraer valor declarado
             $valor = self::extractValorDeclarado($fullText);
@@ -1593,6 +1614,38 @@ class MCPAssistantService
                         'group_id' => $groupId,
                         'datos_guardados' => $extractedData
                     ]);
+                    
+                    // 🆕 FIX: También actualizar cotizacion_models si existe
+                    if ($isMultiRouteData && $selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                        // Es multi-ruta, actualizar solo la ruta seleccionada
+                        $cotizaciones = \App\Models\CotizacionModel::where('group_cotization_id', $groupId)
+                            ->orderBy('id')
+                            ->get();
+                        
+                        if (isset($cotizaciones[$selectedRouteIndex])) {
+                            $cotizacion = $cotizaciones[$selectedRouteIndex];
+                            $rutaData = $extractedData[$selectedRouteIndex];
+                            
+                            // Actualizar campos según el tipo de edición
+                            if ($campoEditadoTemprano === 'vehiculo' || in_array($campoEditadoTemprano, ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'])) {
+                                $cotizacion->vehiculo_requerido = $esEliminacion ? null : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'producto' || $campoEditadoTemprano === 'tipo_producto') {
+                                $cotizacion->tipo_producto = $esEliminacion ? null : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'origen' || $campoEditadoTemprano === 'ciudad_origen') {
+                                $cotizacion->ciudad_origen = $esEliminacion ? null : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'destino' || $campoEditadoTemprano === 'ciudad_destino') {
+                                $cotizacion->ciudad_destino = $esEliminacion ? null : $valorEditadoTemprano;
+                            }
+                            
+                            $cotizacion->save();
+                            
+                            Log::info('✅ cotizacion_models ACTUALIZADA (edición simple)', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'campo' => $campoEditadoTemprano,
+                                'valor' => $esEliminacion ? '(eliminado)' : $valorEditadoTemprano
+                            ]);
+                        }
+                    }
                     
                     Log::info('📦 Datos actualizados en GRUPO (edición simple temprana)', [
                         'group_id' => $groupId,
@@ -4455,27 +4508,46 @@ class MCPAssistantService
         // 🆕 CRÍTICO: Detectar MÚLTIPLES PARES "ciudad a ciudad" en el mismo texto
         // Ejemplo: "cali a bucaramanga, 14 toneladas de alimentos... bogotá a ipiales, 4 toneladas de pescado"
         // Este patrón detecta TODOS los pares origen→destino en el texto
-        // 🔧 FIX: Excluir palabras numéricas/monetarias como "millones" de los nombres de ciudad
-        // 🔧 FIX 2: Excluir palabras comunes que no son ciudades (toneladas, bultos, vehiculo, etc.)
-        // 🔧 FIX 3: Agregar productos comunes para evitar capturarlos como ciudades
-        // 🔧 FIX 4: Agregar verbos/palabras comunes (son, es, hay, tiene) y medidas (kilos, kg, ton)
-        // 🔧 FIX 6: Agregar "importacion" y "exportacion" para evitar capturarlas como parte del nombre de ciudad
-        $palabrasExcluidas = '(?:millones?|mil|cientos?|miles|toneladas?|bultos?|sacos?|unidades?|cajas?|vehiculos?|veh[íi]culo|turbo|patineta|camioneta?|tractomula|de|del|con|sin|y|para|desde|' .
+        // 🔧 FIX 7: REQUERIR contexto claro "de X a Y" para evitar falsos positivos como "Hola" → "OLA"
+        // El patrón ahora DEBE tener "de" antes de la ciudad origen para considerarse válido
+        $palabrasExcluidas = '(?:millones?|mil|cientos?|miles|toneladas?|bultos?|sacos?|unidades?|cajas?|vehiculos?|veh[íi]culo|turbo|patineta|camioneta?|tractomula|del|con|sin|y|para|desde|' .
             'importaci[oó]n|exportaci[oó]n|cotizaci[oó]n|' .
-            'alimentos?|pesca|pescados?|bananos?|cafe|cafés?|arroz|ma[íi]z|cemento|arena|carbon|ganado|lacteos?|frutas?|verduras?|granos?|legumbres?|carne|pollos?|huevos?|azucar|sal)';
-        // 🔧 FIX 5: Capturar hasta 2 palabras para destino - No usar \b al final para permitir verbos después
-        $patronCiudadACiudad = '/\b(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+(?!' . $palabrasExcluidas . '\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui';
+            'alimentos?|pesca|pescados?|bananos?|cafe|cafés?|arroz|ma[íi]z|cemento|arena|carbon|ganado|lacteos?|frutas?|verduras?|granos?|legumbres?|carne|pollos?|huevos?|azucar|sal|' .
+            'hola|ayudar|tengo|necesito|podr[íi]as?|servicios?|primero|segundo)';
         
-        if (preg_match_all($patronCiudadACiudad, $text, $matchesCiudades, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
-            Log::info('🔍 Pares "ciudad a ciudad" detectados', [
-                'cantidad' => count($matchesCiudades),
+        // 🔧 FIX 8: Patrón más restrictivo - REQUIERE "de" antes de la ciudad origen
+        // Esto evita capturar "Hola" como "OLA", "podrías a" como ruta, etc.
+        // Formato válido: "de Bogotá a Medellín" o "servicio de Cali a Barranquilla"
+        // 🔧 FIX 9: Agregar word boundary después del destino para no capturar "con", "y", etc.
+        $patronCiudadACiudad = '/(?:de|desde)\s+(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+(?!' . $palabrasExcluidas . '\b)[a-záéíóúñ]+){0,2})\s+(?:a|hacia)\s+(?!' . $palabrasExcluidas . '\b)([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?=\s*(?:[,.]|\s+con\s+|\s+y\s+|$))/ui';
+        
+        $matchesCiudades = [];
+        
+        // 🆕 FIX 10: TAMBIÉN detectar formato "Origen: X, Destino: Y" (común en prompts estructurados)
+        // Ejemplo: "Origen: bogotá, Destino: Buenaventura, Peso: 2,500..."
+        $patronOrigenDestino = '/\bOrigen:\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s*,\s*Destino:\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui';
+        
+        if (preg_match_all($patronOrigenDestino, $text, $matchesOD, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            Log::info('🔍 Formato "Origen: X, Destino: Y" detectado', [
+                'cantidad' => count($matchesOD),
                 'pares' => array_map(function($m) { 
                     return $m[1][0] . ' → ' . $m[2][0]; 
-                }, $matchesCiudades)
+                }, $matchesOD)
             ]);
-            
-            // Si encontramos 2 o más pares de ciudades, probablemente son múltiples rutas
-            if (count($matchesCiudades) >= 2) {
+            $matchesCiudades = $matchesOD;
+        } elseif (preg_match_all($patronCiudadACiudad, $text, $matchesCA, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            Log::info('🔍 Formato "de X a Y" detectado', [
+                'cantidad' => count($matchesCA),
+                'pares' => array_map(function($m) { 
+                    return $m[1][0] . ' → ' . $m[2][0]; 
+                }, $matchesCA)
+            ]);
+            $matchesCiudades = $matchesCA;
+        }
+        
+        if (!empty($matchesCiudades)) {
+            // Si encontramos 1 o más pares de ciudades
+            if (count($matchesCiudades) >= 1) {
                 $rutasDetectadas = [];
                 
                 // 🆕 DETECCIÓN DE TARA GLOBAL: Si "agrega tara" está al INICIO del prompt (antes de especificar rutas),
@@ -4540,45 +4612,45 @@ class MCPAssistantService
                         $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]) * 1000;
                     }
                     
-                    // Extraer producto del contextoDespues PRIMERO
-                    // 🔧 MEJORADO: Regex más robusto con múltiples terminadores comunes
-                    // 🔧 OPTIMIZADO: Capturar solo 1-2 palabras para evitar contaminar con ciudades siguientes
-                    // 🔧 FIX: Permitir espacios antes del fin de línea con \s*$
-                    if (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,1})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+empaquetad|\s+y\s+|\s+\d+|\s+[A-Z][a-z]+\s+a\s+|\s*$)/ui', $contextoDespues, $prodMatch)) {
-                        $productoRaw = trim($prodMatch[1]);
-                        // Limpiar palabras no relevantes
-                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante', 'bultos', 'sacos', 'cajas'];
-                        $palabras = explode(' ', strtolower($productoRaw));
-                        $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
-                            return !in_array($p, $excluir);
-                        });
-                        $productoLimpio = implode(' ', $palabrasLimpias);
-                        
-                        if (strlen($productoLimpio) >= 3) {
-                            // 🔧 Normalizar acentos para consistencia
-                            $productoLimpio = self::removeAccents($productoLimpio);
-                            $routeData['producto'] = strtoupper(trim($productoLimpio));
-                            Log::info("📦 Producto extraído de contextoDespues (Ruta #{$routeData['ruta_numero']})", [
-                                'raw' => $productoRaw,
-                                'limpio' => $routeData['producto'],
-                                'contexto' => substr($contextoDespues, 0, 100)
+                    // 🔧 CRÍTICO: Usar extractProducto() para distinguir correctamente producto de embalaje
+                    // Buscar en el contextoDespues PRIMERO (datos específicos de esta ruta)
+                    $productoExtraido = self::extractProducto($contextoDespues);
+                    if ($productoExtraido) {
+                        $routeData['producto'] = $productoExtraido;
+                        Log::info("📦 Producto extraído de contextoDespues (Ruta #{$routeData['ruta_numero']})", [
+                            'producto' => $productoExtraido,
+                            'contexto' => substr($contextoDespues, 0, 150)
+                        ]);
+                    }
+                    // Si no se encuentra producto después, buscar antes (fallback)
+                    elseif ($contextoAntes) {
+                        $productoExtraido = self::extractProducto($contextoAntes);
+                        if ($productoExtraido) {
+                            $routeData['producto'] = $productoExtraido;
+                            Log::info("📦 Producto extraído de contextoAntes (Ruta #{$routeData['ruta_numero']})", [
+                                'producto' => $productoExtraido,
+                                'contexto' => substr($contextoAntes, 0, 150)
                             ]);
                         }
                     }
-                    // Si no se encuentra producto después, buscar antes (fallback)
-                    elseif (preg_match('/(?:de|producto:?)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})(?:\s*[,.]|\s+en\s+|\s+son\s+|\s+valor|\s+veh[ií]culo|\s+NOTA|\s+\d+|$)/ui', $contextoAntes, $prodMatch)) {
-                        $productoRaw = trim($prodMatch[1]);
-                        $excluir = ['toneladas', 'ton', 'kg', 'kilos', 'unidades', 'nota', 'importante', 'bultos', 'sacos', 'cajas'];
-                        $palabras = explode(' ', strtolower($productoRaw));
-                        $palabrasLimpias = array_filter($palabras, function($p) use ($excluir) {
-                            return !in_array($p, $excluir);
-                        });
-                        $productoLimpio = implode(' ', $palabrasLimpias);
-                        
-                        if (strlen($productoLimpio) >= 3) {
-                            // 🔧 Normalizar acentos para consistencia
-                            $productoLimpio = self::removeAccents($productoLimpio);
-                            $routeData['producto'] = strtoupper(trim($productoLimpio));
+                    
+                    // Extraer valor declarado del contextoDespues
+                    $valorExtraido = self::extractValorDeclarado($contextoDespues);
+                    if ($valorExtraido) {
+                        $routeData['valor_declarado'] = $valorExtraido;
+                        Log::info("💰 Valor declarado extraído (Ruta #{$routeData['ruta_numero']})", [
+                            'valor' => $valorExtraido,
+                            'contexto' => substr($contextoDespues, 0, 150)
+                        ]);
+                    }
+                    // Si no se encuentra valor después, buscar antes (fallback)
+                    elseif ($contextoAntes) {
+                        $valorExtraido = self::extractValorDeclarado($contextoAntes);
+                        if ($valorExtraido) {
+                            $routeData['valor_declarado'] = $valorExtraido;
+                            Log::info("💰 Valor declarado extraído del contextoAntes (Ruta #{$routeData['ruta_numero']})", [
+                                'valor' => $valorExtraido
+                            ]);
                         }
                     }
                     
@@ -4679,8 +4751,8 @@ class MCPAssistantService
                     ]);
                 }
                 
-                if (count($rutasDetectadas) >= 2) {
-                    Log::info('✅ Múltiples rutas detectadas por pares ciudad-ciudad', ['total' => count($rutasDetectadas)]);
+                if (count($rutasDetectadas) >= 1) {
+                    Log::info('✅ Ruta(s) detectada(s) por pares ciudad-ciudad', ['total' => count($rutasDetectadas)]);
                     return $rutasDetectadas;
                 }
             }
@@ -6633,6 +6705,19 @@ class MCPAssistantService
      */
     private static function detectMultipleRouteCities($mensaje)
     {
+        // 🔧 FIX 11: NO procesar si detectamos formato estructurado "Origen: X, Destino: Y" con UNA sola ruta
+        // Este formato debe ser manejado por detectMultipleRoutes() en lugar de esta función
+        $patronOrigenDestinoEstructurado = '/\bOrigen:\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})\s*,\s*Destino:\s*([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui';
+        if (preg_match_all($patronOrigenDestinoEstructurado, $mensaje, $matchesEstructurado)) {
+            $countEstructurado = count($matchesEstructurado[0]);
+            Log::info('🚫 detectMultipleRouteCities: Formato estructurado detectado, saltando procesamiento', [
+                'coincidencias' => $countEstructurado,
+                'formato' => 'Origen: X, Destino: Y'
+            ]);
+            // Retornar null para que NO se procese como múltiples ciudades
+            return null;
+        }
+        
         $origenes = [];
         $destinos = [];
         
@@ -6923,6 +7008,29 @@ class MCPAssistantService
      */
     private static function extractProducto($text)
     {
+        // 🆕 PATRÓN MUY PRIORITARIO: "productos electrónicos (televisores)" o "X cajas de televisores"
+        // Detectar productos específicos mencionados en paréntesis o como detalle principal
+        if (preg_match('/(?:productos?\s+electr[óo]nicos?|electr[óo]nicos?)\s*\(([a-záéíóúñ\s]+)\)/ui', $text, $matches)) {
+            $producto = trim($matches[1]);
+            Log::info('📦 Producto detectado (patrón "productos electrónicos (X)")', ['producto' => $producto]);
+            return strtoupper($producto);
+        }
+        
+        // 🆕 PATRÓN: "N cajas/palets de PRODUCTO" (donde PRODUCTO es el bien, no el material del empaque)
+        // Ejemplo: "10 cajas de televisores" → Producto: TELEVISORES, NO "CAJAS" o "CARTÓN"
+        // Ejemplo: "5 palets de mercancía variada" → Producto: MERCANCIA VARIADA
+        if (preg_match('/(?:\d+\s+)?(?:cajas?|bultos?|paquetes?|palets?|pallets?)\s+de\s+([a-záéíóúñ\s]+?)(?:\s*,|\s+embalaje|\s+valor|\s+necesito|\s+y\s+|$)/ui', $text, $matches)) {
+            $producto = trim($matches[1]);
+            // Eliminar materiales de empaque que se hayan capturado
+            $producto = preg_replace('/\b(?:cart[oó]n|madera|pl[aá]stico|metal)\b/ui', '', $producto);
+            $producto = trim($producto);
+            
+            if (strlen($producto) > 2 && strlen($producto) < 100) {
+                Log::info('📦 Producto detectado (patrón "X cajas/palets de PRODUCTO")', ['producto' => $producto]);
+                return strtoupper($producto);
+            }
+        }
+        
         // 🆕 Patrón ALTA PRIORIDAD: "N toneladas/kg de PRODUCTO"
         // Ejemplo: "20 toneladas de papa", "500 kg de arroz"
         if (preg_match('/(?:\d+\s+)?(?:toneladas?|kg|kilos?)\s+de\s+([a-záéíóúñ\s]+?)(?:\s+(?:veh[ií]culo|empaque|cantidad)|$)/ui', $text, $matches)) {
@@ -7125,6 +7233,25 @@ class MCPAssistantService
      */
     private static function extractValorDeclarado($text)
     {
+        // 🆕 PATRÓN PRIORITARIO: "$10,000,000 COP" o "$10.000.000 COP" (formato con separadores + moneda)
+        // Ejemplo: "valor declarado de $10,000,000 COP" o "un valor declarado de $5,000,000 COP"
+        if (preg_match('/(?:valor\s+declarado|valor)\s+(?:de\s+)?\$\s*([\d.,]+)\s*(?:cop|pesos?)/ui', $text, $matches)) {
+            $valorStr = $matches[1];
+            $valor = (float)str_replace(['.', ','], '', $valorStr);
+            Log::info('💰 Valor en COP detectado (patrón "valor declarado de $X COP")', ['cop' => $valor, 'raw' => $valorStr]);
+            return (int)$valor;
+        }
+        
+        // 🆕 PATRÓN: "$10,000,000 COP" (sin mencionar "valor declarado")
+        if (preg_match('/\$\s*([\d.,]+)\s*(?:cop|pesos?)/ui', $text, $matches)) {
+            $valorStr = $matches[1];
+            $valor = (float)str_replace(['.', ','], '', $valorStr);
+            if ($valor >= 1000) { // Mínimo 1,000 para evitar falsos positivos
+                Log::info('💰 Valor en COP detectado (patrón "$X COP")', ['cop' => $valor, 'raw' => $valorStr]);
+                return (int)$valor;
+            }
+        }
+        
         // 🆕 Patrón: "Valor mercancía: USD 72.000" (USD primero, luego número)
         // Ejemplo: "Valor mercancía: USD 72.000"
         if (preg_match('/(?:valor\s+(?:de\s+la\s+)?(?:mercancía|mercancia))\s*:\s*(?:usd|dolar(?:es)?)\s*([\d.,]+)/ui', $text, $matches)) {
@@ -7613,14 +7740,15 @@ class MCPAssistantService
         // 🚚 PASO 1: DETECTAR MÚLTIPLES RUTAS (usando texto combinado si aplica)
         $detectedRoutes = self::detectMultipleRoutes($combinedText);
 
-        if (count($detectedRoutes) >= 2) {
-            // Caso especial: múltiples rutas
-            Log::info('🎯 PROCESANDO MÚLTIPLES RUTAS', ['total' => count($detectedRoutes)]);
+        // 🔧 FIX: Si detectamos rutas explícitas (1 o más), procesarlas directamente
+        // Esto incluye formatos "Origen: X, Destino: Y" que ahora detectamos
+        if (!empty($detectedRoutes) && count($detectedRoutes) >= 1) {
+            Log::info('🎯 PROCESANDO RUTA(S) DETECTADA(S)', ['total' => count($detectedRoutes)]);
             return self::processMultipleRoutes($detectedRoutes, $combinedText, $lowerLastText);
         }
 
-        // 🔄 FLUJO NORMAL: Una sola ruta - extraer SOLO del último mensaje
-        Log::info('📦 Procesando ruta única desde ÚLTIMO mensaje');
+        // 🔄 FLUJO NORMAL: No se detectaron rutas explícitas - extraer con lógica genérica
+        Log::info('📦 Procesando ruta única desde ÚLTIMO mensaje (sin patrón explícito)');
         return self::extractSingleRouteData($combinedText, $lowerLastText);
     }
 
@@ -7838,6 +7966,55 @@ Cuando el usuario proporciona información PARCIAL o ADICIONAL:
 4. NUNCA vuelvas a pedir lo que YA tienes
 5. Si el usuario dice "cantidad 60", actualiza cantidad = 60
 6. Si el usuario dice "valor 10 millones", actualiza valor_declarado = 10000000
+
+💰 RECONOCIMIENTO DE VALOR DECLARADO (CRÍTICO):
+El usuario puede dar el valor en MÚLTIPLES FORMATOS. DEBES reconocerlos TODOS:
+✅ "$10,000,000 COP" → valor_declarado = 10000000
+✅ "$10.000.000" → valor_declarado = 10000000
+✅ "10 millones de pesos" → valor_declarado = 10000000
+✅ "valor declarado de $5,000,000 COP" → valor_declarado = 5000000
+✅ "un valor declarado de $10,000,000 COP" → valor_declarado = 10000000
+✅ "5 millones COP" → valor_declarado = 5000000
+✅ "valor de 10000000" → valor_declarado = 10000000
+
+⚠️ IMPORTANTE: 
+- El formato "$X,XXX,XXX COP" o "$X.XXX.XXX" es muy común en Colombia
+- Las comas (,) y puntos (.) se usan como separadores de miles
+- "COP" significa pesos colombianos
+- "millones" = multiplicar por 1,000,000
+
+EJEMPLOS DE EXTRACCIÓN:
+Usuario: "con un valor declarado de $10,000,000 COP"
+Tú extraes: valor_declarado = 10000000
+
+Usuario: "valor de 5.5 millones"
+Tú extraes: valor_declarado = 5500000
+
+Usuario: "declarado $3.200.000"
+Tú extraes: valor_declarado = 3200000
+
+📦 RECONOCIMIENTO DE PRODUCTOS (CRÍTICO):
+El usuario puede mencionar productos dentro de descripciones. DEBES extraer SOLO el producto:
+✅ "10 cajas de productos electrónicos (televisores)" → producto = TELEVISORES
+✅ "televisores embalados en cajas de cartón" → producto = TELEVISORES
+✅ "30 sacos de café" → producto = CAFÉ
+✅ "arroz en bultos" → producto = ARROZ
+❌ "cajas de cartón" → producto NO debe ser CARTON (el cartón es el embalaje)
+❌ "embalaje en madera" → producto NO debe ser MADERA (madera es el embalaje)
+
+⚠️ REGLA: Si el texto dice "X cajas/sacos/bultos de PRODUCTO", el producto es PRODUCTO, NO el empaque.
+⚠️ REGLA: Si el texto dice "productos (NOMBRE)", el producto es NOMBRE.
+⚠️ REGLA: Filtrar palabras de embalaje: cartón, madera, plástico, papel, cajas, sacos, bultos.
+
+EJEMPLOS DE EXTRACCIÓN:
+Usuario: "10 cajas de productos electrónicos (televisores), embalaje en cajas de cartón"
+Tú extraes: producto = TELEVISORES, empaque = CAJAS
+
+Usuario: "mercancía variada en sacos"
+Tú extraes: producto = MERCANCIA VARIADA, empaque = SACOS
+
+Usuario: "café colombiano en bultos de 60 kg"
+Tú extraes: producto = CAFÉ, empaque = BULTOS
 
 � AJUSTES Y CORRECCIONES (CRÍTICO):
 🚨 DETECTAR SI ES EDICIÓN vs CREACIÓN 🚨
