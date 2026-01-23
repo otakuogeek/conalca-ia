@@ -164,14 +164,15 @@ class TextPreprocessorService
      * Palabras que se escriben mal comúnmente (speech-to-text)
      */
     private static array $commonMistakes = [
-        // "la je" = "laje" mal separado, probablemente intento de "en las" o similar
-        'la je' => '',
-        'laje' => '',
-        // Embalaje mal escrito
+        // 🔧 FIX: Embalaje debe corregirse ANTES de eliminar "la je"
+        // "embala je" → "embalaje" PRIMERO
         'embala je' => 'embalaje',
         'embalage' => 'embalaje',
         'enbalaje' => 'embalaje',
         'embalages' => 'embalajes',
+        // 🔧 FIX BUG #530: "laje" eliminado porque causaba que "embalaje" → "emba"
+        // La palabra "laje" se eliminaba de "embalaje", dejando solo "emba"
+        // SOLUCIÓN: NO eliminar "laje" automáticamente
         // Contenedor mal escrito
         'contenedro' => 'contenedor',
         'contenedo' => 'contenedor',
@@ -353,6 +354,30 @@ class TextPreprocessorService
     {
         $textLower = mb_strtolower($text);
         
+        // 🔧 FIX BUG #530: Palabras protegidas que NO deben separarse
+        // Estas palabras contienen substrings que podrían coincidir con keywords
+        // pero deben mantenerse intactas
+        $protectedWords = [
+            'embalaje',
+            'embalajes',
+            'embalada',
+            'embaladas',
+            'embalado',
+            'embalados',
+        ];
+        
+        // Marcar palabras protegidas con placeholders temporales
+        $placeholders = [];
+        foreach ($protectedWords as $i => $word) {
+            $placeholder = "___PROTECTED_{$i}___";
+            // Buscar la palabra completa (case insensitive)
+            $pattern = '/\b' . preg_quote($word, '/') . '\b/ui';
+            if (preg_match($pattern, $text, $matches)) {
+                $placeholders[$placeholder] = $matches[0]; // Guardar con mayúsculas/minúsculas originales
+                $text = preg_replace($pattern, $placeholder, $text);
+            }
+        }
+        
         // Ordenar keywords por longitud descendente para evitar conflictos
         $keywords = self::$keywordsThatNeedSpace;
         uksort($keywords, function($a, $b) {
@@ -369,6 +394,11 @@ class TextPreprocessorService
                 $after = $matches[3] ?? '';
                 return $before . $replacement . $after;
             }, $text);
+        }
+        
+        // Restaurar palabras protegidas
+        foreach ($placeholders as $placeholder => $original) {
+            $text = str_replace($placeholder, $original, $text);
         }
         
         return $text;

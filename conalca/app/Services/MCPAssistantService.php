@@ -554,9 +554,108 @@ class MCPAssistantService
                 'total_rutas' => count($multipleRoutes['origenes']) * count($multipleRoutes['destinos'])
             ]);
             
-            // 🆕 EXTRAER DATOS COMUNES del mensaje que se aplicarán a TODAS las rutas
+            // 🆕 EXTRAER DATOS COMUNES O ESPECÍFICOS según el patrón detectado
             $fullText = $lastUserMessageForEdit;
             $datosComunes = [];
+            
+            // 🔧 FIX BUG #545: Si es patrón "Todo llega a DESTINO: desde X... desde Y...", 
+            // dividir texto en segmentos y extraer datos específicos por ruta
+            $esPatronDestinoComun = isset($multipleRoutes['_patron']) && $multipleRoutes['_patron'] === 'destino_comun';
+            $datosEspecificosPorRuta = [];
+            
+            if ($esPatronDestinoComun && isset($multipleRoutes['_segmentos'])) {
+                // Procesar cada segmento individualmente
+                Log::info('🔧 Procesando segmentos específicos por origen', [
+                    'total_segmentos' => count($multipleRoutes['_segmentos'])
+                ]);
+                
+                foreach ($multipleRoutes['_segmentos'] as $origen => $segmento) {
+                    $datos = [];
+                    
+                    // Extraer datos específicos de este segmento
+                    $peso = self::extractPeso($segmento);
+                    if ($peso) {
+                        $datos['peso_mercancia'] = $peso;
+                        $datos['pesoMercancia'] = $peso;
+                    }
+                    
+                    $producto = self::extractProducto($segmento);
+                    if ($producto) {
+                        $datos['producto'] = $producto;
+                        $datos['tipo_producto'] = $producto;
+                    }
+                    
+                    $valor = self::extractValorDeclarado($segmento);
+                    if ($valor) {
+                        $datos['valor_declarado'] = $valor;
+                        $datos['valorMercancia'] = $valor;
+                    }
+                    
+                    $cantidad = self::extractCantidad($segmento);
+                    if ($cantidad) {
+                        $datos['cantidad'] = $cantidad;
+                        $datos['cantidadMercancia'] = $cantidad;
+                    }
+                    
+                    // Procesar tara si está mencionada
+                    if ($peso) {
+                        $mencionaTara = preg_match('/\btara\b/ui', $segmento);
+                        $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $segmento);
+                        $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara/ui', $segmento);
+                        
+                        if ($noIncluyeTara) {
+                            $taraEstandar = 3400;
+                            $datos['peso_mercancia'] = $peso + $taraEstandar;
+                            $datos['pesoMercancia'] = $peso + $taraEstandar;
+                            $datos['peso_bruto'] = $peso;
+                            $datos['tara'] = $taraEstandar;
+                            $datos['incluye_tara'] = true;
+                        } elseif ($incluyeTara) {
+                            $datos['incluye_tara'] = true;
+                        } elseif (!$mencionaTara) {
+                            $taraCalculada = max(round($peso * 0.10), 3400);
+                            $datos['peso_mercancia'] = $peso + $taraCalculada;
+                            $datos['pesoMercancia'] = $peso + $taraCalculada;
+                            $datos['peso_bruto'] = $peso;
+                            $datos['tara'] = $taraCalculada;
+                            $datos['incluye_tara'] = true;
+                        }
+                    }
+                    
+                    $datosEspecificosPorRuta[$origen] = $datos;
+                    
+                    Log::info('📋 Datos específicos extraídos para origen', [
+                        'origen' => $origen,
+                        'peso' => $datos['peso_mercancia'] ?? 'N/A',
+                        'producto' => $datos['producto'] ?? 'N/A',
+                        'valor' => $datos['valor_declarado'] ?? 'N/A',
+                        'cantidad' => $datos['cantidad'] ?? 'N/A'
+                    ]);
+                }
+                
+                // Extraer datos que SÍ son comunes (vehículo, empaque si no está en segmentos)
+                $vehiculo = self::extractVehiculo($fullText);
+                if ($vehiculo) {
+                    $datosComunes['vehiculo'] = $vehiculo;
+                    $datosComunes['claseVehiculo'] = $vehiculo;
+                    Log::info('🚛 Vehículo común detectado', ['vehiculo' => $vehiculo]);
+                }
+                
+                $empaque = self::extractEmpaque($fullText);
+                if ($empaque) {
+                    if (is_array($empaque)) {
+                        $datosComunes['empaque'] = $empaque['empaque'];
+                        $datosComunes['tipo_embalaje'] = $empaque['empaque'];
+                        $datosComunes['empaque_id'] = $empaque['empaque_id'];
+                    } else {
+                        $datosComunes['empaque'] = $empaque;
+                        $datosComunes['tipo_embalaje'] = $empaque;
+                    }
+                    Log::info('📦 Empaque común detectado', ['empaque' => $datosComunes['empaque']]);
+                }
+                
+            } else {
+                // Lógica original: extraer datos comunes del texto completo
             
             // Extraer peso
             $peso = self::extractPeso($fullText);
@@ -672,10 +771,19 @@ class MCPAssistantService
                 Log::info('💰 Valor común para todas las rutas', ['valor' => $valor]);
             }
             
+            } // Fin del else (lógica original)
+            
             // Generar todas las combinaciones de rutas (producto cartesiano)
             $rutasGeneradas = [];
             foreach ($multipleRoutes['origenes'] as $origen) {
                 foreach ($multipleRoutes['destinos'] as $destino) {
+                    // 🔧 FIX BUG #545: Usar datos específicos si están disponibles
+                    $datosRuta = $datosComunes;
+                    if (!empty($datosEspecificosPorRuta) && isset($datosEspecificosPorRuta[$origen])) {
+                        // Mergear datos específicos sobre los comunes
+                        $datosRuta = array_merge($datosComunes, $datosEspecificosPorRuta[$origen]);
+                    }
+                    
                     $rutasGeneradas[] = array_merge([
                         'origen' => $origen,
                         'ciudad_origen' => $origen,
@@ -684,13 +792,14 @@ class MCPAssistantService
                         'ciudad_destino' => $destino,
                         'ciudadDestino' => $destino,
                         'ruta_numero' => count($rutasGeneradas) + 1
-                    ], $datosComunes); // 🔥 Aplicar datos comunes a TODAS las rutas
+                    ], $datosRuta); // 🔥 Aplicar datos específicos o comunes
                 }
             }
             
-            Log::info('✅ Rutas generadas con datos comunes', [
+            Log::info('✅ Rutas generadas con datos específicos por origen', [
                 'total_rutas' => count($rutasGeneradas),
-                'datos_comunes' => $datosComunes,
+                'usa_datos_especificos' => !empty($datosEspecificosPorRuta),
+                'datos_comunes' => array_keys($datosComunes),
                 'primera_ruta' => $rutasGeneradas[0] ?? null
             ]);
             
@@ -810,46 +919,63 @@ class MCPAssistantService
         // Mensajes largos como correos de solicitud NO deben procesarse como edición simple
         $esEdicionSimpleHabilitada = strlen($lastUserMessageForEdit) < 150;
         
-        // 🆕🆕 DETECCIÓN DE MÚLTIPLES CAMPOS: Si el mensaje contiene comas, detectar todos los campos a la vez
+        // 🆕🆕 DETECCIÓN DE MÚLTIPLES CAMPOS: Si el mensaje contiene comas O múltiples palabras clave de campo
         $camposMultiples = [];
         $esEdicionMultiple = false;
-        if ($esEdicionSimpleHabilitada && strpos($lastUserMessageForEdit, ',') !== false) {
-            Log::info('🔍 Detectando MÚLTIPLES CAMPOS en mensaje con comas');
+        
+        // 🔧 FIX BUG #537: Detectar múltiples campos incluso SIN comas
+        // Contar cuántas palabras clave de campo aparecen en el mensaje
+        $camposClave = ['origen', 'destino', 'producto', 'peso', 'cantidad', 'valor', 'empaque', 'embalaje', 'veh[ií]culo'];
+        $cantidadCamposEnMensaje = 0;
+        foreach ($camposClave as $clave) {
+            if (preg_match('/\b' . $clave . '\b/ui', $lastUserMessageForEdit)) {
+                $cantidadCamposEnMensaje++;
+            }
+        }
+        
+        // Si hay 2+ campos en el mensaje (con o sin comas), procesar como edición múltiple
+        if ($esEdicionSimpleHabilitada && ($cantidadCamposEnMensaje >= 2 || strpos($lastUserMessageForEdit, ',') !== false)) {
+            Log::info('🔍 Detectando MÚLTIPLES CAMPOS', [
+                'tiene_comas' => strpos($lastUserMessageForEdit, ',') !== false,
+                'cantidad_campos' => $cantidadCamposEnMensaje
+            ]);
             
             // Detectar ORIGEN (con o sin conectores)
-            if (preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            // 🔧 FIX BUG #537: Detener captura al encontrar otro campo
+            if (preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $camposMultiples['origen'] = self::normalizeCityName(trim($m[1]));
-            } elseif (preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $camposMultiples['origen'] = self::normalizeCityName(trim($m[1]));
-            } elseif (preg_match('/(?:el\s+)?origen\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?origen\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 // Sin conector: "origen cali,"
                 $camposMultiples['origen'] = self::normalizeCityName(trim($m[1]));
             }
             
             // Detectar DESTINO (con o sin conectores)
-            if (preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            if (preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $camposMultiples['destino'] = self::normalizeCityName(trim($m[1]));
-            } elseif (preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $camposMultiples['destino'] = self::normalizeCityName(trim($m[1]));
-            } elseif (preg_match('/(?:el\s+)?destino\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?destino\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 // Sin conector: "destino medellin,"
                 $camposMultiples['destino'] = self::normalizeCityName(trim($m[1]));
             }
             
             // Detectar VEHÍCULO (con o sin conectores)
-            if (preg_match('/(?:el\s+)?veh[ií]culo\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            if (preg_match('/(?:el\s+)?veh[ií]culo\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen|destino)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $vehiculoRaw = trim($m[1]);
                 $camposMultiples['vehiculo'] = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
-            } elseif (preg_match('/(?:el\s+)?veh[ií]culo\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?veh[ií]culo\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen|destino)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 // Sin conector: "vehiculo turbo,"
                 $vehiculoRaw = trim($m[1]);
                 $camposMultiples['vehiculo'] = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
             }
             
             // Detectar PRODUCTO (con o sin conectores)
-            if (preg_match('/(?:el\s+)?producto\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            // 🔧 FIX BUG #537: Detener captura al encontrar otro campo
+            if (preg_match('/(?:el\s+)?producto\s*(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:origen|destino|peso|cantidad|valor|emba|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $camposMultiples['producto'] = strtoupper(trim($m[1]));
-            } elseif (preg_match('/(?:el\s+)?producto\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            } elseif (preg_match('/(?:el\s+)?producto\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:origen|destino|peso|cantidad|valor|emba|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 // Sin conector: "producto tomate,"
                 $camposMultiples['producto'] = strtoupper(trim($m[1]));
             }
@@ -895,7 +1021,8 @@ class MCPAssistantService
             }
             
             // Detectar EMBALAJE/EMPAQUE (con o sin conectores)
-            if (preg_match('/(?:el\s+)?(?:embalaje|empaque)\s+([a-záéíóúñ\s]+?)(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+            // 🔧 FIX BUG #537: Detener captura al encontrar otro campo
+            if (preg_match('/(?:el\s+)?(?:embalaje|empaque)\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|origen|destino|veh)|[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 $embalaje = strtoupper(trim($m[1]));
                 $camposMultiples['empaque'] = $embalaje;
             }
@@ -1073,37 +1200,38 @@ class MCPAssistantService
         // Patrones para AGREGAR/CAMBIAR valores (solo en mensajes cortos)
         // 🔧 FIX: Priorizar "origen" completo sobre "orig" para evitar que "origen es" se divida como "orig en es"
         // 🔧 FIX CRÍTICO: El conector debe ser NO-CAPTURADO para que "origen es barranquilla" capture SOLO "barranquilla"
-        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        // 🔧 FIX BUG #537: Detener captura al encontrar otro campo (el producto, el peso, el empaque, etc.)
+        elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?origen\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 PRIORIDAD: "origen es barranquilla" → captura "barranquilla" (NO incluye "es")
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?orig\s+en\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 SECUNDARIO: "orig en barranquilla" (abreviación + "en" como conector)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?origen\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?origen\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 "cambia origen a cali" (palabra completa)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?orig\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?orig\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|destino)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchOrigen)) {
             // 🆕 NUEVO: "cambia origen a cali" o "modifica el origen a medellín"
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'origen';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchOrigen[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?destino\s+(?:' . $palabrasAgregar . ')\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
             // 🆕 PRIORIDAD: "destino es cali" → captura "cali" (NO incluye "es")
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?dest\s+en\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
             // 🆕 SECUNDARIO: "dest en barranquilla" (abreviación + "en" como conector)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
             $valorEditadoTemprano = self::normalizeCityName(trim($matchDestino[1]));
-        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?destino\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s*[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?destino\s*(?:a|por)?\s+([a-záéíóúñ\s]+?)(?:\s+(?:el|la)\s+(?:producto|peso|cantidad|valor|emba|origen)|[.,;]|$)/ui', $lastUserMessageForEdit, $matchDestino)) {
             // 🆕 "cambia destino a cali" (palabra completa)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'destino';
@@ -6567,6 +6695,75 @@ class MCPAssistantService
      * 🆕 NORMALIZAR NOMBRE DE CIUDAD
      * Convierte a formato estándar compatible con BD
      */
+    /**
+     * 🔧 FIX BUG #534: Valida si un fragmento de texto es una ciudad válida
+     * Filtra falsos positivos como números, verbos, palabras clave, etc.
+     * 
+     * @param string $fragment Fragmento a validar
+     * @return bool True si parece ser una ciudad válida
+     */
+    private static function isValidCityFragment($fragment)
+    {
+        $fragment = trim($fragment);
+        
+        // Filtro 1: Rechazar fragmentos vacíos o muy largos
+        if (empty($fragment) || strlen($fragment) > 50) {
+            return false;
+        }
+        
+        // Filtro 2: Rechazar si contiene números grandes (peso, valor, pies, etc.)
+        // Permitir códigos postales o números pequeños en nombres de ciudad
+        if (preg_match('/\b\d{2,}\b/', $fragment)) {
+            return false;
+        }
+        
+        // Filtro 3: Rechazar palabras clave que NO son ciudades
+        $keywordsNoCity = [
+            'pies', 'pie', 'contenedor', 'kg', 'kilogramos', 'toneladas', 'ton',
+            'valor', 'declarado', 'millones', 'millon', 'mil',
+            'sale', 'llega', 'desde', 'hasta', 'hacia',
+            'empaque', 'embalaje', 'guacales', 'cajas', 'bultos',
+            'exportacion', 'importacion', 'nacional', 'internacional',
+            'unidades', 'cantidad', 'total', 'todo',
+            'maquinaria', 'producto', 'mercancia',
+            'des de', 'des', // "des de" separado por TextPreprocessor
+        ];
+        
+        $fragmentLower = mb_strtolower($fragment);
+        foreach ($keywordsNoCity as $keyword) {
+            if (strpos($fragmentLower, $keyword) !== false) {
+                Log::info('🚫 isValidCityFragment: Rechazado por keyword', [
+                    'fragment' => $fragment,
+                    'keyword_found' => $keyword
+                ]);
+                return false;
+            }
+        }
+        
+        // Filtro 4: Rechazar verbos comunes
+        $verbos = ['llega', 'sale', 'va', 'viene', 'es', 'son', 'será'];
+        if (in_array($fragmentLower, $verbos)) {
+            return false;
+        }
+        
+        // Filtro 5: Rechazar si tiene más de 3 palabras (probablemente es una frase, no ciudad)
+        if (str_word_count($fragment) > 3) {
+            Log::info('🚫 isValidCityFragment: Rechazado por muchas palabras', [
+                'fragment' => $fragment,
+                'word_count' => str_word_count($fragment)
+            ]);
+            return false;
+        }
+        
+        // Filtro 6: Rechazar si contiene ":" (formato estructurado)
+        if (strpos($fragment, ':') !== false) {
+            return false;
+        }
+        
+        // ✅ Si pasó todos los filtros, probablemente es una ciudad
+        return true;
+    }
+
     private static function normalizeCityName($cityName)
     {
         // 🔥 POST-PROCESAMIENTO: Eliminar prefijos "importacion", "exportacion", "cotizacion"
@@ -6721,6 +6918,64 @@ class MCPAssistantService
         $origenes = [];
         $destinos = [];
         
+        // 🆕 Patrón 0: "Todo llega a DESTINO: desde/de ORIGEN1... y desde/de ORIGEN2..."
+        // Ejemplo: "Todo llega a Buenaventura: desde Pereira van... y desde Manizales salen..."
+        // 🔧 FIX BUG #542: Detectar múltiples orígenes con destino común al inicio
+        if (preg_match('/(?:todo|todos?)\s+(?:llega|llegan|va|van)\s+(?:a|hacia)\s+([a-záéíóúñ\s]+?):\s*(.+)/ui', $mensaje, $mDestino)) {
+            $destinoComun = trim($mDestino[1]);
+            $restoTexto = $mDestino[2];
+            
+            // Buscar múltiples orígenes en el resto del texto
+            // Patrón: "desde CIUDAD" o "des de CIUDAD" (NO solo "de" para evitar "de productos", "de equipos")
+            // 🔧 FIX BUG #543: Cambiar patrón para NO capturar "de PRODUCTO" 
+            if (preg_match_all('/(?:desde|des\s+de)\s+([a-záéíóúñ]+)/ui', $restoTexto, $mOrigenes, PREG_OFFSET_CAPTURE)) {
+                $origenesDetectados = [];
+                $segmentosPorOrigen = []; // 🆕 Guardar texto específico de cada origen
+                
+                foreach ($mOrigenes[1] as $index => $match) {
+                    $ciudad = trim($match[0]);
+                    $posicionInicio = $match[1];
+                    
+                    // Determinar fin del segmento (hasta el próximo "desde" o final del texto)
+                    $posicionFin = strlen($restoTexto);
+                    if (isset($mOrigenes[1][$index + 1])) {
+                        // Hay otro origen después, terminar antes de ese
+                        $posicionFin = $mOrigenes[0][$index + 1][1];
+                    }
+                    
+                    // Extraer segmento de texto para este origen
+                    $segmento = substr($restoTexto, $mOrigenes[0][$index][1], $posicionFin - $mOrigenes[0][$index][1]);
+                    
+                    if (self::isValidCityFragment($ciudad)) {
+                        $ciudadNormalizada = self::normalizeCityName($ciudad);
+                        $origenesDetectados[] = $ciudadNormalizada;
+                        $segmentosPorOrigen[$ciudadNormalizada] = trim($segmento);
+                    }
+                }
+                
+                // Validar destino
+                if (self::isValidCityFragment($destinoComun)) {
+                    $destinoNormalizado = self::normalizeCityName($destinoComun);
+                    
+                    if (count($origenesDetectados) >= 2 && $destinoNormalizado) {
+                        Log::info('🌍 Múltiples ciudades detectadas (patrón 0 - Todo llega a DESTINO)', [
+                            'origenes' => $origenesDetectados,
+                            'destino' => $destinoNormalizado,
+                            'total_rutas' => count($origenesDetectados),
+                            'segmentos_capturados' => count($segmentosPorOrigen)
+                        ]);
+                        
+                        return [
+                            'origenes' => $origenesDetectados, 
+                            'destinos' => [$destinoNormalizado],
+                            '_patron' => 'destino_comun', // 🆕 Marcar el patrón usado
+                            '_segmentos' => $segmentosPorOrigen // 🆕 Texto específico por origen
+                        ];
+                    }
+                }
+            }
+        }
+        
         // Patrón 5: "Origen: CIUDAD1 y CIUDAD2" + "Ciudad: CIUDAD3" (formato email multi-línea)
         // Este patrón busca "Origen:" en una línea y "Ciudad:" en otra línea
         // 🔥 IMPORTANTE: Capturar SOLO hasta "Destino:" para evitar capturar direcciones
@@ -6766,6 +7021,25 @@ class MCPAssistantService
             }
         }
         
+        // Patrón 1.5: "sale desde X y llega a Y" (UNA sola ruta con verbos)
+        // 🔧 FIX BUG #534: Detectar patrón de ruta única con verbos "sale" y "llega"
+        // Este caso debe procesarse ANTES del patrón 2 para evitar falsos positivos
+        if (preg_match('/(?:sale|salgo|salir)\s+(?:de|desde)\s+([a-záéíóúñ\s]+?)\s+y\s+(?:llega|llegamos?|llegar)\s+(?:a|hacia)\s+([a-záéíóúñ\s]+?)(?:\s*[,;.]|$)/ui', $mensaje, $m)) {
+            $origen = self::normalizeCityName(trim($m[1]));
+            $destino = self::normalizeCityName(trim($m[2]));
+            
+            // Validar que sean ciudades válidas
+            if (self::isValidCityFragment($origen) && self::isValidCityFragment($destino)) {
+                Log::info('🚫 detectMultipleRouteCities: Patrón de ruta única detectado (sale/llega)', [
+                    'origen' => $origen,
+                    'destino' => $destino,
+                    'patron' => 'sale desde X y llega a Y'
+                ]);
+                // Retornar null para indicar que NO es multi-ruta
+                return null;
+            }
+        }
+        
         // Patrón 1: "origen CIUDAD1 y CIUDAD2 [y CIUDAD3...] a destino CIUDAD"
         // Captura múltiples orígenes separados por "y" o comas
         if (preg_match('/origen\s+(.+?)\s+(?:a|hacia)\s+destino\s+(.+?)(?:\s*[,;.]|$)/ui', $mensaje, $m)) {
@@ -6802,6 +7076,7 @@ class MCPAssistantService
         
         // Patrón 2: "de/desde CIUDAD1 y CIUDAD2 a/hacia CIUDAD3 [y CIUDAD4]"
         // 🚫 NO procesar si comienza con "cotización de" (es ruta individual)
+        // 🔧 FIX BUG #534: Filtrar falsos positivos (números, palabras clave no-ciudad)
         if (!preg_match('/^cotizaci[oó]n\s+de/ui', $mensaje) && 
             preg_match('/(?:de|desde)\s+(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s*[,;.]|$)/ui', $mensaje, $m)) {
             $origenesText = trim($m[1]);
@@ -6810,13 +7085,27 @@ class MCPAssistantService
             $origenes = preg_split('/\s*(?:y|,)\s*/ui', $origenesText);
             $destinos = preg_split('/\s*(?:y|,)\s*/ui', $destinosText);
             
+            // 🔧 FIX BUG #534: Filtrar fragmentos que NO son ciudades
             $origenes = array_map(function($ciudad) {
-                return self::normalizeCityName(trim($ciudad));
+                $ciudad = trim($ciudad);
+                // Filtrar falsos positivos
+                if (self::isValidCityFragment($ciudad)) {
+                    return self::normalizeCityName($ciudad);
+                }
+                return null;
             }, array_filter($origenes));
             
             $destinos = array_map(function($ciudad) {
-                return self::normalizeCityName(trim($ciudad));
+                $ciudad = trim($ciudad);
+                if (self::isValidCityFragment($ciudad)) {
+                    return self::normalizeCityName($ciudad);
+                }
+                return null;
             }, array_filter($destinos));
+            
+            // Eliminar valores null
+            $origenes = array_values(array_filter($origenes));
+            $destinos = array_values(array_filter($destinos));
             
             // Solo retornar si hay múltiples orígenes O múltiples destinos
             if (count($origenes) > 1 || count($destinos) > 1) {
@@ -6873,6 +7162,7 @@ class MCPAssistantService
         // Formato: CIUDAD1, CIUDAD2, CIUDAD3 a/hacia CIUDAD4
         // 🔥 IMPORTANTE: Capturar solo nombres de ciudades, detener en palabras clave
         // 🚫 NO procesar si comienza con "cotización de" (es ruta individual)
+        // 🔧 FIX BUG #534: Aplicar validación de fragmentos de ciudad
         if (!preg_match('/^cotizaci[oó]n\s+de/ui', $mensaje) && 
             preg_match('/^(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s+(?:son|es|será|de|vehículo|peso|cantidad|valor|producto|empaque|kg|ton|toneladas?|sacos?|cajas?|pallets?)|,\s*(?:son|es|vehículo)|$)/ui', $mensaje, $m)) {
             $origenesText = trim($m[1]);
@@ -6886,26 +7176,29 @@ class MCPAssistantService
                 $origenes = preg_split('/\s*(?:y|,)\s*/ui', $origenesText);
                 $destinos = preg_split('/\s*(?:y|,)\s*/ui', $destinosText);
                 
+                // 🔧 FIX BUG #534: Validar fragmentos antes de normalizar
                 $origenes = array_map(function($ciudad) {
                     $ciudad = trim($ciudad);
-                    return self::normalizeCityName($ciudad);
+                    if (self::isValidCityFragment($ciudad)) {
+                        return self::normalizeCityName($ciudad);
+                    }
+                    return null;
                 }, array_filter($origenes));
                 
                 $destinos = array_map(function($ciudad) {
                     $ciudad = trim($ciudad);
-                    return self::normalizeCityName($ciudad);
+                    if (self::isValidCityFragment($ciudad)) {
+                        return self::normalizeCityName($ciudad);
+                    }
+                    return null;
                 }, array_filter($destinos));
                 
-                // Validar que todas las ciudades sean válidas (nombres de al menos 3 caracteres)
-                $allValid = true;
-                foreach (array_merge($origenes, $destinos) as $ciudad) {
-                    if (strlen($ciudad) < 3) {
-                        $allValid = false;
-                        break;
-                    }
-                }
+                // 🔧 FIX BUG #534: Eliminar valores null y reindexar
+                $origenes = array_values(array_filter($origenes));
+                $destinos = array_values(array_filter($destinos));
                 
-                if ($allValid && (count($origenes) > 1 || count($destinos) > 1)) {
+                // Solo retornar si hay múltiples orígenes O múltiples destinos Y todos son válidos
+                if (count($origenes) > 1 || count($destinos) > 1) {
                     Log::info('🌍 Múltiples ciudades detectadas (patrón 4 - sin "origen/destino")', [
                         'origenes' => $origenes,
                         'destinos' => $destinos,
@@ -7008,12 +7301,26 @@ class MCPAssistantService
      */
     private static function extractProducto($text)
     {
+        // 🆕 PATRÓN NARRATIVO: "Una carga de PRODUCTO" (incluso si texto está truncado)
+        // Ejemplo: "Una carga de maíz de Bogotá a Cali" → Producto: MAÍZ
+        // También: "Una carga de maíz" (truncado) → Producto: MAÍZ
+        // 🔧 FIX BUG #538: Detectar productos en formato narrativo (versión flexible)
+        if (preg_match('/(?:una\s+)?carga\s+de\s+([a-záéíóúñ]+)(?:\s|$)/ui', $text, $matches)) {
+            $producto = trim($matches[1]);
+            // Excluir palabras comunes que no son productos
+            $excludeWords = ['origen', 'destino', 'bogota', 'bogotá', 'cali', 'medellin', 'medellín', 'barranquilla', 'cartagena', 'bucaramanga', 'manizales', 'pereira', 'ibague', 'ibagué', 'pasto', 'cucuta', 'cúcuta', 'villavicencio', 'neiva', 'santa', 'marta', 'monteria', 'montería', 'popayan', 'popayán', 'valledupar', 'quibdo', 'quibdó', 'florencia', 'yopal', 'armenia', 'tunja', 'sincelejo', 'riohacha', 'rionegro'];
+            if (strlen($producto) > 2 && strlen($producto) < 50 && !in_array(mb_strtolower($producto, 'UTF-8'), $excludeWords)) {
+                Log::info('📦 Producto detectado (patrón "Una carga de X")', ['producto' => $producto]);
+                return mb_strtoupper($producto, 'UTF-8');
+            }
+        }
+        
         // 🆕 PATRÓN MUY PRIORITARIO: "productos electrónicos (televisores)" o "X cajas de televisores"
         // Detectar productos específicos mencionados en paréntesis o como detalle principal
         if (preg_match('/(?:productos?\s+electr[óo]nicos?|electr[óo]nicos?)\s*\(([a-záéíóúñ\s]+)\)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
             Log::info('📦 Producto detectado (patrón "productos electrónicos (X)")', ['producto' => $producto]);
-            return strtoupper($producto);
+            return mb_strtoupper($producto, 'UTF-8');
         }
         
         // 🆕 PATRÓN: "N cajas/palets de PRODUCTO" (donde PRODUCTO es el bien, no el material del empaque)
@@ -7027,17 +7334,19 @@ class MCPAssistantService
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
                 Log::info('📦 Producto detectado (patrón "X cajas/palets de PRODUCTO")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
         // 🆕 Patrón ALTA PRIORIDAD: "N toneladas/kg de PRODUCTO"
-        // Ejemplo: "20 toneladas de papa", "500 kg de arroz"
-        if (preg_match('/(?:\d+\s+)?(?:toneladas?|kg|kilos?)\s+de\s+([a-záéíóúñ\s]+?)(?:\s+(?:veh[ií]culo|empaque|cantidad)|$)/ui', $text, $matches)) {
+        // Ejemplo: "20 toneladas de papa", "500 kg de arroz", "1.200 kg de repuestos industriales"
+        // 🔧 FIX BUG #545: Capturar múltiples palabras y terminar en más palabras clave
+        // Permite texto intermedio como "sin tara", "con tara", etc.
+        if (preg_match('/(?:\d+(?:[.,]\d+)?\s+)?(?:toneladas?|kg|kilos?|kilogramos?)\s+(?:sin\s+tara\s+)?(?:con\s+tara\s+)?de\s+([a-záéíóúñ\s]+?)(?:\s*,|\s+(?:veh[ií]culo|empaque|embalaje|cantidad|valor|y\s+|con\s+)|$)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
             if (strlen($producto) > 1 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón "X toneladas de Y")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7047,7 +7356,7 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             if (strlen($producto) > 1 && strlen($producto) < 100) {
                 Log::info('📦 Producto detectado (patrón "Tipo de mercancía: X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7061,7 +7370,7 @@ class MCPAssistantService
             // Validar que no sea vacío y no sea un valor monetario
             if (strlen($producto) > 1 && strlen($producto) < 100 && !preg_match('/^[\d.,]+\s*(USD|COP)?$/ui', $producto)) {
                 Log::info('📦 Producto detectado (patrón "Producto: X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7078,7 +7387,7 @@ class MCPAssistantService
             // Validar que no sea un número o valor monetario
             if (strlen($producto) > 1 && strlen($producto) < 100 && !preg_match('/^\d+[.,]?\d*\s*(USD|COP)?$/ui', $producto)) {
                 Log::info('📦 Producto detectado (patrón "Mercancía: X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7092,7 +7401,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón CORRECCIÓN "producto es X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7102,7 +7411,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón "aqui el producto es X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7112,7 +7421,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón "cambia el producto a X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7124,7 +7433,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 2 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón "cambia a X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7134,7 +7443,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
                 Log::info('📦 Producto detectado (patrón "producto...deja X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7146,7 +7455,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
                 Log::info('📦 Producto detectado (patrón "X toneladas de PRODUCTO")', ['producto' => $producto, 'text_sample' => substr($text, 0, 200)]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7158,7 +7467,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
                 Log::info('📦 Producto detectado (patrón "producto X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
         
@@ -7170,7 +7479,7 @@ class MCPAssistantService
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
                 Log::info('📦 Producto detectado (patrón "transportar X")', ['producto' => $producto]);
-                return strtoupper($producto);
+                return mb_strtoupper($producto, 'UTF-8');
             }
         }
 
@@ -7452,13 +7761,15 @@ class MCPAssistantService
             Log::info('📦 Empaque detectado (patrón "empacadas en X")', ['keyword' => $empaqueKeyword]);
         }
         // Patrón: "cambia el empaque a X" o "empaque cambialo a X"
-        elseif (preg_match('/(?:cambia|cambiar)(?:\s+el)?\s+empaque\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches) ||
-            preg_match('/empaque\s+cambialo\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches)) {
+        // 🔧 FIX BUG #530-2: Agregar soporte para plural (empaques/embalajes) y artículos (el/los)
+        elseif (preg_match('/(?:cambia|cambiar)(?:\s+(?:el|los))?\s+(?:empaque|embalaje)s?\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches) ||
+            preg_match('/(?:empaque|embalaje)s?\s+cambialo\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches)) {
             $empaqueKeyword = strtolower(trim($matches[1]));
             Log::info('📦 Empaque detectado (patrón "cambia empaque a X")', ['keyword' => $empaqueKeyword]);
         }
         // Patrón: "empaque es/son X" o "empaque: X"
-        elseif (preg_match('/(?:el\s+)?(?:empaque|embalaje)\s*(?:es|son|será|sea|queda|:)\s*([a-záéíóúñ\s]+?)(?:\s*[.,;]|\s+y\s+|$)/ui', $lowerText, $matches)) {
+        // 🔧 FIX BUG #530-2: Agregar soporte para plural (empaques/embalajes) y artículos (el/los)
+        elseif (preg_match('/(?:(?:el|los)\s+)?(?:empaque|embalaje)s?\s*(?:es|son|será|sea|queda|:)\s*([a-záéíóúñ\s]+?)(?:\s*[.,;]|\s+y\s+|$)/ui', $lowerText, $matches)) {
             $empaqueKeyword = strtolower(trim($matches[1]));
             Log::info('📦 Empaque detectado (patrón CORRECCIÓN)', ['keyword' => $empaqueKeyword]);
         }
@@ -7610,6 +7921,8 @@ class MCPAssistantService
         $vehiculos = [
             'patineta' => 'PATINETA',
             'camioneta' => 'CAMIONETA',
+            'camión' => 'CAMION',
+            'camion' => 'CAMION',
             'sencillo' => 'SENCILLO',
             'turbo' => 'TURBO',
             'dobletroque' => 'DOBLETROQUE',
