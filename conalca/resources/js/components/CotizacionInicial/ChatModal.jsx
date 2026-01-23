@@ -446,6 +446,47 @@ const ChatModal = ({
     };
   }, []); // Sin dependencias - solo cleanup al desmontar
 
+  // 🆕 FIX #561: Cargar datos iniciales del grupo cuando se monta el componente
+  useEffect(() => {
+    const loadInitialGroupData = async () => {
+      const currentGroupId = clientData?.groupId || groupIdRef.current;
+      
+      if (!currentGroupId) {
+        console.log('⏭️ No hay groupId, saltando carga inicial');
+        return;
+      }
+      
+      // Solo cargar si quoteData está vacío
+      if (quoteData && (Array.isArray(quoteData) ? quoteData.length > 0 : Object.keys(quoteData).length > 0)) {
+        console.log('⏭️ quoteData ya tiene datos, saltando carga inicial');
+        return;
+      }
+      
+      console.log('🔄 Cargando datos iniciales del grupo:', currentGroupId);
+      
+      try {
+        const response = await fetch(`/api/chat/quote/routes/${currentGroupId}`, {
+          headers: {
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.routes && data.routes.length > 0) {
+            console.log('✅ Datos iniciales cargados:', data.routes);
+            setQuoteData(data.routes);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error cargando datos iniciales:', error);
+      }
+    };
+    
+    loadInitialGroupData();
+  }, [clientData?.groupId]); // Ejecutar cuando cambia el groupId
+
   // Validar si tenemos todos los datos necesarios para crear cotización
   const hasAllRequiredData = useMemo(() => {
     // Obtener el primer elemento si es array, o el objeto directamente
@@ -985,7 +1026,8 @@ const ChatModal = ({
           current_data: currentData,
           thread_id: threadId,
           client_id: String(clientData.clientId),
-          selected_route_index: selectedRouteIndex // 🆕 Enviar índice de ruta seleccionada para edición
+          selected_route_index: selectedRouteIndex, // 🆕 Enviar índice de ruta seleccionada para edición
+          group_id: clientData.groupId || null // 🆕 FIX #557: Enviar group_id para guardar extracted_data en BD
         })
       });
 
@@ -1652,9 +1694,20 @@ const ChatModal = ({
           const isBackendSingleEdit = data.data.is_single_route_edit === true;
           const backendEditIndex = data.data.edited_route_index;
 
+          console.log('🔍 DEBUG PRE-ACTUALIZACIÓN:', {
+            isBackendSingleEdit,
+            backendEditIndex,
+            selectedRouteIndexState: selectedRouteIndex,
+            selectedRouteIndexRef: selectedRouteIndexRef.current,
+            mappedRoutesLength: mappedRoutes.length,
+            primerRutaMapeada: mappedRoutes[0]
+          });
+
           if (mappedRoutes.length > 0) {
             console.log('🚀 Llamando updateQuoteData con merge:', mappedRoutes);
             updateQuoteData(prev => {
+              console.log('📊 updateQuoteData callback - Estado anterior:', prev);
+              
               // Si no hay datos previos, usar los nuevos directamente (sanitizados)
               if (!prev || (Array.isArray(prev) && prev.length === 0) || (typeof prev === 'object' && Object.keys(prev).length === 0)) {
                 console.log('🆕 No hay datos previos, usando nuevos directamente (sanitizados)');
@@ -1745,15 +1798,28 @@ const ChatModal = ({
             console.warn('⚠️ No hay rutas mapeadas para actualizar');
           }
 
-          // Evitar procesamiento duplicado
-          // Crear un hash simple de los datos para comparar
-          const dataHash = JSON.stringify(routesArray.map(r => `${r.origen || r.ciudad_origen}-${r.destino || r.ciudad_destino}-${r.peso_kg}-${r.producto || r.producto_nombre || ''}`));
+          // 🔧 FIX: NO evitar procesamiento duplicado en ediciones de peso
+          // El peso puede cambiar múltiples veces sin cambiar origen/destino
+          // Crear un hash que incluya TODOS los campos relevantes
+          const dataHash = JSON.stringify(routesArray.map(r => ({
+            origen: r.origen || r.ciudad_origen,
+            destino: r.destino || r.ciudad_destino,
+            peso_kg: r.peso_kg || r.peso || r.peso_mercancia,
+            producto: r.producto || r.producto_mencionado,
+            vehiculo: r.vehiculo,
+            empaque: r.empaque
+          })));
+          
+          // Solo evitar duplicados si el hash es EXACTAMENTE igual
           if (lastProcessedDataHashRef.current === dataHash) {
-            if (process.env.NODE_ENV === 'development') {
-              console.log('⚠️ Datos ya procesados, saltando duplicación');
-            }
-            return; // No procesar los mismos datos dos veces
+            console.log('⚠️ Datos IDÉNTICOS ya procesados, saltando duplicación');
+            return;
           }
+          
+          console.log('✅ Hash diferente, procesando actualización:', {
+            anterior: lastProcessedDataHashRef.current ? 'Existe' : 'Primera vez',
+            actual: dataHash.substring(0, 100) + '...'
+          });
           lastProcessedDataHashRef.current = dataHash;
 
           // Auto-buscar producto de CADA ruta (no solo la primera)

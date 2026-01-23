@@ -197,15 +197,71 @@ class QuoteRoutesController extends Controller
                     ? json_decode($group->extracted_data, true) 
                     : $group->extracted_data;
                 
-                // Asegurar que es un array indexado
-                if (is_array($extractedData) && !isset($extractedData[0])) {
+                // Asegurar que es un array indexado si tiene índice 0
+                if (is_array($extractedData) && isset($extractedData[0])) {
                     $extractedData = array_values($extractedData);
                 }
             }
 
-            $routes = $group->cotizaciones()->get()->map(function ($cotization, $index) use ($extractedData) {
-                // Buscar datos extraídos correspondientes a esta ruta
-                $extracted = $extractedData[$index] ?? [];
+            $cotizaciones = $group->cotizaciones()->get();
+            
+            // 🔧 FIX #558: Si NO hay cotizaciones guardadas, construir rutas desde extracted_data
+            if ($cotizaciones->isEmpty() && !empty($extractedData)) {
+                Log::info('🔧 getQuoteRoutes: No hay cotizaciones, construyendo desde extracted_data', [
+                    'group_id' => $groupId,
+                    'extracted_data' => $extractedData
+                ]);
+                
+                // Si extracted_data es un objeto único (no array de rutas)
+                $routesArray = isset($extractedData[0]) ? $extractedData : [$extractedData];
+                
+                $routes = collect($routesArray)->map(function ($extracted, $index) {
+                    return [
+                        'id' => null,
+                        'ruta_numero' => $index + 1,
+                        'ciudad_origen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? null,
+                        'ciudadOrigen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? null,
+                        'ciudad_destino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? null,
+                        'ciudadDestino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? null,
+                        'peso_mercancia' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'pesoMercancia' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'peso_kg' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'incluye_tara' => $extracted['incluye_tara'] ?? true,
+                        'cantidad' => $extracted['cantidad'] ?? 1,
+                        'cantidadMercancia' => $extracted['cantidad'] ?? 1,
+                        'tipo_embajale' => $extracted['empaque'] ?? 'Caja',
+                        'empaque' => $extracted['empaque'] ?? 'Caja',
+                        'empaque_id' => $extracted['empaque_id'] ?? null,
+                        'producto' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? $extracted['tipo_producto'] ?? null,
+                        'producto_mencionado' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? null,
+                        'tipo_producto' => $extracted['tipo_producto'] ?? $extracted['producto'] ?? null,
+                        'producto_codigo' => $extracted['producto_codigo'] ?? null,
+                        'producto_nombre' => $extracted['producto_nombre'] ?? null,
+                        'vehiculo_requerido' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        'vehiculo' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        'claseVehiculo' => $extracted['claseVehiculo'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        'valor_declarado' => $extracted['valor_declarado'] ?? $extracted['valor'] ?? null,
+                        'valorMercancia' => $extracted['valor_declarado'] ?? $extracted['valor'] ?? null,
+                        'active' => 1,
+                        'decision_cliente' => 'pendiente',
+                        'incluye_tara' => $extracted['incluye_tara'] ?? false,
+                    ];
+                });
+            } else {
+                // Hay cotizaciones guardadas, usar lógica normal
+                $routes = $cotizaciones->map(function ($cotization, $index) use ($extractedData) {
+                // 🔧 FIX #558: Buscar datos extraídos correspondientes a esta ruta
+                // Si extracted_data es un objeto único (no tiene índice 0), usarlo directamente para la primera ruta
+                $extracted = [];
+                if (!empty($extractedData)) {
+                    if (isset($extractedData[$index])) {
+                        // Es un array de rutas
+                        $extracted = $extractedData[$index];
+                    } elseif ($index === 0 && !isset($extractedData[0])) {
+                        // Es un objeto único (ruta simple), usar todo para la primera ruta
+                        $extracted = $extractedData;
+                    }
+                }
                 
                 return [
                     'id' => $cotization->id,
@@ -244,6 +300,7 @@ class QuoteRoutesController extends Controller
                     'incluye_tara' => $extracted['incluye_tara'] ?? false,
                 ];
             });
+            } // Fin del else (cotizaciones existentes)
 
             return response()->json([
                 'success' => true,

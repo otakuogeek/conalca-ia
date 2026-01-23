@@ -337,7 +337,10 @@ class TextPreprocessorService
     private static function fixCommonMistakes(string $text): string
     {
         foreach (self::$commonMistakes as $wrong => $correct) {
-            $pattern = '/' . preg_quote($wrong, '/') . '/ui';
+            // 🔧 FIX: Agregar límites de palabra para evitar matches parciales
+            // Sin \b: "contenedo" hace match en "contenedoR" → "contenedorr" ❌
+            // Con \b: "contenedo" NO hace match en "contenedor" ✅
+            $pattern = '/\b' . preg_quote($wrong, '/') . '\b/ui';
             $text = preg_replace($pattern, $correct, $text);
         }
         
@@ -364,6 +367,8 @@ class TextPreprocessorService
             'embaladas',
             'embalado',
             'embalados',
+            'contenedor', // FIX: Prevenir "contenedor" → "contenedorr"
+            'contenedores',
         ];
         
         // Marcar palabras protegidas con placeholders temporales

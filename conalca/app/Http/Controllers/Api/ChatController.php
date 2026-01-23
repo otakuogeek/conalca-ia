@@ -508,17 +508,34 @@ class ChatController extends Controller
             
             // 🆕 CRÍTICO: Si es multi-ruta con claves numéricas (0, 1, 2...), 
             // convertir a array indexado para que JSON lo envíe como [...]  no como {"0": ..., "1": ...}
+            // 🔧 FIX: Separar rutas (numéricas) de campos planos (strings) - solo enviar rutas
             if (!empty($extractedData)) {
-                $keys = array_keys($extractedData);
-                $allNumeric = count($keys) > 0 && array_reduce($keys, function($carry, $key) {
-                    return $carry && is_numeric($key);
-                }, true);
+                $routes = [];
+                $flatFields = [];
                 
-                if ($allNumeric && isset($extractedData[0])) {
-                    // Es multi-ruta - reindexar para asegurar array secuencial
-                    $extractedData = array_values($extractedData);
-                    Log::info('🔄 Multi-ruta convertida a array indexado', [
-                        'rutas' => count($extractedData)
+                foreach ($extractedData as $key => $value) {
+                    if (is_numeric($key) && is_array($value)) {
+                        // Es una ruta
+                        $routes[$key] = $value;
+                    } else {
+                        // Es campo plano (origen, destino, etc. globales)
+                        $flatFields[$key] = $value;
+                    }
+                }
+                
+                // Si hay rutas, solo enviar las rutas
+                if (!empty($routes)) {
+                    $extractedData = array_values($routes); // Reindexar como [0, 1, 2...]
+                    Log::info('🔄 Multi-ruta: enviando solo rutas al frontend', [
+                        'routes_count' => count($extractedData),
+                        'removed_flat_fields' => array_keys($flatFields)
+                    ]);
+                }
+                // Si no hay rutas pero hay campos planos, enviar campos planos (ruta única legacy)
+                elseif (!empty($flatFields)) {
+                    $extractedData = $flatFields;
+                    Log::info('📦 Ruta única: enviando campos planos', [
+                        'fields' => array_keys($flatFields)
                     ]);
                 }
             }

@@ -103,7 +103,8 @@ class DataExtractionController extends Controller
                 'current_data' => 'nullable|array',
                 'thread_id' => 'nullable|string',
                 'client_id' => 'nullable|numeric',
-                'selected_route_index' => 'nullable|numeric' // 🆕 Nuevo parámetro
+                'selected_route_index' => 'nullable|numeric', // 🆕 Nuevo parámetro
+                'group_id' => 'nullable|numeric' // 🆕 FIX #557: Permitir guardar en grupo
             ]);
 
             // Convertir client_id a string si existe
@@ -114,7 +115,8 @@ class DataExtractionController extends Controller
             Log::info('💬 DataExtractionController: Chat extraction', [
                 'message_length' => strlen($validated['message']),
                 'thread_id' => $validated['thread_id'] ?? 'none',
-                'client_id' => $validated['client_id'] ?? 'none'
+                'client_id' => $validated['client_id'] ?? 'none',
+                'group_id' => $validated['group_id'] ?? 'none'
             ]);
 
             $result = $this->extractionService->extractDataFromMessage(
@@ -132,6 +134,48 @@ class DataExtractionController extends Controller
                 'missing' => $result['missing'] ?? [],
                 'confidence' => $result['confidence'] ?? 0
             ]);
+            
+            // 🆕 FIX #557: Guardar datos extraídos en group_cotizations.extracted_data
+            if (isset($validated['group_id']) && !empty($result['extracted'])) {
+                $groupId = $validated['group_id'];
+                $extracted = $result['extracted'];
+                
+                // Normalizar nombres de campos
+                $normalizedData = [];
+                $fieldMapping = [
+                    'origen' => 'origen',
+                    'destino' => 'destino',
+                    'peso' => 'peso_kg',
+                    'producto' => 'producto',
+                    'valor' => 'valor_declarado',
+                    'cantidad' => 'cantidad',
+                    'vehiculo' => 'vehiculo',
+                    'empaque' => 'empaque'
+                ];
+                
+                foreach ($fieldMapping as $extractedKey => $dbKey) {
+                    if (isset($extracted[$extractedKey]) && !empty($extracted[$extractedKey])) {
+                        $normalizedData[$dbKey] = $extracted[$extractedKey];
+                    }
+                }
+                
+                if (!empty($normalizedData)) {
+                    $group = \App\Models\GroupCotization::find($groupId);
+                    if ($group) {
+                        // Mergear con datos existentes
+                        $existingData = json_decode($group->extracted_data ?? '{}', true) ?? [];
+                        $mergedData = array_merge($existingData, $normalizedData);
+                        $group->extracted_data = json_encode($mergedData);
+                        $group->save();
+                        
+                        Log::info('💾 Datos de DataExtractionService guardados en grupo', [
+                            'group_id' => $groupId,
+                            'campos_nuevos' => array_keys($normalizedData),
+                            'total_campos' => count($mergedData)
+                        ]);
+                    }
+                }
+            }
 
             return response()->json([
                 'success' => true,
