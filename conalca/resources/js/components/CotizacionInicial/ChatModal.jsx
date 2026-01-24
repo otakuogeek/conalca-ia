@@ -104,24 +104,37 @@ const ChatModal = ({
   const persistRoutesToDb = useCallback(async (routes) => {
     if (!clientData?.groupId || !routes || !routes.length) return;
     
-    // Normalizar rutas para asegurar que extracted_data tenga formato consistente
-    const normalizedRoutes = routes.map((r, idx) => ({
-      origen: r.ciudadOrigen || r.ciudad_origen || r.origen,
-      destino: r.ciudadDestino || r.ciudad_destino || r.destino,
-      empaque: r.empaque || r.tipo_embajale || r.tipo_embalaje,
-      empaque_id: r.empaque_id || r.empaqueId,
-      peso_kg: r.pesoMercancia || r.peso_mercancia || r.peso_kg || r.peso,
-      cantidad: r.cantidadMercancia || r.cantidad || r.cantidad_unidades,
-      producto: r.producto || r.tipo_producto,
-      producto_codigo: r.producto_codigo || r.codigoProducto,
-      producto_nombre: r.producto_nombre || r.productoNombre,
-      vehiculo: r.claseVehiculo || r.vehiculo || r.vehiculo_requerido,
-      valor_declarado: r.valorMercancia || r.valor_declarado || r.valor_mercancia,
-      incluye_tara: r.incluye_tara === true,
-      ruta_numero: idx + 1
-    }));
+    // 🔧 FIX: Normalizar rutas con TODOS los campos en el formato que espera el backend
+    const normalizedRoutes = routes.map((r, idx) => {
+      // 🔥 Sincronizar todos los campos de peso
+      const pesoValue = r.peso || r.peso_kg || r.peso_mercancia || r.pesoMercancia || 0;
+      
+      return {
+        id: r.id || null, // Importante: mantener el ID si existe
+        ciudad_origen: r.ciudadOrigen || r.ciudad_origen || r.origen,
+        ciudad_destino: r.ciudadDestino || r.ciudad_destino || r.destino,
+        tipo_embajale: r.empaque || r.tipo_embajale || r.tipo_embalaje,
+        empaque_id: r.empaque_id || r.empaqueId,
+        // 🔧 FIX BUG #1: Enviar peso_mercancia (que es lo que lee el backend)
+        peso_mercancia: pesoValue,
+        cantidad: r.cantidadMercancia || r.cantidad || r.cantidad_unidades || 1,
+        producto: r.producto || r.tipo_producto,
+        tipo_producto: r.producto || r.tipo_producto,
+        producto_mencionado: r.producto_mencionado || r.producto,
+        producto_codigo: r.producto_codigo || r.codigoProducto,
+        producto_nombre: r.producto_nombre || r.productoNombre,
+        vehiculo_requerido: r.vehiculo || r.claseVehiculo || r.vehiculo_requerido,
+        valor_declarado: r.valorMercancia || r.valor_declarado || r.valor_mercancia || 0,
+        incluye_tara: r.incluye_tara === true,
+        ruta_numero: idx + 1
+      };
+    });
     
-    console.log('💾 Persistiendo rutas en BD:', normalizedRoutes);
+    console.log('💾 Persistiendo rutas en BD:', {
+      group_id: clientData.groupId,
+      routes_count: normalizedRoutes.length,
+      routes: normalizedRoutes
+    });
     
     try {
       const response = await fetch('/api/chat/quote/save-routes', {
@@ -133,8 +146,7 @@ const ChatModal = ({
         },
         body: JSON.stringify({
           group_id: clientData.groupId,
-          routes,
-          extracted_data: normalizedRoutes, // mantener sincronizada la columna extracted_data
+          routes: normalizedRoutes, // 🔧 FIX: Enviar normalizedRoutes, no routes original
         }),
       });
       
@@ -509,7 +521,8 @@ const ChatModal = ({
     console.log('📊 routesData useMemo ejecutándose:', {
       quoteData_type: Array.isArray(quoteData) ? 'array' : typeof quoteData,
       quoteData_length: Array.isArray(quoteData) ? quoteData.length : 'N/A',
-      quoteData: quoteData
+      quoteData: quoteData,
+      timestamp: new Date().toISOString()
     });
 
     // Caso 1: quoteData es array (multi-ruta)
@@ -526,12 +539,19 @@ const ChatModal = ({
           || route.tipo_producto 
           || (index === 0 ? selectedProduct?.nombre : null);
 
+        // 🔧 FIX: Asegurar que todos los campos de peso estén presentes
+        const pesoFinal = route.peso_kg || route.peso_mercancia || route.pesoMercancia || 0;
+
         return {
           ...route,
           // Priorizar el producto de la ruta sobre selectedProduct global
           producto: productoFinal,
           producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
           tipo_producto: productoFinal,
+          // 🔧 FIX BUG #1: Sincronizar los 3 campos de peso
+          peso_kg: pesoFinal,
+          peso_mercancia: pesoFinal,
+          pesoMercancia: pesoFinal,
           // Priorizar el empaque de la ruta sobre selectedEmpaque global
           empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
           tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
@@ -550,11 +570,18 @@ const ChatModal = ({
         || quoteData.producto 
         || quoteData.tipo_producto;
 
+      // 🔧 FIX: Sincronizar campos de peso
+      const pesoFinal = quoteData.peso_kg || quoteData.peso_mercancia || quoteData.pesoMercancia || 0;
+
       const result = [{
         ...quoteData,
         producto: productoFinal,
         producto_codigo: selectedProduct?.codigo || quoteData.producto_codigo,
         tipo_producto: productoFinal,
+        // 🔧 FIX BUG #1: Sincronizar los 3 campos de peso
+        peso_kg: pesoFinal,
+        peso_mercancia: pesoFinal,
+        pesoMercancia: pesoFinal,
         empaque: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.empaque || quoteData.tipo_embalaje,
         tipo_embalaje: selectedEmpaque?.nome || selectedEmpaque?.nombre || quoteData.tipo_embalaje || quoteData.empaque
       }];
@@ -586,6 +613,17 @@ const ChatModal = ({
     });
     return result;
   }, [quoteData, selectedProduct, selectedEmpaque]);
+
+  // 🔧 DEBUG: Detectar cuando quoteData cambia
+  useEffect(() => {
+    console.log('🔔 quoteData cambió! Nuevo valor:', {
+      tipo: Array.isArray(quoteData) ? 'array' : typeof quoteData,
+      longitud: Array.isArray(quoteData) ? quoteData.length : Object.keys(quoteData || {}).length,
+      datos: quoteData,
+      routesData_length: routesData?.length,
+      timestamp: new Date().toISOString()
+    });
+  }, [quoteData, routesData]);
 
   // Helper para limpiar estado de procesamiento
   const clearProcessingState = () => {
@@ -737,11 +775,19 @@ const ChatModal = ({
               // 🆕 PROCESAR TODAS LAS RUTAS COMO ARRAY
               const processedRoutes = allRoutes.map((route, idx) => {
                 console.log(`📍 Procesando ruta ${idx + 1}:`, route);
+                
+                // 🔧 FIX BUG #1: Sincronizar TODOS los campos de peso al mismo valor
+                const pesoValue = route.peso_mercancia ?? route.peso_kg ?? route.pesoMercancia ?? route.peso ?? null;
+                
                 return {
                   ruta_numero: route.ruta_numero || (idx + 1), // Asegurar ID
                   ciudadOrigen: route.ciudad_origen ?? route.origen ?? null,
                   ciudadDestino: route.ciudad_destino ?? route.destino ?? null,
-                  pesoMercancia: route.peso_mercancia ?? route.peso_kg ?? null,
+                  // 🔧 FIX BUG #1: Asegurar que TODOS los campos de peso tengan el mismo valor
+                  peso: pesoValue,
+                  peso_kg: pesoValue,
+                  peso_mercancia: pesoValue,
+                  pesoMercancia: pesoValue,
                   cantidadMercancia: route.cantidad_unidades ?? route.cantidad ?? null,
                   valorMercancia: route.valor_mercancia ?? route.valor_declarado ?? null,
                   vehiculo: route.vehiculo ?? null, // Para compatibilidad
@@ -782,21 +828,30 @@ const ChatModal = ({
                     if (data.success && Array.isArray(data.routes)) {
                       console.log('✅ Datos actuales de BD obtenidos:', data.routes.length, 'rutas');
                       // Convertir formato de BD a formato del componente
-                      return data.routes.map(r => ({
-                        ruta_numero: r.ruta_numero,
-                        ciudadOrigen: r.ciudad_origen || r.ciudadOrigen,
-                        ciudadDestino: r.ciudad_destino || r.ciudadDestino,
-                        pesoMercancia: r.peso_mercancia || r.pesoMercancia,
-                        cantidadMercancia: r.cantidad || r.cantidadMercancia,
-                        valorMercancia: r.valor_declarado || r.valorMercancia,
-                        producto: r.producto_mencionado || r.producto,
-                        tipo_producto: r.producto_mencionado || r.tipo_producto || r.producto,
-                        producto_mencionado: r.producto_mencionado || r.producto,
-                        empaque: r.empaque,
-                        empaque_id: r.empaque_id,
-                        claseVehiculo: r.vehiculo || r.claseVehiculo,
-                        vehiculo: r.vehiculo
-                      }));
+                      return data.routes.map(r => {
+                        // 🔧 FIX BUG #1: Sincronizar TODOS los campos de peso
+                        const pesoValue = r.peso_mercancia || r.peso_kg || r.pesoMercancia || r.peso || null;
+                        
+                        return {
+                          ruta_numero: r.ruta_numero,
+                          ciudadOrigen: r.ciudad_origen || r.ciudadOrigen,
+                          ciudadDestino: r.ciudad_destino || r.ciudadDestino,
+                          // 🔧 FIX BUG #1: Todos los campos de peso sincronizados
+                          peso: pesoValue,
+                          peso_kg: pesoValue,
+                          peso_mercancia: pesoValue,
+                          pesoMercancia: pesoValue,
+                          cantidadMercancia: r.cantidad || r.cantidadMercancia,
+                          valorMercancia: r.valor_declarado || r.valorMercancia,
+                          producto: r.producto_mencionado || r.producto,
+                          tipo_producto: r.producto_mencionado || r.tipo_producto || r.producto,
+                          producto_mencionado: r.producto_mencionado || r.producto,
+                          empaque: r.empaque,
+                          empaque_id: r.empaque_id,
+                          claseVehiculo: r.vehiculo || r.claseVehiculo,
+                          vehiculo: r.vehiculo
+                        };
+                      });
                     }
                   }
                 } catch (error) {
@@ -805,9 +860,12 @@ const ChatModal = ({
                 return null;
               };
 
-              // 🔧 FIX: Persistir ANTES de obtener datos de BD
+              // 🔧 FIX: Persistir, esperar, y luego obtener datos frescos de BD
               // Esto asegura que currentDataFromDB tenga los valores MÁS ACTUALIZADOS
               await persistRoutesToDb(processedRoutes);
+              
+              // Pequeño delay para asegurar que BD se actualizó
+              await new Promise(resolve => setTimeout(resolve, 100));
               
               // Obtener datos actuales de BD DESPUÉS de persistir
               const currentDataFromDB = await fetchCurrentDataFromDB();
@@ -835,15 +893,18 @@ const ChatModal = ({
                   return processedRoutes;
                 }
                 
-                // Priorizar datos de BD sobre estado local
-                const prevArray = currentDataFromDB !== null 
+                // 🔥 CAMBIO CRÍTICO: SIEMPRE priorizar datos de BD, NUNCA usar estado local obsoleto
+                // El estado local puede tener datos desactualizados que sobrescriben cambios en BD
+                const prevArray = currentDataFromDB !== null && currentDataFromDB.length > 0
                   ? currentDataFromDB 
                   : (Array.isArray(prevData) ? prevData : []);
                 
                 console.log('📊 Datos base para merge:', {
-                  fuente: currentDataFromDB !== null ? 'BD' : 'Estado local',
+                  fuente: (currentDataFromDB !== null && currentDataFromDB.length > 0) ? 'BD (FUENTE CONFIABLE)' : 'Estado local (FALLBACK)',
                   rutas_existentes: prevArray.length,
-                  rutas_nuevas: processedRoutes.length
+                  rutas_nuevas: processedRoutes.length,
+                  datos_bd: currentDataFromDB,
+                  datos_estado: prevData
                 });
 
                 // Si no hay datos previos, usar los nuevos directamente
@@ -875,12 +936,13 @@ const ChatModal = ({
                   }
 
                   const mergeInto = (idx) => {
+                    // 🔥 USAR DATOS DE BD COMO BASE (prevArray ya viene de BD)
                     const existing = nextData[idx] || {};
                     const merged = { ...existing };
 
                     console.log(`🔀 Fusionando en ruta ${idx + 1}:`);
-                    console.log('   📦 Datos existentes:', existing);
-                    console.log('   🆕 Datos nuevos:', newRoute);
+                    console.log('   📦 Datos existentes (DE BD):', existing);
+                    console.log('   🆕 Datos nuevos (del backend):', newRoute);
 
                     Object.keys(newRoute).forEach(key => {
                       const val = newRoute[key];
@@ -888,18 +950,23 @@ const ChatModal = ({
                       
                       if (key === '_originalValues') return;
                       
-                      // 🔥 CRÍTICO: SOLO actualizar si el valor es válido (no null/undefined/vacío)
-                      // Si el nuevo valor es inválido, PRESERVAR el valor existente
+                      // 🔥 CAMBIO: Si el valor nuevo es null/undefined/vacío, NO actualizar
+                      // Esto preserva los valores que YA están en BD (existing viene de BD)
                       if (val === null || val === undefined || val === '') {
-                        // NO sobrescribir - mantener valor existente
+                        // NO sobrescribir - mantener valor existente DE BD
                         if (existingVal !== undefined && existingVal !== null && existingVal !== '') {
-                          console.log(`   🛡️ PRESERVANDO ${key}: "${existingVal}" (nuevo valor inválido: ${val})`);
+                          console.log(`   🛡️ PRESERVANDO ${key} (de BD): "${existingVal}" (nuevo valor vacío: ${val})`);
                         }
                         return; // NO actualizar este campo
                       }
                       
                       // Actualizar solo si el nuevo valor es diferente y válido
-                      if (existingVal !== val) {
+                      // 🔧 Para campos numéricos (peso), comparar como números
+                      const isNumericField = ['peso_kg', 'peso_mercancia', 'pesoMercancia', 'peso', 'cantidad', 'valor_declarado'].includes(key);
+                      const normalizedVal = isNumericField ? parseFloat(val) : val;
+                      const normalizedExisting = isNumericField ? parseFloat(existingVal) : existingVal;
+                      
+                      if (normalizedVal !== normalizedExisting || !existingVal) {
                         console.log(`   🔄 ACTUALIZANDO ${key}: "${existingVal}" → "${val}"`);
                         merged[key] = val;
                       } else {
@@ -908,7 +975,7 @@ const ChatModal = ({
                     });
 
                     nextData[idx] = merged;
-                    console.log(`   ✅ Ruta ${idx + 1} fusionada:`, merged);
+                    console.log(`   ✅ Ruta ${idx + 1} fusionada (base: BD):`, merged);
                   };
 
                   if (targetIdx >= 0 && targetIdx < nextData.length) {
@@ -1791,6 +1858,17 @@ const ChatModal = ({
               }
 
               console.log('✅ DATOS MERGEADOS (ESTADO FINAL):', nextState);
+              
+              // 🔍 DEBUG: Verificar peso en el estado final
+              if (nextState && nextState.length > 0) {
+                console.log('🔍 Peso en estado final:', {
+                  pesoMercancia: nextState[0].pesoMercancia,
+                  peso_mercancia: nextState[0].peso_mercancia,
+                  peso_kg: nextState[0].peso_kg,
+                  todosLosCampos: Object.keys(nextState[0])
+                });
+              }
+              
               return nextState;
             });
             console.log('✅ updateQuoteData EJECUTADO CON MERGE INTELIGENTE');
@@ -1809,6 +1887,13 @@ const ChatModal = ({
             vehiculo: r.vehiculo,
             empaque: r.empaque
           })));
+          
+          console.log('🔐 Verificación de hash de datos:', {
+            hashAnterior: lastProcessedDataHashRef.current ? lastProcessedDataHashRef.current.substring(0, 100) : 'ninguno',
+            hashActual: dataHash.substring(0, 100),
+            sonIguales: lastProcessedDataHashRef.current === dataHash,
+            pesoEnHash: routesArray[0]?.peso_kg || routesArray[0]?.peso
+          });
           
           // Solo evitar duplicados si el hash es EXACTAMENTE igual
           if (lastProcessedDataHashRef.current === dataHash) {

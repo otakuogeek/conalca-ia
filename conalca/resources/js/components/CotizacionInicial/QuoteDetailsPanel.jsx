@@ -23,7 +23,7 @@ const QuoteDetailsPanel = ({
     
     if (!route.ciudadOrigen && !route.ciudad_origen) missing.push('origen');
     if (!route.ciudadDestino && !route.ciudad_destino) missing.push('destino');
-    // 🔧 FIX: Considerar peso_kg (en toneladas del backend)
+    // 🔧 FIX: Considerar peso_kg (en KILOGRAMOS del backend)
     if (!route.pesoMercancia && !route.peso_mercancia && !route.peso_kg) missing.push('peso');
     if (!route.producto && !route.tipo_producto && !selectedProduct) missing.push('producto');
     
@@ -93,9 +93,9 @@ const QuoteDetailsPanel = ({
 
   // Calcular resumen total
   const totalRoutes = routes.length;
-  // 🔧 FIX: Considerar peso_kg (backend lo envía en toneladas, convertir a kg)
+  // 🔧 FIX: Considerar peso_kg (backend lo envía en KILOGRAMOS ya)
   const totalPeso = routes.reduce((sum, r) => {
-    const peso = parseFloat(r.pesoMercancia || r.peso_mercancia || (r.peso_kg * 1000) || 0);
+    const peso = parseFloat(r.pesoMercancia || r.peso_mercancia || r.peso_kg || 0);
     return sum + peso;
   }, 0);
   const totalValor = routes.reduce((sum, r) => sum + (parseFloat(r.valorMercancia || r.valor_declarado) || 0), 0);
@@ -194,9 +194,13 @@ const QuoteDetailsPanel = ({
             }
         }
         
+        // 🔧 FIX: Crear key única que incluya peso para forzar re-renderizado
+        const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0;
+        const uniqueKey = `route-${index}-peso-${peso}-producto-${route.producto || ''}-vehiculo-${route.vehiculo || route.claseVehiculo || ''}`;
+        
         return (
           <div 
-            key={index} 
+            key={uniqueKey}
             className={`w-full rounded-2xl shadow-sm overflow-hidden transition-all duration-300 group
               ${isSelected 
                 ? `ring-4 ring-yellow-200 border-2 border-yellow-400 transform scale-[1.01] z-10 my-2` 
@@ -262,8 +266,8 @@ const QuoteDetailsPanel = ({
                   )}
                   <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
                     {(() => {
-                      // 🔧 FIX: peso_kg viene en toneladas, convertir a kg
-                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      // 🔧 FIX: peso_kg viene en KILOGRAMOS ya del backend
+                      const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg;
                       return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : 'Sin peso';
                     })()}
                   </span>
@@ -333,13 +337,21 @@ const QuoteDetailsPanel = ({
                   </div>
                   <p className={`text-lg font-bold ${
                     (() => {
-                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg;
+                      console.log(`🔍 QuoteDetailsPanel - Renderizando peso ruta ${index + 1}:`, {
+                        pesoMercancia: route.pesoMercancia,
+                        peso_mercancia: route.peso_mercancia,
+                        peso_kg: route.peso_kg,
+                        pesoFinal: peso,
+                        timestamp: new Date().toISOString(),
+                        routeKey: uniqueKey
+                      });
                       return peso ? 'text-gray-900' : 'text-red-500';
                     })()
                   }`}>
                     {(() => {
-                      // 🔧 FIX: peso_kg viene en toneladas del backend
-                      const peso = route.pesoMercancia || route.peso_mercancia || (route.peso_kg && route.peso_kg * 1000);
+                      // 🔧 FIX: peso_kg viene en KILOGRAMOS ya del backend
+                      const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg;
                       return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : '❌ Faltante';
                     })()}
                   </p>
@@ -380,8 +392,18 @@ const QuoteDetailsPanel = ({
                     <span className="text-xs text-gray-500 uppercase">Vehículo</span>
                   </div>
                   <p className="text-sm font-bold text-gray-900">
-                    {/* 🔧 FIX: Considerar todos los campos de vehículo del backend */}
-                    {route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || '-'}
+                    {(() => {
+                      /* 🔧 FIX: Considerar todos los campos de vehículo del backend */
+                      const vehiculo = route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || '-';
+                      console.log(`🚛 QuoteDetailsPanel - Renderizando vehículo ruta ${index + 1}:`, {
+                        vehiculo: route.vehiculo,
+                        claseVehiculo: route.claseVehiculo,
+                        vehiculo_requerido: route.vehiculo_requerido,
+                        vehiculoFinal: vehiculo,
+                        todosLosCampos: route
+                      });
+                      return vehiculo;
+                    })()}
                   </p>
                 </div>
               </div>

@@ -1644,6 +1644,8 @@ class MCPAssistantService
                         $camposAActualizar = ['producto', 'tipo_producto'];
                     } elseif ($campoEditadoTemprano === 'vehiculo') {
                         $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
+                    } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                        $camposAActualizar = ['peso_kg', 'peso_mercancia', 'pesoMercancia'];
                     }
                     
                     if ($campoEditadoTemprano === 'tara') {
@@ -1669,6 +1671,13 @@ class MCPAssistantService
                                 $extractedData[$selectedRouteIndex][$campo] = $valorEditadoTemprano;
                             }
                         }
+                        
+                        // 🔧 FIX BUG #1: Sincronizar peso_kg con peso_mercancia para frontend
+                        if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                            $extractedData[$selectedRouteIndex]['peso_kg'] = $valorEditadoTemprano;
+                            $extractedData[$selectedRouteIndex]['peso_mercancia'] = $valorEditadoTemprano;
+                            $extractedData[$selectedRouteIndex]['pesoMercancia'] = $valorEditadoTemprano;
+                        }
                     }
                 } else {
                     // Sin ruta seleccionada - aplicar a todas las rutas
@@ -1684,6 +1693,8 @@ class MCPAssistantService
                         $camposAActualizar = ['producto', 'tipo_producto'];
                     } elseif ($campoEditadoTemprano === 'vehiculo') {
                         $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
+                    } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                        $camposAActualizar = ['peso_kg', 'peso_mercancia', 'pesoMercancia'];
                     }
                     
                     if ($campoEditadoTemprano === 'tara') {
@@ -1725,6 +1736,13 @@ class MCPAssistantService
                                         $ruta[$campo] = $valorEditadoTemprano;
                                     }
                                 }
+                                
+                                // 🔧 FIX BUG #1: Sincronizar peso_kg con peso_mercancia
+                                if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                                    $ruta['peso_kg'] = $valorEditadoTemprano;
+                                    $ruta['peso_mercancia'] = $valorEditadoTemprano;
+                                    $ruta['pesoMercancia'] = $valorEditadoTemprano;
+                                }
                             }
                         }
                         unset($ruta);
@@ -1742,6 +1760,8 @@ class MCPAssistantService
                     $camposAActualizar = ['producto', 'tipo_producto'];
                 } elseif ($campoEditadoTemprano === 'vehiculo') {
                     $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
+                } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                    $camposAActualizar = ['peso_kg', 'peso_mercancia', 'pesoMercancia'];
                 }
                 
                 foreach ($camposAActualizar as $campo) {
@@ -1750,6 +1770,13 @@ class MCPAssistantService
                     } else {
                         $extractedData[$campo] = $valorEditadoTemprano;
                     }
+                }
+                
+                // 🔧 FIX BUG #1: Sincronizar peso_kg con peso_mercancia para ruta única
+                if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                    $extractedData['peso_kg'] = $valorEditadoTemprano;
+                    $extractedData['peso_mercancia'] = $valorEditadoTemprano;
+                    $extractedData['pesoMercancia'] = $valorEditadoTemprano;
                 }
             }
             
@@ -1788,13 +1815,42 @@ class MCPAssistantService
                             
                             // Actualizar campos según el tipo de edición
                             if ($campoEditadoTemprano === 'vehiculo' || in_array($campoEditadoTemprano, ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'])) {
+                                // 🔧 FIX BUG #2: Solo actualizar vehículo, NUNCA tocar producto
                                 $cotizacion->vehiculo_requerido = $esEliminacion ? null : $valorEditadoTemprano;
+                                Log::info('✅ Vehículo actualizado en cotizacion_models (SIN tocar producto)', [
+                                    'vehiculo' => $valorEditadoTemprano,
+                                    'producto_antes' => $cotizacion->tipo_producto,
+                                    'producto_despues' => $cotizacion->tipo_producto
+                                ]);
                             } elseif ($campoEditadoTemprano === 'producto' || $campoEditadoTemprano === 'tipo_producto') {
+                                // 🔧 FIX BUG #2: Solo actualizar producto, NUNCA tocar vehículo
                                 $cotizacion->tipo_producto = $esEliminacion ? null : $valorEditadoTemprano;
+                                Log::info('✅ Producto actualizado en cotizacion_models (SIN tocar vehículo)', [
+                                    'producto' => $valorEditadoTemprano,
+                                    'vehiculo_antes' => $cotizacion->vehiculo_requerido,
+                                    'vehiculo_despues' => $cotizacion->vehiculo_requerido
+                                ]);
+                            } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg' || $campoEditadoTemprano === 'peso_mercancia') {
+                                // 🔧 FIX BUG #1: Actualizar peso_mercancia en cotizacion_models
+                                $cotizacion->peso_mercancia = $esEliminacion ? 0 : $valorEditadoTemprano;
+                                Log::info('✅ Peso actualizado en cotizacion_models', [
+                                    'peso_nuevo' => $valorEditadoTemprano
+                                ]);
+                            } elseif ($campoEditadoTemprano === 'cantidad') {
+                                $cotizacion->cantidad = $esEliminacion ? 0 : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'valor' || $campoEditadoTemprano === 'valor_declarado') {
+                                $cotizacion->valor_declarado = $esEliminacion ? 0 : $valorEditadoTemprano;
                             } elseif ($campoEditadoTemprano === 'origen' || $campoEditadoTemprano === 'ciudad_origen') {
                                 $cotizacion->ciudad_origen = $esEliminacion ? null : $valorEditadoTemprano;
                             } elseif ($campoEditadoTemprano === 'destino' || $campoEditadoTemprano === 'ciudad_destino') {
                                 $cotizacion->ciudad_destino = $esEliminacion ? null : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                                // 🔧 FIX BUG #1: Actualizar peso_mercancia en cotizacion_models
+                                $cotizacion->peso_mercancia = $esEliminacion ? 0 : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'valor' || $campoEditadoTemprano === 'valor_declarado') {
+                                $cotizacion->valor_declarado = $esEliminacion ? 0 : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'cantidad') {
+                                $cotizacion->cantidad = $esEliminacion ? 0 : $valorEditadoTemprano;
                             }
                             
                             $cotizacion->save();
@@ -2656,7 +2712,7 @@ class MCPAssistantService
                 'producto' => ['producto', 'tipo_producto'],
                 'origen' => ['origen', 'ciudad_origen'],
                 'destino' => ['destino', 'ciudad_destino'],
-                'peso' => ['peso_kg'],
+                'peso' => ['peso_kg', 'peso_mercancia', 'pesoMercancia'], // 🔧 FIX BUG #1: Sincronizar los 3 campos de peso
                 'cantidad' => ['cantidad'],
                 'valor' => ['valor_declarado'],
                 'vehiculo' => ['vehiculo', 'claseVehiculo', 'vehiculo_requerido']
@@ -2778,6 +2834,57 @@ class MCPAssistantService
                         'campo' => $campoEditado,
                         'valor' => $valorEditado
                     ]);
+                    
+                    // 🔧 FIX: También actualizar cotizacion_models si existe
+                    if ($isMultiRouteData && $selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
+                        // Es multi-ruta, actualizar solo la ruta seleccionada
+                        $cotizaciones = \App\Models\CotizacionModel::where('group_cotization_id', $groupId)
+                            ->orderBy('id')
+                            ->get();
+                        
+                        if (isset($cotizaciones[$selectedRouteIndex])) {
+                            $cotizacion = $cotizaciones[$selectedRouteIndex];
+                            
+                            // Actualizar campos según el tipo de edición
+                            if ($campoEditado === 'vehiculo') {
+                                // 🔧 FIX BUG #2: Solo actualizar vehículo, NUNCA tocar producto
+                                $cotizacion->vehiculo_requerido = $valorEditado;
+                                Log::info('✅ Vehículo actualizado en cotizacion_models (edición simple, SIN tocar producto)', [
+                                    'vehiculo' => $valorEditado,
+                                    'producto_mantiene' => $cotizacion->tipo_producto
+                                ]);
+                            } elseif ($campoEditado === 'producto') {
+                                // 🔧 FIX BUG #2: Solo actualizar producto, NUNCA tocar vehículo
+                                $cotizacion->tipo_producto = $valorEditado;
+                                Log::info('✅ Producto actualizado en cotizacion_models (edición simple, SIN tocar vehículo)', [
+                                    'producto' => $valorEditado,
+                                    'vehiculo_mantiene' => $cotizacion->vehiculo_requerido
+                                ]);
+                            } elseif ($campoEditado === 'peso') {
+                                // 🔧 FIX BUG #1: Actualizar peso_mercancia en cotizacion_models
+                                $cotizacion->peso_mercancia = $valorEditado;
+                                Log::info('✅ Peso actualizado en cotizacion_models (edición simple)', [
+                                    'peso_nuevo' => $valorEditado
+                                ]);
+                            } elseif ($campoEditado === 'cantidad') {
+                                $cotizacion->cantidad = $valorEditado;
+                            } elseif ($campoEditado === 'valor') {
+                                $cotizacion->valor_declarado = $valorEditado;
+                            } elseif ($campoEditado === 'origen') {
+                                $cotizacion->ciudad_origen = $valorEditado;
+                            } elseif ($campoEditado === 'destino') {
+                                $cotizacion->ciudad_destino = $valorEditado;
+                            }
+                            
+                            $cotizacion->save();
+                            
+                            Log::info('✅ cotizacion_models ACTUALIZADA (edición simple)', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'campo' => $campoEditado,
+                                'valor' => $valorEditado
+                            ]);
+                        }
+                    }
                 }
             }
             

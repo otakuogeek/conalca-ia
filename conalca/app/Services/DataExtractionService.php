@@ -197,6 +197,12 @@ CAMPOS A EXTRAER (EN ESTE ORDEN):
 7. cantidad - Número de unidades (busca: cantidad, units, bultos, piezas)
 8. observaciones - Detalles especiales (cargue, descargue, protocolo, seguridad, etc.)
 
+⚠️ REGLA CRÍTICA - VEHÍCULOS:
+- Si el mensaje menciona "vehículo X" o "vehiculo X", NO lo extraigas como producto
+- Ejemplos que NO son producto: "vehículo turbo", "vehículo patineta", "vehículo tractomula"
+- El tipo de vehículo se maneja en otro sistema, IGNÓRALO aquí
+- Solo extrae el producto real (mercancía a transportar), NO el vehículo transportador
+
 REGLAS IMPORTANTES:
 ✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg
 ✓ Para números: 72.000 USD → 72000 (quita separadores)
@@ -205,6 +211,7 @@ REGLAS IMPORTANTES:
 ✓ Ejemplo: "importacion cartagena a bogotá" → origen: "Cartagena", destino: "Bogotá"
 ✓ Si dice "Gross Weight: 9900" → peso es 9900
 ✓ Si dice "1X40 HQ" → contenedor es "1X40 HQ"
+✓ Si el mensaje SOLO menciona cambio de vehículo, NO extraigas nada (deja todo en null)
 ✓ NUNCA inventes datos, solo extrae lo visible
 ✓ Responde SOLO en JSON, sin markdown, sin explicaciones
 
