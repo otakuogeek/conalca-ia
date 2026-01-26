@@ -785,12 +785,9 @@ const ChatModal = ({
         if (status === 'completed_with_data') {
           console.log('✅ DATOS RECIBIDOS - Procesando y deteniendo...');
 
-          // Procesar extracted_data - Manejar tanto ARRAY como OBJETO
-          if (data.data.extracted_data) {
-            // Convertir a array si es objeto (ruta única)
-            const allRoutes = Array.isArray(data.data.extracted_data) 
-              ? data.data.extracted_data 
-              : [data.data.extracted_data];
+          // Procesar extracted_data - AHORA PROCESA TODAS LAS RUTAS
+          if (data.data.extracted_data && Array.isArray(data.data.extracted_data)) {
+            const allRoutes = data.data.extracted_data;
             console.log('📦 Rutas extraídas:', allRoutes.length, allRoutes);
 
             if (allRoutes.length > 0) {
@@ -889,11 +886,10 @@ const ChatModal = ({
               // El backend YA actualizó cotizacion_models correctamente
               // Si persistimos, sobrescribimos con datos obsoletos
               
-              console.log('GUARDANDO processedRoutes en cotizacion_models (datos frescos del backend):', processedRoutes);
+              console.log('⚠️ OMITIENDO persistRoutesToDb - el backend ya guardó los cambios');
               
-              // Persistir las rutas FRESCAS del backend inmediatamente
-              await persistRoutesToDb(processedRoutes);
-              await new Promise(resolve => setTimeout(resolve, 300));
+              // Esperar a que el backend termine de actualizar
+              await new Promise(resolve => setTimeout(resolve, 250));
               
               // Obtener datos FRESCOS de BD
               const currentDataFromDB = await fetchCurrentDataFromDB();
@@ -3608,12 +3604,6 @@ const ChatModal = ({
 
           {/* Panel de Detalles de Cotización - React Component */}
           <QuoteDetailsPanel
-            key={`quote-${JSON.stringify(routesData.map(r => ({ 
-              peso: r.peso_kg || r.peso_mercancia || r.pesoMercancia || 0,
-              producto: r.producto || r.tipo_producto,
-              origen: r.ciudadOrigen || r.ciudad_origen,
-              destino: r.ciudadDestino || r.ciudad_destino
-            })))}`}
             routes={routesData}
             selectedProduct={selectedProduct}
             selectedEmpaque={selectedEmpaque}

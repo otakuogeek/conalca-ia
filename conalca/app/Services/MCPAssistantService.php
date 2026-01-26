@@ -1855,10 +1855,54 @@ class MCPAssistantService
                             
                             $cotizacion->save();
                             
-                            Log::info('✅ cotizacion_models ACTUALIZADA (edición simple)', [
+                            Log::info('✅ cotizacion_models ACTUALIZADA (edición simple multi-ruta)', [
                                 'cotizacion_id' => $cotizacion->id,
                                 'campo' => $campoEditadoTemprano,
                                 'valor' => $esEliminacion ? '(eliminado)' : $valorEditadoTemprano
+                            ]);
+                        }
+                    } else {
+                        // 🔧 FIX BUG #1: También actualizar cotizacion_models para RUTA ÚNICA
+                        $cotizacion = \App\Models\CotizacionModel::where('group_cotization_id', $groupId)
+                            ->first();
+                        
+                        if ($cotizacion) {
+                            // Actualizar campos según el tipo de edición
+                            if ($campoEditadoTemprano === 'vehiculo' || in_array($campoEditadoTemprano, ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'])) {
+                                $cotizacion->vehiculo_requerido = $esEliminacion ? null : $valorEditadoTemprano;
+                                Log::info('✅ Vehículo actualizado en cotizacion_models - RUTA ÚNICA', [
+                                    'vehiculo' => $valorEditadoTemprano
+                                ]);
+                            } elseif ($campoEditadoTemprano === 'producto' || $campoEditadoTemprano === 'tipo_producto') {
+                                $cotizacion->tipo_producto = $esEliminacion ? null : $valorEditadoTemprano;
+                                Log::info('✅ Producto actualizado en cotizacion_models - RUTA ÚNICA', [
+                                    'producto' => $valorEditadoTemprano
+                                ]);
+                            } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg' || $campoEditadoTemprano === 'peso_mercancia') {
+                                $cotizacion->peso_mercancia = $esEliminacion ? 0 : $valorEditadoTemprano;
+                                Log::info('✅ Peso actualizado en cotizacion_models - RUTA ÚNICA', [
+                                    'peso_nuevo' => $valorEditadoTemprano
+                                ]);
+                            } elseif ($campoEditadoTemprano === 'cantidad') {
+                                $cotizacion->cantidad = $esEliminacion ? 0 : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'valor' || $campoEditadoTemprano === 'valor_declarado') {
+                                $cotizacion->valor_declarado = $esEliminacion ? 0 : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'origen' || $campoEditadoTemprano === 'ciudad_origen') {
+                                $cotizacion->ciudad_origen = $esEliminacion ? null : $valorEditadoTemprano;
+                            } elseif ($campoEditadoTemprano === 'destino' || $campoEditadoTemprano === 'ciudad_destino') {
+                                $cotizacion->ciudad_destino = $esEliminacion ? null : $valorEditadoTemprano;
+                            }
+                            
+                            $cotizacion->save();
+                            
+                            Log::info('✅ cotizacion_models ACTUALIZADA (edición simple - RUTA ÚNICA)', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'campo' => $campoEditadoTemprano,
+                                'valor' => $esEliminacion ? '(eliminado)' : $valorEditadoTemprano
+                            ]);
+                        } else {
+                            Log::warning('⚠️ No se encontró cotizacion_models para actualizar (ruta única)', [
+                                'group_id' => $groupId
                             ]);
                         }
                     }
@@ -4377,8 +4421,27 @@ class MCPAssistantService
                         'total_elements' => count($extractedData)
                     ]);
                     
+                    // 🔧 FIX BUG #1: Obtener IDs de cotizacion_models para incluir en respuesta
+                    $cotizacionIds = [];
+                    if ($currentGroupId) {
+                        $cotizaciones = \App\Models\CotizacionModel::where('group_cotization_id', $currentGroupId)
+                            ->orderBy('id')
+                            ->pluck('id')
+                            ->toArray();
+                        $cotizacionIds = $cotizaciones;
+                        Log::info('checkRunStatus: IDs de cotizacion_models obtenidos', [
+                            'group_id' => $currentGroupId,
+                            'cotizacion_ids' => $cotizacionIds
+                        ]);
+                    }
+                    
                     foreach ($extractedData as $index => $ruta) {
                         if (!is_array($ruta)) continue; // Saltar si no es un array válido
+                        
+                        // 🔧 FIX BUG #1: Incluir ID de cotizacion_models si existe
+                        if (isset($cotizacionIds[$index]) && !isset($ruta['id'])) {
+                            $extractedData[$index]['id'] = $cotizacionIds[$index];
+                        }
                         
                         // Normalizar valor_mercancia -> valor_declarado
                         if (isset($ruta['valor_mercancia']) && !isset($ruta['valor_declarado'])) {

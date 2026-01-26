@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚠️ DEBES RECARGAR EL NAVEGADOR ⚠️</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 700px;
+            padding: 50px;
+            text-align: center;
+            animation: slideIn 0.5s ease-out;
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .warning-icon {
+            font-size: 120px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        h1 {
+            color: #e74c3c;
+            font-size: 2.5em;
+            margin: 30px 0;
+            font-weight: 900;
+        }
+        .instructions {
+            background: #fff3cd;
+            border: 3px solid #ffc107;
+            border-radius: 15px;
+            padding: 40px;
+            margin: 40px 0;
+        }
+        .keyboard-combo {
+            display: inline-flex;
+            align-items: center;
+            gap: 15px;
+            margin: 30px 0;
+            font-size: 1.8em;
+        }
+        .key {
+            background: #2c3e50;
+            color: white;
+            padding: 20px 30px;
+            border-radius: 12px;
+            font-weight: bold;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            min-width: 80px;
+        }
+        .plus {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+        .problem {
+            background: #ffe6e6;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 5px solid #e74c3c;
+            text-align: left;
+        }
+        .solution {
+            background: #e6ffe6;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 5px solid #27ae60;
+            text-align: left;
+        }
+        .status {
+            background: #e3f2fd;
+            padding: 25px;
+            border-radius: 10px;
+            margin: 30px 0;
+            border: 2px solid #2196F3;
+        }
+        .status strong {
+            color: #1976D2;
+            font-size: 1.2em;
+        }
+        p {
+            font-size: 1.1em;
+            line-height: 1.8;
+            color: #444;
+            margin: 15px 0;
+        }
+        .highlight {
+            background: #ffeb3b;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        @media (max-width: 600px) {
+            .container { padding: 30px 20px; }
+            h1 { font-size: 1.8em; }
+            .key { padding: 15px 20px; min-width: 60px; font-size: 0.9em; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="warning-icon">⚠️</div>
+        <h1>¡DEBES RECARGAR EL NAVEGADOR!</h1>
+        
+        <div class="problem">
+            <h2>😕 ¿Por qué no se actualiza el peso?</h2>
+            <p>El navegador está usando una <span class="highlight">versión antigua del código JavaScript</span>. Por eso solo funciona una vez y luego no se actualizan los cambios.</p>
+        </div>
+
+        <div class="instructions">
+            <h2 style="color: #d35400; margin-bottom: 20px;">📍 HAZ ESTO AHORA:</h2>
+            <p style="font-size: 1.3em; font-weight: bold;">Presiona estas teclas AL MISMO TIEMPO:</p>
+            <div class="keyboard-combo">
+                <span class="key">Ctrl</span>
+                <span class="plus">+</span>
+                <span class="key">Shift</span>
+                <span class="plus">+</span>
+                <span class="key">R</span>
+            </div>
+            <p style="font-size: 0.9em; color: #666;">(En Mac: Cmd + Shift + R)</p>
+        </div>
+
+        <div class="solution">
+            <h2>✅ ¿Qué pasa después de recargar?</h2>
+            <ul style="list-style: none; padding: 0;">
+                <li style="padding: 10px 0;">✅ Verás <strong>50.000 kg</strong> en el panel izquierdo</li>
+                <li style="padding: 10px 0;">✅ Cada cambio de peso se guardará correctamente</li>
+                <li style="padding: 10px 0;">✅ Los datos se sincronizarán automáticamente</li>
+            </ul>
+        </div>
+
+        <div class="status">
+            <strong>Estado Actual:</strong><br><br>
+            📊 Base de datos: <span class="highlight">50.000 kg</span> ✅<br>
+            💾 Registro creado: ID 1521 ✅<br>
+            🚀 Nuevo código compilado: QuoteIndex-7610f595.js ✅<br>
+            🔄 Navegador: <span style="color: red;">Usando versión antigua</span> ❌
+        </div>
+
+        <p style="font-size: 1.3em; font-weight: bold; color: #e74c3c; margin-top: 30px;">
+            ⏰ RECARGA AHORA MISMO CON Ctrl+Shift+R
+        </p>
+    </div>
+</body>
+</html>

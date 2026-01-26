@@ -44,9 +44,10 @@ class QuoteRoutesController extends Controller
                 ], 403);
             }
 
-            Log::info('Guardando rutas del chat', [
+            Log::info('🔍 Guardando rutas del chat - DATOS COMPLETOS', [
                 'group_id' => $request->group_id,
-                'routes_count' => count($request->routes)
+                'routes_count' => count($request->routes),
+                'todas_las_rutas' => $request->routes // 🔥 Ver TODAS las rutas que llegan
             ]);
 
             // ⚠️ PREVENIR DUPLICACIÓN: Obtener IDs existentes y eliminar los que no vienen en la petición
@@ -66,11 +67,16 @@ class QuoteRoutesController extends Controller
             $savedRoutes = [];
 
             foreach ($request->routes as $index => $routeData) {
-                Log::info('Procesando ruta', [
+                // 🔍 DEBUG: Log completo para diagnosticar problema de peso
+                Log::info('🔍 Procesando ruta - DETALLE COMPLETO', [
                     'index'   => $index,
                     'id'      => $routeData['id'] ?? null,
                     'origen'  => $routeData['ciudad_origen'] ?? 'no definido',
-                    'destino' => $routeData['ciudad_destino'] ?? 'no definido'
+                    'destino' => $routeData['ciudad_destino'] ?? 'no definido',
+                    'peso_mercancia_recibido' => $routeData['peso_mercancia'] ?? 'NO ENVIADO',
+                    'peso_mercancia_parseado' => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
+                    'vehiculo_recibido' => $routeData['vehiculo_requerido'] ?? 'NO ENVIADO',
+                    'producto_recibido' => $routeData['producto'] ?? $routeData['tipo_producto'] ?? 'NO ENVIADO'
                 ]);
 
                 $cotization = null;
