@@ -36,17 +36,29 @@ const normalizeRouteData = (ruta, userMessage = '') => {
   const peso = parseFloat(ruta.peso || ruta.peso_kg || 0);
   const incluyeTara = ruta.incluye_tara === true;
   
-  // Detectar si el mensaje dice "sin tara" o similar
+  // Detectar intención del usuario respecto a tara
   const msgLower = userMessage.toLowerCase();
-  const sinTara = /sin\s+tara|no\s+incluye\s+tara|peso\s+neto/i.test(msgLower);
-  const conTara = /tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye/i.test(msgLower);
   
-  if (peso > 0 && !incluyeTara && !conTara) {
-    // Si no incluye tara y no dice "con tara", sumar
+  // 🔧 FIX: Priorizar detección de "mas tara" / "más tara" (usuario quiere agregar tara explícitamente)
+  const quiereAgregarTara = /m[aá]s\s+tara|suma\s+tara|agregar?\s+tara|a[ñn]adir?\s+tara/i.test(msgLower);
+  const sinTara = /sin\s+tara|no\s+incluye\s+tara|peso\s+neto/i.test(msgLower);
+  const conTaraYaIncluida = /tara\s+(?:ya\s+)?incluida|con\s+tara\s+incluida|ya\s+incluye\s+tara/i.test(msgLower);
+  
+  // Lógica de decisión:
+  // 1. Si dice "mas tara" → AGREGAR (máxima prioridad)
+  // 2. Si dice "sin tara" → AGREGAR (peso neto, necesita tara)
+  // 3. Si dice "tara incluida" / "ya incluye tara" → NO agregar
+  // 4. Default: si backend dice incluye_tara: false → AGREGAR
+  const debeAgregarTara = quiereAgregarTara || sinTara || (!incluyeTara && !conTaraYaIncluida);
+  
+  if (peso > 0 && debeAgregarTara) {
     normalized.peso = peso + TARA_KG;
     normalized.peso_kg = peso + TARA_KG;
     normalized.incluye_tara = true;
-    console.log(`🏋️ TARA aplicada en frontend: ${peso} + ${TARA_KG} = ${normalized.peso} kg`);
+    console.log(`🏋️ TARA aplicada en frontend: ${peso} + ${TARA_KG} = ${normalized.peso} kg (razón: ${quiereAgregarTara ? 'mas tara' : sinTara ? 'sin tara' : 'default'})`);
+  } else if (conTaraYaIncluida || incluyeTara) {
+    console.log(`✅ TARA ya incluida, peso se mantiene: ${peso} kg`);
+    normalized.incluye_tara = true;
   }
   
   return normalized;
