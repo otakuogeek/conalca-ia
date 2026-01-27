@@ -30,13 +30,17 @@ class DataExtractionService
      */
     public function extractDataFromMessage(string $userMessage, array $currentData = [], ?int $selectedRouteIndex = null): array
     {
+        // 🔧 FIX: Detectar modo edición para cambiar comportamiento
+        $isEditMode = !empty($currentData) && count($currentData) > 0;
+        
         Log::info('🔍 DataExtractionService: Procesando mensaje con OpenAI', [
             'message_length' => strlen($userMessage),
             'current_data_keys' => array_keys($currentData),
-            'selected_route_index' => $selectedRouteIndex
+            'selected_route_index' => $selectedRouteIndex,
+            'is_edit_mode' => $isEditMode
         ]);
 
-        $systemPrompt = $this->buildSystemPrompt($currentData);
+        $systemPrompt = $this->buildSystemPrompt($currentData, $isEditMode);
         
         try {
             // Llamar a OpenAI API directamente
@@ -182,8 +186,13 @@ class DataExtractionService
      * Construye el prompt del sistema para extracción de datos
      * Optimizado para OpenAI gpt-4o-mini
      */
-    private function buildSystemPrompt(array $currentData): string
+    private function buildSystemPrompt(array $currentData, bool $isEditMode = false): string
     {
+        // 🔧 FIX CRÍTICO: Si estamos en modo edición, usar prompt especial
+        if ($isEditMode) {
+            return $this->buildEditModePrompt($currentData);
+        }
+        
         return <<<'EOT'
 Eres un experto en logística y transporte. Tu tarea es EXTRAER datos de cotizaciones de envíos.
 
@@ -209,7 +218,8 @@ SI DETECTAS MÚLTIPLES RUTAS:
       "producto": "alimentos",
       "valor": 1000000,
       "vehiculo": "turbo",
-      "contenedor": "carga suelta"
+      "contenedor": "carga suelta",
+      "incluye_tara": false
     },
     {
       "origen": "Ciudad3",
@@ -220,7 +230,8 @@ SI DETECTAS MÚLTIPLES RUTAS:
       "producto": "textiles",
       "valor": 2000000,
       "vehiculo": "tractocamión",
-      "contenedor": "contenedor 20 pies"
+      "contenedor": "contenedor 20 pies",
+      "incluye_tara": true
     }
   ],
   "confidence": 0.9
@@ -236,6 +247,12 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 7. valor - Valor declarado en COP
 8. vehiculo - Tipo de vehículo requerido (turbo, tractocamión, sencillo, etc.)
 9. contenedor - Tipo de contenedor o empaque especial
+10. incluye_tara - IMPORTANTE: true si dice "tara incluida", "con tara", "peso bruto"; false si dice "sin tara", "no incluye tara", "peso neto", o NO menciona nada de tara
+
+⚠️ REGLA CRÍTICA DE TARA:
+- Si dice "X kg con tara incluida" o "peso incluye tara" → incluye_tara: true
+- Si dice "X kg sin tara" o "peso no incluye tara" o "peso neto" → incluye_tara: false
+- Si NO menciona nada sobre tara → incluye_tara: false (default)
 
 REGLAS IMPORTANTES:
 ✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg, 2.5 toneladas = 2500 kg
@@ -261,20 +278,72 @@ FORMATO DE RESPUESTA RUTA ÚNICA:
 }
 
 EJEMPLOS MULTI-RUTA:
-Input: "¿me cotizas dos rutas? Una es Bogotá a Cali, 5 toneladas de café en 100 sacos. La otra es Medellín a Barranquilla, 3 toneladas de textiles en 50 cajas"
+Input: "Cotiza dos rutas: Bogotá a Cartagena, 10500 kg con tara incluida, 520 cajas. La segunda Cali a Buenaventura, 2900 kg sin tara, 75 cajas"
 Output: {
   "multi_ruta": true,
   "total_rutas": 2,
   "rutas": [
-    {"origen":"BOGOTA","destino":"CALI","peso":5000,"cantidad":100,"empaque":"sacos","producto":"café","vehiculo":null,"contenedor":null,"valor":null},
-    {"origen":"MEDELLIN","destino":"BARRANQUILLA","peso":3000,"cantidad":50,"empaque":"cajas","producto":"textiles","vehiculo":null,"contenedor":null,"valor":null}
+    {"origen":"BOGOTA","destino":"CARTAGENA","peso":10500,"cantidad":520,"empaque":"cajas","producto":null,"vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":true},
+    {"origen":"CALI","destino":"BUENAVENTURA","peso":2900,"cantidad":75,"empaque":"cajas","producto":null,"vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":false}
   ],
   "confidence":0.9
 }
 
 EJEMPLO RUTA ÚNICA:
 Input: "Necesito enviar 8 toneladas de alimentos de Bogotá a Buenaventura, son 120 cajas, valor 45 millones, en tracto para contenedor de 20 pies"
-Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"BUENAVENTURA","peso":8000,"cantidad":120,"empaque":"cajas","producto":"alimentos","valor":45000000,"vehiculo":"tractocamión","contenedor":"contenedor de 20 pies","confidence":0.95}
+Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"BUENAVENTURA","peso":8000,"cantidad":120,"empaque":"cajas","producto":"alimentos","valor":45000000,"vehiculo":"tractocamión","contenedor":"contenedor de 20 pies","incluye_tara":false,"confidence":0.95}
+EOT;
+    }
+
+    /**
+     * 🔧 FIX CRÍTICO: Prompt especial para modo EDICIÓN
+     * Solo extrae campos EXPLÍCITAMENTE mencionados, NO inventa valores
+     */
+    private function buildEditModePrompt(array $currentData): string
+    {
+        $currentDataJson = json_encode($currentData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        
+        return <<<EOT
+Eres un experto en logística. ESTÁS EN MODO EDICIÓN de una ruta existente.
+
+⚠️ REGLA CRÍTICA - MODO EDICIÓN:
+El usuario quiere MODIFICAR campos específicos de una ruta existente.
+SOLO extrae los campos que el usuario MENCIONA EXPLÍCITAMENTE en su mensaje.
+Para campos NO mencionados, devuelve null - NO inventes ni rellenes datos.
+
+DATOS ACTUALES DE LA RUTA:
+$currentDataJson
+
+CAMPOS POSIBLES:
+- origen: Ciudad de origen (SOLO si menciona origen/recogida/desde)
+- destino: Ciudad de destino (SOLO si menciona destino/entrega/hacia/a)
+- peso: Peso en kg (SOLO si menciona peso/kg/toneladas)
+- cantidad: Número de unidades (SOLO si menciona cantidad/unidades/cajas)
+- empaque: Tipo empaque (SOLO si menciona empaque/embalaje/cajas/bultos)
+- producto: Mercancía (SOLO si menciona producto/mercancía/tipo de producto)
+- valor: Valor declarado (SOLO si menciona valor/precio/millones)
+- vehiculo: Tipo vehículo (SOLO si menciona vehículo/camión/tracto/turbo)
+- contenedor: Tipo contenedor (SOLO si menciona contenedor/20 pies/40 pies)
+
+EJEMPLOS CORRECTOS:
+
+Input: "origen cali, destino bogotá, cantidad 478"
+Output: {"origen":"CALI","destino":"BOGOTA","cantidad":478,"peso":null,"empaque":null,"producto":null,"valor":null,"vehiculo":null,"contenedor":null,"is_edit":true}
+
+Input: "cambia el valor a 50 millones"
+Output: {"valor":50000000,"origen":null,"destino":null,"peso":null,"cantidad":null,"empaque":null,"producto":null,"vehiculo":null,"contenedor":null,"is_edit":true}
+
+Input: "peso 5000 kg"
+Output: {"peso":5000,"origen":null,"destino":null,"cantidad":null,"empaque":null,"producto":null,"valor":null,"vehiculo":null,"contenedor":null,"is_edit":true}
+
+REGLAS:
+✓ SOLO incluir campos que el usuario menciona EXPLÍCITAMENTE
+✓ Devolver null para campos NO mencionados (NO inventar)
+✓ Normalizar ciudades a MAYÚSCULAS sin acentos
+✓ Convertir toneladas a kg (1 ton = 1000 kg)
+✓ Convertir millones a número (45 millones = 45000000)
+✓ Incluir "is_edit": true en la respuesta
+✓ Responder SOLO JSON puro sin markdown
 EOT;
     }
 
@@ -500,6 +569,11 @@ EOT;
                 case 'incoterm':
                     // INCOTERM siempre en mayúsculas
                     $normalized[$key] = mb_strtoupper(trim($value), 'UTF-8');
+                    break;
+                
+                case 'incluye_tara':
+                    // Convertir a booleano explícitamente
+                    $normalized[$key] = filter_var($value, FILTER_VALIDATE_BOOLEAN);
                     break;
 
                 default:

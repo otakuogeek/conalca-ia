@@ -125,6 +125,84 @@ class DataExtractionController extends Controller
                 $validated['selected_route_index'] ?? null // 🆕 Pasar al servicio
             );
 
+            // 🔧 FIX CRÍTICO: En modo edición con multi-rutas, fusionar datos extraídos con datos existentes
+            $selectedRouteIndex = $validated['selected_route_index'] ?? null;
+            $groupId = $validated['group_id'] ?? null;
+            $isEditMode = isset($result['extracted']['is_edit']) || (!empty($validated['current_data']) && $selectedRouteIndex !== null);
+            
+            if ($isEditMode && $groupId !== null && $selectedRouteIndex !== null && !isset($result['multi_ruta'])) {
+                Log::info('🔧 MODO EDICIÓN detectado - fusionando datos', [
+                    'selected_route_index' => $selectedRouteIndex,
+                    'group_id' => $groupId,
+                    'extracted_keys' => array_keys($result['extracted'] ?? [])
+                ]);
+                
+                $group = \App\Models\GroupCotization::find($groupId);
+                if ($group && $group->extracted_data) {
+                    $existingData = json_decode($group->extracted_data, true);
+                    
+                    if (isset($existingData['multi_ruta']) && $existingData['multi_ruta'] === true && isset($existingData['rutas'])) {
+                        // Fusionar SOLO campos no-null del resultado extraído
+                        $extractedFields = $result['extracted'] ?? [];
+                        $rutaIdx = (int) $selectedRouteIndex;
+                        
+                        if (isset($existingData['rutas'][$rutaIdx])) {
+                            $rutaExistente = $existingData['rutas'][$rutaIdx];
+                            
+                            // Solo actualizar campos que OpenAI extrajo (no null)
+                            foreach ($extractedFields as $key => $value) {
+                                if ($value !== null && $key !== 'is_edit') {
+                                    $rutaExistente[$key] = $value;
+                                    Log::info("✏️ Campo '$key' actualizado a: " . json_encode($value));
+                                }
+                            }
+                            
+                            // Actualizar la ruta en el array
+                            $existingData['rutas'][$rutaIdx] = $rutaExistente;
+                            
+                            // Guardar en BD
+                            $group->extracted_data = json_encode($existingData);
+                            $group->save();
+                            
+                            Log::info('💾 Datos fusionados guardados en grupo', [
+                                'group_id' => $groupId,
+                                'ruta_editada' => $rutaIdx,
+                                'campos_actualizados' => array_keys(array_filter($extractedFields, fn($v) => $v !== null))
+                            ]);
+                            
+                            // 🔧 CRÍTICO: Aplicar tara a todas las rutas antes de devolver
+                            $rutasConTara = [];
+                            foreach ($existingData['rutas'] as $idx => $ruta) {
+                                $pesoBase = $ruta['peso'] ?? 0;
+                                $incluyeTara = $ruta['incluye_tara'] ?? false;
+                                
+                                if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                                    $ruta['peso'] = $pesoBase + 3400;
+                                    $ruta['incluye_tara'] = true;
+                                }
+                                $rutasConTara[] = $ruta;
+                            }
+                            
+                            // Devolver las rutas fusionadas completas
+                            return response()->json([
+                                'success' => true,
+                                'data' => [
+                                    'multi_ruta' => true,
+                                    'rutas' => $rutasConTara,
+                                    'total_rutas' => count($rutasConTara),
+                                    'message' => $this->buildEditResponseMessage($extractedFields, $rutaIdx + 1),
+                                    'edited_route_index' => $rutaIdx,
+                                    'metadata' => [
+                                        'confidence' => $result['confidence'] ?? 0.9,
+                                        'is_edit' => true
+                                    ]
+                                ]
+                            ]);
+                        }
+                    }
+                }
+            }
+
             // Generar respuesta conversacional
             $assistantResponse = $this->buildAssistantResponse($result);
 
@@ -157,13 +235,30 @@ class DataExtractionController extends Controller
                         'edited_route_index' => $result['edited_route_index'] ?? null
                     ]);
                     
+                    // 🔧 FIX CRÍTICO: Aplicar tara a las rutas ANTES de enviar al frontend
+                    $rutasConTara = [];
+                    foreach ($extractedData['rutas'] ?? [] as $idx => $ruta) {
+                        $pesoBase = $ruta['peso'] ?? 0;
+                        $incluyeTara = $ruta['incluye_tara'] ?? false;
+                        
+                        if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                            $ruta['peso'] = $pesoBase + 3400;
+                            $ruta['incluye_tara'] = true;
+                            Log::info('🏋️ TARA aplicada para frontend (edición) en ruta ' . ($idx + 1), [
+                                'peso_original' => $pesoBase,
+                                'peso_con_tara' => $ruta['peso']
+                            ]);
+                        }
+                        $rutasConTara[] = $ruta;
+                    }
+                    
                     // Normalizar respuesta para que el frontend la entienda
                     return response()->json([
                         'success' => true,
                         'data' => [
                             'multi_ruta' => true,
-                            'rutas' => $extractedData['rutas'],
-                            'total_rutas' => $extractedData['total_rutas'] ?? count($extractedData['rutas']),
+                            'rutas' => $rutasConTara,
+                            'total_rutas' => $extractedData['total_rutas'] ?? count($rutasConTara),
                             'message' => $assistantResponse,
                             'edited_route_index' => $result['edited_route_index'] ?? null,
                             'metadata' => [
@@ -180,6 +275,24 @@ class DataExtractionController extends Controller
                     'total_rutas' => $result['total_rutas'] ?? 0,
                     'rutas' => $result['rutas'] ?? []
                 ]);
+                
+                // 🔧 FIX CRÍTICO: Aplicar tara a las rutas ANTES de enviar al frontend
+                $rutasConTara = [];
+                foreach ($result['rutas'] ?? [] as $idx => $ruta) {
+                    $pesoBase = $ruta['peso'] ?? 0;
+                    $incluyeTara = $ruta['incluye_tara'] ?? false;
+                    
+                    if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                        $ruta['peso'] = $pesoBase + 3400;
+                        $ruta['incluye_tara'] = true;
+                        Log::info('🏋️ TARA aplicada para frontend en ruta ' . ($idx + 1), [
+                            'peso_original' => $pesoBase,
+                            'peso_con_tara' => $ruta['peso']
+                        ]);
+                    }
+                    $rutasConTara[] = $ruta;
+                }
+                $result['rutas'] = $rutasConTara;
                 
                 // Generar respuesta para multi-ruta
                 $multiRutaResponse = $this->buildMultiRutaResponse($result);
@@ -288,6 +401,41 @@ class DataExtractionController extends Controller
     }
 
     /**
+     * 🔧 FIX: Construye mensaje para respuesta de edición
+     */
+    private function buildEditResponseMessage(array $extractedFields, int $rutaNumero): string
+    {
+        $fieldsUpdated = array_filter($extractedFields, fn($v) => $v !== null && $v !== 'is_edit');
+        
+        if (empty($fieldsUpdated)) {
+            return "✅ No detecté campos para actualizar en la Ruta $rutaNumero.";
+        }
+        
+        $fieldLabels = [
+            'origen' => 'Origen',
+            'destino' => 'Destino',
+            'peso' => 'Peso',
+            'cantidad' => 'Cantidad',
+            'empaque' => 'Empaque',
+            'producto' => 'Producto',
+            'valor' => 'Valor declarado',
+            'vehiculo' => 'Vehículo',
+            'contenedor' => 'Contenedor'
+        ];
+        
+        $response = "✅ **¡Entendido! He actualizado los siguientes campos en la Ruta $rutaNumero:**\n\n";
+        
+        foreach ($fieldsUpdated as $key => $value) {
+            if ($key === 'is_edit') continue;
+            $label = $fieldLabels[$key] ?? ucfirst($key);
+            $formattedValue = $this->formatFieldValue($key, $value);
+            $response .= "- **$label**: $formattedValue\n";
+        }
+        
+        return $response;
+    }
+
+    /**
      * Construye una respuesta conversacional del asistente
      */
     private function buildAssistantResponse(array $extractionResult): string
@@ -392,14 +540,22 @@ class DataExtractionController extends Controller
             $numero = $idx + 1;
             $origen = $ruta['origen'] ?? '?';
             $destino = $ruta['destino'] ?? '?';
-            $peso = $ruta['peso'] ?? '?';
+            
+            // 🔧 FIX: Calcular peso CON TARA si no está incluida
+            $pesoBase = $ruta['peso'] ?? 0;
+            $incluyeTara = $ruta['incluye_tara'] ?? false;
+            $peso = $pesoBase;
+            if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                $peso = $pesoBase + 3400; // Sumar tara
+            }
+            
             $producto = $ruta['producto'] ?? '?';
             $cantidad = $ruta['cantidad'] ?? '?';
             $valor = isset($ruta['valor']) ? number_format($ruta['valor'], 0, ',', '.') : '?';
             $vehiculo = $ruta['vehiculo'] ?? '?';
             
             $response .= "{$numero}. Ruta {$origen} → {$destino}:\n";
-            $response .= "   - Peso: {$peso} kg\n";
+            $response .= "   - Peso: {$peso} kg" . ($incluyeTara ? " (tara incluida)" : " (incluye tara)") . "\n";
             $response .= "   - Producto: {$producto}\n";
             if ($cantidad !== '?') {
                 $empaqueInfo = isset($ruta['empaque']) ? " {$ruta['empaque']}" : ' unidades';
@@ -431,7 +587,7 @@ class DataExtractionController extends Controller
                 return;
             }
             
-            // 🆔 Agregar ID único a cada ruta si no lo tiene
+            // 🆔 Agregar ID único a cada ruta y CALCULAR TARA si no está incluida
             $rutasConId = [];
             foreach ($result['rutas'] ?? [] as $idx => $ruta) {
                 if (!isset($ruta['ruta_id'])) {
@@ -441,6 +597,22 @@ class DataExtractionController extends Controller
                         'index' => $idx
                     ]);
                 }
+                
+                // 🔧 FIX CRÍTICO: Calcular peso CON TARA si no está incluida ANTES de guardar
+                $pesoBase = $ruta['peso'] ?? 0;
+                $incluyeTara = $ruta['incluye_tara'] ?? false;
+                
+                if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                    $ruta['peso'] = $pesoBase + 3400; // Sumar tara
+                    $ruta['incluye_tara'] = true; // Marcar que ahora incluye tara
+                    Log::info('🏋️ TARA agregada a ruta ' . ($idx + 1), [
+                        'peso_original' => $pesoBase,
+                        'peso_con_tara' => $ruta['peso']
+                    ]);
+                } else if ($incluyeTara) {
+                    Log::info('✅ Ruta ' . ($idx + 1) . ' ya incluye tara, peso se mantiene: ' . $pesoBase);
+                }
+                
                 $rutasConId[] = $ruta;
             }
             

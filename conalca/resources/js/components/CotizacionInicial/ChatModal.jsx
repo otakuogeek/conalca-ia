@@ -7,6 +7,51 @@ import QuoteDetailsPanel from './QuoteDetailsPanel';
 import { stripMarkdown, formatMessageTime, detectRouteFromMessage, getCsrfToken } from './utils/chatUtils';
 import { prepareRoutesForPanel, hasAllRequiredData as checkHasAllRequiredData, mapBackendRouteToQuote, createDataHash } from './utils/quoteDataMapper';
 
+// Constante para tara
+const TARA_KG = 3400;
+
+// 🆕 Función para normalizar ciudades a MAYÚSCULAS sin acentos
+const normalizeCiudad = (ciudad) => {
+  if (!ciudad || typeof ciudad !== 'string') return null;
+  // Eliminar acentos y convertir a mayúsculas
+  const sinAcentos = ciudad
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+  return sinAcentos || null;
+};
+
+// 🆕 Función para normalizar datos de ruta (ciudades a MAYÚSCULAS, aplicar tara si necesario)
+const normalizeRouteData = (ruta, userMessage = '') => {
+  const normalized = { ...ruta };
+  
+  // 1. Normalizar ciudades a MAYÚSCULAS
+  if (ruta.origen) normalized.origen = normalizeCiudad(ruta.origen);
+  if (ruta.destino) normalized.destino = normalizeCiudad(ruta.destino);
+  if (ruta.ciudad_origen) normalized.ciudad_origen = normalizeCiudad(ruta.ciudad_origen);
+  if (ruta.ciudad_destino) normalized.ciudad_destino = normalizeCiudad(ruta.ciudad_destino);
+  
+  // 2. Aplicar tara si no está incluida
+  const peso = parseFloat(ruta.peso || ruta.peso_kg || 0);
+  const incluyeTara = ruta.incluye_tara === true;
+  
+  // Detectar si el mensaje dice "sin tara" o similar
+  const msgLower = userMessage.toLowerCase();
+  const sinTara = /sin\s+tara|no\s+incluye\s+tara|peso\s+neto/i.test(msgLower);
+  const conTara = /tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye/i.test(msgLower);
+  
+  if (peso > 0 && !incluyeTara && !conTara) {
+    // Si no incluye tara y no dice "con tara", sumar
+    normalized.peso = peso + TARA_KG;
+    normalized.peso_kg = peso + TARA_KG;
+    normalized.incluye_tara = true;
+    console.log(`🏋️ TARA aplicada en frontend: ${peso} + ${TARA_KG} = ${normalized.peso} kg`);
+  }
+  
+  return normalized;
+};
+
 // 🆕 Palabras que NUNCA pueden ser ciudades válidas (evita bugs de extracción)
 const INVALID_CITY_WORDS = [
   // Meses del año
@@ -1174,36 +1219,41 @@ const ChatModal = ({
         console.log('📦 Datos brutos de rutas:', result.data.rutas);
         
         const rutasMapeadas = result.data.rutas.map((ruta, idx) => {
-          const pesoValue = ruta.peso || ruta.peso_kg || null;
+          // 🔧 FIX: Normalizar ruta (ciudades a MAYÚSCULAS, aplicar tara si necesario)
+          const rutaNormalizada = normalizeRouteData(ruta, messageText);
+          const pesoValue = rutaNormalizada.peso || rutaNormalizada.peso_kg || null;
+          const origenNorm = normalizeCiudad(rutaNormalizada.origen);
+          const destinoNorm = normalizeCiudad(rutaNormalizada.destino);
           
           return {
             ruta_id: ruta.ruta_id || `temp_ruta_${idx + 1}`, // 🆔 Preservar ID único
             ruta_numero: idx + 1,
-            ciudadOrigen: ruta.origen || null,
-            ciudad_origen: ruta.origen || null,
-            ciudadDestino: ruta.destino || null,
-            ciudad_destino: ruta.destino || null,
+            ciudadOrigen: origenNorm,
+            ciudad_origen: origenNorm,
+            ciudadDestino: destinoNorm,
+            ciudad_destino: destinoNorm,
             pesoMercancia: pesoValue,
             peso_mercancia: pesoValue,
             peso_kg: pesoValue,
             peso: pesoValue,
-            cantidadMercancia: ruta.cantidad || null,
-            cantidad: ruta.cantidad || null,
-            cantidad_unidades: ruta.cantidad || null,
-            contenedor: ruta.contenedor || null,
-            tipo_contenedor: ruta.contenedor || null,
-            producto: ruta.producto || null,
-            tipo_producto: ruta.producto || null,
-            tipo_embajale: ruta.empaque || ruta.contenedor || null,
-            empaque: ruta.empaque || null,
-            valorMercancia: ruta.valor || null,
-            valor_declarado: ruta.valor || null,
-            valor_mercancia: ruta.valor || null,
-            vehiculo_requerido: ruta.vehiculo || null,
-            claseVehiculo: ruta.vehiculo || null,
-            vehiculo: ruta.vehiculo || null,
-            incoterm: ruta.incoterm || null,
-            observaciones: ruta.observaciones || null
+            cantidadMercancia: rutaNormalizada.cantidad || null,
+            cantidad: rutaNormalizada.cantidad || null,
+            cantidad_unidades: rutaNormalizada.cantidad || null,
+            contenedor: rutaNormalizada.contenedor || null,
+            tipo_contenedor: rutaNormalizada.contenedor || null,
+            producto: rutaNormalizada.producto || null,
+            tipo_producto: rutaNormalizada.producto || null,
+            tipo_embajale: rutaNormalizada.empaque || rutaNormalizada.contenedor || null,
+            empaque: rutaNormalizada.empaque || null,
+            valorMercancia: rutaNormalizada.valor || null,
+            valor_declarado: rutaNormalizada.valor || null,
+            valor_mercancia: rutaNormalizada.valor || null,
+            vehiculo_requerido: rutaNormalizada.vehiculo || null,
+            claseVehiculo: rutaNormalizada.vehiculo || null,
+            vehiculo: rutaNormalizada.vehiculo || null,
+            incoterm: rutaNormalizada.incoterm || null,
+            observaciones: rutaNormalizada.observaciones || null,
+            incluye_tara: rutaNormalizada.incluye_tara || false
           };
         });
         
@@ -1243,33 +1293,41 @@ const ChatModal = ({
       if (result.data?.extracted && Object.keys(result.data.extracted).length > 0) {
         const extractedData = result.data.extracted;
         
-        // 🔧 FIX: Calcular peso una sola vez y sincronizar todos los campos
-        const pesoValue = extractedData.peso || currentData.pesoMercancia || currentData.peso_mercancia || null;
+        // 🔧 FIX: Normalizar datos (ciudades a MAYÚSCULAS, aplicar tara si necesario)
+        const datosNormalizados = normalizeRouteData(extractedData, messageText);
+        
+        // 🔧 FIX: Calcular peso con tara ya aplicada
+        const pesoValue = datosNormalizados.peso || datosNormalizados.peso_kg || currentData.pesoMercancia || currentData.peso_mercancia || null;
+        
+        // Normalizar ciudades a MAYÚSCULAS
+        const origenNorm = normalizeCiudad(datosNormalizados.origen || currentData.ciudadOrigen || currentData.ciudad_origen);
+        const destinoNorm = normalizeCiudad(datosNormalizados.destino || currentData.ciudadDestino || currentData.ciudad_destino);
 
         const mappedData = {
-          ciudadOrigen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
-          ciudad_origen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
-          ciudadDestino: extractedData.destino || currentData.ciudadDestino || currentData.ciudad_destino || null,
-          ciudad_destino: extractedData.destino || currentData.ciudadDestino || currentData.ciudad_destino || null,
+          ciudadOrigen: origenNorm,
+          ciudad_origen: origenNorm,
+          ciudadDestino: destinoNorm,
+          ciudad_destino: destinoNorm,
           // 🔧 FIX CRÍTICO: Sincronizar los 3 campos de peso
           pesoMercancia: pesoValue,
           peso_mercancia: pesoValue,
           peso_kg: pesoValue,
-          cantidadMercancia: extractedData.cantidad || currentData.cantidadMercancia || currentData.cantidad_unidades || null,
-          cantidad: extractedData.cantidad || currentData.cantidadMercancia || currentData.cantidad || null,
-          contenedor: extractedData.contenedor || currentData.contenedor || null,
-          producto: extractedData.producto || currentData.producto || null,
-          tipo_producto: extractedData.producto || currentData.tipo_producto || null,
-          tipo_embajale: extractedData.contenedor || currentData.tipo_embajale || currentData.empaque || null,
-          tipo_embalaje: extractedData.contenedor || currentData.tipo_embalaje || currentData.empaque || null,
-          empaque: extractedData.empaque || currentData.empaque || null,
-          valorMercancia: extractedData.valor || currentData.valorMercancia || currentData.valor_mercancia || null,
-          valor_declarado: extractedData.valor || currentData.valorMercancia || currentData.valor_declarado || null,
-          vehiculo: extractedData.vehiculo || currentData.vehiculo || null,
-          vehiculo_requerido: extractedData.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
-          claseVehiculo: extractedData.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
-          incoterm: extractedData.incoterm || currentData.incoterm || null,
-          observaciones: extractedData.observaciones || currentData.observaciones || null
+          cantidadMercancia: datosNormalizados.cantidad || currentData.cantidadMercancia || currentData.cantidad_unidades || null,
+          cantidad: datosNormalizados.cantidad || currentData.cantidadMercancia || currentData.cantidad || null,
+          contenedor: datosNormalizados.contenedor || currentData.contenedor || null,
+          producto: datosNormalizados.producto || currentData.producto || null,
+          tipo_producto: datosNormalizados.producto || currentData.tipo_producto || null,
+          tipo_embajale: datosNormalizados.contenedor || currentData.tipo_embajale || currentData.empaque || null,
+          tipo_embalaje: datosNormalizados.contenedor || currentData.tipo_embalaje || currentData.empaque || null,
+          empaque: datosNormalizados.empaque || currentData.empaque || null,
+          valorMercancia: datosNormalizados.valor || currentData.valorMercancia || currentData.valor_mercancia || null,
+          valor_declarado: datosNormalizados.valor || currentData.valorMercancia || currentData.valor_declarado || null,
+          vehiculo: datosNormalizados.vehiculo || currentData.vehiculo || null,
+          vehiculo_requerido: datosNormalizados.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
+          claseVehiculo: datosNormalizados.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
+          incoterm: datosNormalizados.incoterm || currentData.incoterm || null,
+          observaciones: datosNormalizados.observaciones || currentData.observaciones || null,
+          incluye_tara: datosNormalizados.incluye_tara || false
         };
 
         // 🆕 NO sobrescribir si ya hay múltiples rutas (evitar perder multi-ruta),
@@ -2331,47 +2389,69 @@ const ChatModal = ({
 
             const mensajeLower = messageText.toLowerCase();
 
-            // Detectar si menciona "NO incluye tara" o "sin tara"
-            const noIncluyeTara =
-              mensajeLower.includes('no incluye tara') ||
-              mensajeLower.includes('sin tara') ||
-              mensajeLower.includes('no incluir tara') ||
-              mensajeLower.includes('peso sin tara') ||
-              mensajeLower.includes('peso neto') ||
-              mensajeLower.includes('tara no incluida');
+            // 🆕 Detectar si dice "tara incluida" o "incluye tara" - significa que el peso YA tiene la tara
+            // SOLO en este caso NO sumamos
+            const taraYaIncluida =
+              mensajeLower.includes('tara incluida') ||
+              mensajeLower.includes('incluye tara') ||
+              mensajeLower.includes('con tara incluida') ||
+              mensajeLower.includes('peso con tara') ||
+              mensajeLower.includes('peso incluye tara') ||
+              mensajeLower.includes('ya incluye tara') ||
+              mensajeLower.includes('tara ya incluida') ||
+              mensajeLower.includes('con la tara incluida') ||
+              mensajeLower.includes('tara ya sumada');
 
             // 🔴 IMPORTANTE: El backend YA calcula la tara en MCPAssistantService.php
             // Si el backend ya la calculó, viene incluye_tara: true en los datos
             // NO debemos calcularla de nuevo en el frontend
             const backendYaAgregoTara = routesArray.some(route => route.incluye_tara === true);
 
-            // Solo agregar tara en frontend si:
-            // 1. Se menciona explícitamente en el mensaje
-            // 2. NO dice que NO incluye
-            // 3. El backend NO la agregó ya
-            const mencionaTara = !noIncluyeTara && !backendYaAgregoTara && (
-              mensajeLower.includes('incluir tara') ||
-              mensajeLower.includes('incluye tara') ||
-              mensajeLower.includes('tara incluida') ||
+            // 🆕 NUEVA LÓGICA DE TARA:
+            // - Si dice "tara incluida" / "incluye tara" → NO sumar (el peso ya la tiene)
+            // - Si dice "sin tara" / "no incluye tara" → SUMAR (el peso no la tiene, hay que agregarla)
+            // - Si NO menciona nada de tara → SUMAR automáticamente 3400 kg
+            // - Si dice "suma tara" / "agrega tara" → SUMAR (comando explícito)
+            const comandoExplicitoSumar = 
               mensajeLower.includes('suma tara') ||
               mensajeLower.includes('suma el tara') ||
               mensajeLower.includes('suma la tara') ||
               mensajeLower.includes('sumar tara') ||
-              mensajeLower.includes('con tara') ||
-              mensajeLower.includes('más tara') ||
-              mensajeLower.includes('mas tara') ||
-              mensajeLower.includes('agregar tara') ||
               mensajeLower.includes('agrega tara') ||
-              mensajeLower.includes('añadir tara') ||
               mensajeLower.includes('añade tara') ||
-              mensajeLower.includes('peso incluye tara') ||
-              mensajeLower.includes('peso con tara') ||
-              mensajeLower.includes('tara sumada')
-            );
+              mensajeLower.includes('añadir tara') ||
+              mensajeLower.includes('agregar tara') ||
+              mensajeLower.includes('pon tara') ||
+              mensajeLower.includes('coloca tara') ||
+              mensajeLower.includes('más tara') ||
+              mensajeLower.includes('mas tara');
 
-            console.log('🔍 Detección de TARA:', { mencionaTara, noIncluyeTara, backendYaAgregoTara, mensaje: mensajeLower.substring(0, 100) });
+            // Detectar comando de quitar tara (caso especial para ediciones)
+            const comandoQuitarTara =
+              mensajeLower.includes('quita la tara') ||
+              mensajeLower.includes('quita tara') ||
+              mensajeLower.includes('remueve la tara') ||
+              mensajeLower.includes('remover la tara') ||
+              mensajeLower.includes('elimina la tara') ||
+              mensajeLower.includes('eliminar tara') ||
+              mensajeLower.includes('resta tara') ||
+              mensajeLower.includes('descuenta tara');
 
-            const TARA_KG = 3400;
+            // Determinar si debemos sumar tara:
+            // SUMAR si: NO dice que ya la incluye Y el backend no la agregó
+            // (incluye los casos: "sin tara", "no incluye tara", o sin mencionar nada)
+            const debeAgregarTaraAuto = !taraYaIncluida && !backendYaAgregoTara && !comandoQuitarTara;
+
+            console.log('🔍 Detección de TARA:', { 
+              taraYaIncluida, 
+              backendYaAgregoTara, 
+              comandoExplicitoSumar,
+              comandoQuitarTara,
+              debeAgregarTaraAuto,
+              mensaje: mensajeLower.substring(0, 100) 
+            });
+
+            // TARA_KG ya está definida globalmente al inicio del archivo
 
             // 🆕 Si hay una ruta seleccionada para edición y solo viene 1 ruta en los datos,
             // aplicar los cambios SOLO a esa ruta, manteniendo las demás intactas
@@ -2409,48 +2489,28 @@ const ChatModal = ({
                   };
 
                   // Esta es la ruta que se está editando - fusionar cambios SOLO de campos que vienen
+                  // 🔧 FIX CRÍTICO: El peso YA viene con tara aplicada desde el backend
+                  // NO volver a agregar tara aquí - confiar 100% en el backend
                   const pesoBase = Number(normalizedEdited.peso_kg ?? existingRoute.pesoMercancia ?? 0) || 0;
+                  
+                  // 🔧 FIX: El backend ya maneja la tara, solo necesitamos saber si quitar explícitamente
                   const backendYaTieneTara = normalizedEdited.incluye_tara === true;
                   const existingIncluyeTara = existingRoute.incluye_tara === true;
                   
-                  // 🆕 COMANDO EXPLÍCITO: Si el usuario dice "agrega tara" o "suma tara", SIEMPRE sumar
-                  const comandoExplicitoAgregar = 
-                    mensajeLower.includes('agrega tara') ||
-                    mensajeLower.includes('añade tara') ||
-                    mensajeLower.includes('suma tara') ||
-                    mensajeLower.includes('suma el tara') ||
-                    mensajeLower.includes('suma la tara') ||
-                    mensajeLower.includes('sumar tara') ||
-                    mensajeLower.includes('pon tara') ||
-                    mensajeLower.includes('coloca tara');
-                  
-                  const wantsRemoveTara = noIncluyeTara
-                    || mensajeLower.includes('quita la tara')
-                    || mensajeLower.includes('quita tara')
-                    || mensajeLower.includes('remueve la tara')
-                    || mensajeLower.includes('remover la tara')
-                    || mensajeLower.includes('elimina la tara')
-                    || mensajeLower.includes('sin tara');
-
-                  // Si es comando explícito, SIEMPRE agregar (ignorar si ya existe)
-                  const willAddTara = !wantsRemoveTara && (
-                    comandoExplicitoAgregar || 
-                    (mencionaTara && !backendYaTieneTara && !existingIncluyeTara)
-                  );
-                  const willRemoveTara = wantsRemoveTara && existingIncluyeTara;
+                  // 🆕 SIMPLIFICADO: Solo quitar tara si el usuario lo pide explícitamente
+                  // NUNCA agregar tara aquí - el backend ya lo hizo
+                  const willRemoveTara = comandoQuitarTara && (backendYaTieneTara || existingIncluyeTara);
 
                   let pesoFinal = pesoBase;
-                  if (willAddTara && pesoBase > 0) {
-                    pesoFinal = parseFloat(pesoBase) + TARA_KG;
-                    console.log(`🏋️ TARA AGREGADA - Ruta ${idx + 1}: ${pesoBase} kg + ${TARA_KG} kg (tara) = ${pesoFinal} kg`);
-                  } else if (willRemoveTara && pesoBase > TARA_KG) {
+                  if (willRemoveTara && pesoBase > TARA_KG) {
                     pesoFinal = parseFloat(pesoBase) - TARA_KG;
-                    console.log(`🏋️ TARA REMOVIDA - Ruta ${idx + 1}: ${pesoBase} kg - ${TARA_KG} kg (tara) = ${pesoFinal} kg`);
+                    console.log(`🏋️ TARA REMOVIDA (por usuario) - Ruta ${idx + 1}: ${pesoBase} kg - ${TARA_KG} kg (tara) = ${pesoFinal} kg`);
+                  } else {
+                    console.log(`✅ Peso recibido del backend - Ruta ${idx + 1}: ${pesoBase} kg (tara ya aplicada por backend: ${backendYaTieneTara})`);
                   }
 
-                  const incluyeTara = willRemoveTara
-                    ? false
-                    : (backendYaTieneTara || existingIncluyeTara || willAddTara);
+                  // La tara está incluida si: viene del backend O ya existía Y no se quitó
+                  const incluyeTara = willRemoveTara ? false : (backendYaTieneTara || existingIncluyeTara);
 
                   const mergedRoute = {
                     ...existingRoute,
@@ -2502,24 +2562,21 @@ const ChatModal = ({
                     destino: normalizedEdited.destino !== undefined,
                     peso: normalizedEdited.peso_kg !== undefined,
                     pesoFinal,
-                    willAddTara,
                     willRemoveTara,
                     cantidad: normalizedEdited.cantidad !== undefined,
                     producto: normalizedEdited.producto !== undefined
                   });
                   console.log('🔍 Resultado merge:', mergedRoute);
                   
-                  // 🆕 Mensaje de confirmación cuando se agrega/quita tara
-                  if ((willAddTara || willRemoveTara) && onUpdateMessages) {
-                    taraWasModified = true; // Marcar que hubo modificación de tara
+                  // 🆕 Mensaje de confirmación solo cuando se QUITA tara (agregar ya no aplica)
+                  if (willRemoveTara && onUpdateMessages) {
+                    taraWasModified = true;
                     setTimeout(() => {
                       onUpdateMessages(prevMessages => [
                         ...prevMessages,
                         {
                           role: 'system',
-                          text: willAddTara 
-                            ? `✅ Tara agregada a Ruta ${idx + 1}: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg + 3,400 kg = ${pesoFinal.toLocaleString('es-CO')} kg total`
-                            : `✅ Tara removida de Ruta ${idx + 1}: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg - 3,400 kg = ${pesoFinal.toLocaleString('es-CO')} kg`,
+                          text: `✅ Tara removida de Ruta ${idx + 1}: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg - 3,400 kg = ${pesoFinal.toLocaleString('es-CO')} kg`,
                           created_at: new Date().toLocaleTimeString()
                         }
                       ]);
@@ -2612,35 +2669,36 @@ const ChatModal = ({
             });
 
             const processedRoutes = routesArray.map((routeData, idx) => {
+              // 🔧 FIX CRÍTICO: El peso YA viene con tara aplicada desde el backend
+              // NO volver a agregar tara aquí - confiar 100% en el backend
               const pesoBase = Number(routeData.peso_kg ?? 0) || 0;
               const backendIncluyeTara = routeData.incluye_tara === true;
               const existingRoute = shouldReplace ? {} : (prevArray[idx] || {});
               const existingIncluyeTara = existingRoute.incluye_tara === true;
-              const wantsRemoveTara = noIncluyeTara;
 
-              const willAddTara = !wantsRemoveTara && mencionaTara && !backendIncluyeTara && !existingIncluyeTara;
-              const willRemoveTara = wantsRemoveTara && existingIncluyeTara;
+              // 🆕 SIMPLIFICADO: Solo quitar tara si el usuario lo pide explícitamente
+              // NUNCA agregar tara aquí - el backend ya lo hizo
+              const willRemoveTara = comandoQuitarTara && (backendIncluyeTara || existingIncluyeTara);
 
               let pesoFinal = pesoBase;
-              if (willAddTara && pesoBase > 0) {
-                pesoFinal = parseFloat(pesoBase) + TARA_KG;
-              } else if (willRemoveTara && pesoBase > TARA_KG) {
+              if (willRemoveTara && pesoBase > TARA_KG) {
                 pesoFinal = parseFloat(pesoBase) - TARA_KG;
+                console.log(`🏋️ TARA REMOVIDA (por usuario) - Ruta ${idx + 1}: ${pesoBase} kg - ${TARA_KG} kg`);
+              } else {
+                console.log(`✅ Peso recibido del backend - Ruta ${idx + 1}: ${pesoBase} kg (tara ya aplicada: ${backendIncluyeTara})`);
               }
 
-              const incluyeTara = willRemoveTara
-                ? false
-                : (backendIncluyeTara || existingIncluyeTara || willAddTara);
+              // La tara está incluida si viene del backend O ya existía Y no se quitó
+              const incluyeTara = willRemoveTara ? false : (backendIncluyeTara || existingIncluyeTara);
 
-              // Si es la primera ruta con tara agregada por el usuario, mostrar mensaje
-              if (idx === 0 && willAddTara && pesoBase > 0 && onUpdateMessages) {
-                console.log(`🏋️ TARA DETECTADA - Sumando ${TARA_KG} kg al peso base ${pesoBase} kg`);
+              // Mostrar mensaje informativo si el backend incluyó tara
+              if (idx === 0 && backendIncluyeTara && pesoBase > 0 && onUpdateMessages) {
                 setTimeout(() => {
                   onUpdateMessages(prevMessages => [
                     ...prevMessages,
                     {
                       role: 'assistant',
-                      text: `✅ Tara agregada: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg + 3,400 kg (tara) = ${pesoFinal.toLocaleString('es-CO')} kg total`,
+                      text: `✅ Peso con tara incluida: ${parseFloat(pesoBase).toLocaleString('es-CO')} kg (tara ya aplicada por el sistema)`,
                       created_at: new Date().toLocaleTimeString()
                     }
                   ]);
