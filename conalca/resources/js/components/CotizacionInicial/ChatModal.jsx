@@ -94,6 +94,7 @@ const ChatModal = ({
   const lastProcessedDataHashRef = useRef(null);
   const routeFieldLocksRef = useRef({});
   const pendingFieldLocksRef = useRef({});
+  const [panelKey, setPanelKey] = useState(0); // 🆕 Key para forzar actualización del panel
 
   const resetRouteLocks = () => {
     routeFieldLocksRef.current = {};
@@ -229,9 +230,14 @@ const ChatModal = ({
 
   const applyLocksToRoute = (route, idx) => {
     const locks = routeFieldLocksRef.current[idx];
-    if (!locks || Object.keys(locks).length === 0) return route;
+    console.log(`🔒 applyLocksToRoute - Ruta ${idx}:`, { route, locks });
+    
+    if (!locks || Object.keys(locks).length === 0) {
+      console.log(`🔒 applyLocksToRoute - Ruta ${idx}: No hay locks, retornando ruta sin cambios`);
+      return route;
+    }
 
-    let updatedRoute = route;
+    let updatedRoute = { ...route }; // 🔥 IMPORTANTE: Preservar TODOS los campos de la ruta
 
     if (locks.peso) {
       const lockPesoValue = locks.peso.value;
@@ -290,35 +296,58 @@ const ChatModal = ({
       };
     }
 
+    console.log(`🔒 applyLocksToRoute - Ruta ${idx} resultado:`, updatedRoute);
     return updatedRoute;
   };
 
   const finalizeQuoteDataUpdate = (value) => {
+    console.log('🔒 finalizeQuoteDataUpdate - input:', value);
+    
     if (!value) return value;
 
     const isArrayValue = Array.isArray(value);
     const isObjectValue = typeof value === 'object';
 
     if (!isArrayValue && !isObjectValue) {
+      console.log('🔒 finalizeQuoteDataUpdate - no es array ni objeto, retornando sin cambios');
       return value;
     }
 
     if (!isArrayValue && Object.keys(value || {}).length === 0) {
+      console.log('🔒 finalizeQuoteDataUpdate - objeto vacío, retornando sin cambios');
       return value;
     }
 
     const routes = (isArrayValue ? value : [value]).map(route => ({ ...route }));
+    console.log('🔒 finalizeQuoteDataUpdate - routes antes de locks:', routes);
+    
     commitPendingLocks(routes);
     const lockedRoutes = routes.map((route, idx) => applyLocksToRoute(route, idx));
-    return isArrayValue ? lockedRoutes : lockedRoutes[0];
+    
+    console.log('🔒 finalizeQuoteDataUpdate - routes después de locks:', lockedRoutes);
+    
+    const result = isArrayValue ? lockedRoutes : lockedRoutes[0];
+    console.log('🔒 finalizeQuoteDataUpdate - resultado final:', result);
+    
+    return result;
   };
 
   const updateQuoteData = useCallback(
     (updater) => {
-      if (!setQuoteData) return;
+      console.log('🔧 updateQuoteData llamado con:', updater);
+      console.log('🔧 setQuoteData disponible:', !!setQuoteData);
+      
+      if (!setQuoteData) {
+        console.error('❌ setQuoteData no está disponible!');
+        return;
+      }
+      
       setQuoteData(prev => {
+        console.log('🔧 setQuoteData ejecutándose - valor anterior:', prev);
         const nextValue =
           typeof updater === 'function' ? updater(prev) : updater;
+        console.log('🔧 setQuoteData - nuevo valor:', nextValue);
+        console.log('🔧 setQuoteData - tipo nuevo valor:', Array.isArray(nextValue) ? 'array' : typeof nextValue);
         return finalizeQuoteDataUpdate(nextValue);
       });
     },
@@ -350,6 +379,8 @@ const ChatModal = ({
     if (process.env.NODE_ENV === 'development' && Array.isArray(quoteData) && quoteData.length > 0) {
       console.log('📊 quoteData actualizado:', quoteData.length, 'ruta(s)');
     }
+    // 🆕 Incrementar panelKey para forzar actualización del panel
+    setPanelKey(prev => prev + 1);
   }, [quoteData]);
 
 
@@ -537,12 +568,14 @@ const ChatModal = ({
 
   // Calcular routesData para QuoteDetailsPanel (memoizado para evitar recálculos innecesarios)
   const routesData = useMemo(() => {
-    console.log('📊 routesData useMemo ejecutándose:', {
+    console.log('�🔥🔥 ============ routesData useMemo EJECUTÁNDOSE ============ 🔥🔥🔥');
+    console.log('�📊 routesData useMemo ejecutándose:', {
       quoteData_type: Array.isArray(quoteData) ? 'array' : typeof quoteData,
       quoteData_length: Array.isArray(quoteData) ? quoteData.length : 'N/A',
       quoteData: quoteData,
       timestamp: new Date().toISOString()
     });
+    console.log('🔍 routesData - Detalles de quoteData:', JSON.stringify(quoteData, null, 2));
 
     // Caso 1: quoteData es array (multi-ruta)
     if (Array.isArray(quoteData) && quoteData.length > 0) {
@@ -580,6 +613,7 @@ const ChatModal = ({
         length: result.length,
         data: result
       });
+      console.log('✅ routesData - Retornando array con', result.length, 'rutas');
       return result;
     }
     // Caso 2: quoteData es objeto con datos
@@ -1134,26 +1168,104 @@ const ChatModal = ({
 
       const result = await response.json();
 
-      // PROCESAR DATOS EXTRAÍDOS
+      // 🚛 PRIORIDAD 1: Procesar MULTI-RUTA primero
+      if (result.data?.multi_ruta && result.data?.rutas && Array.isArray(result.data.rutas)) {
+        console.log('🚛 Multi-ruta detectada en frontend:', result.data.rutas.length, 'rutas');
+        console.log('📦 Datos brutos de rutas:', result.data.rutas);
+        
+        const rutasMapeadas = result.data.rutas.map((ruta, idx) => {
+          const pesoValue = ruta.peso || ruta.peso_kg || null;
+          
+          return {
+            ruta_id: ruta.ruta_id || `temp_ruta_${idx + 1}`, // 🆔 Preservar ID único
+            ruta_numero: idx + 1,
+            ciudadOrigen: ruta.origen || null,
+            ciudad_origen: ruta.origen || null,
+            ciudadDestino: ruta.destino || null,
+            ciudad_destino: ruta.destino || null,
+            pesoMercancia: pesoValue,
+            peso_mercancia: pesoValue,
+            peso_kg: pesoValue,
+            peso: pesoValue,
+            cantidadMercancia: ruta.cantidad || null,
+            cantidad: ruta.cantidad || null,
+            cantidad_unidades: ruta.cantidad || null,
+            contenedor: ruta.contenedor || null,
+            tipo_contenedor: ruta.contenedor || null,
+            producto: ruta.producto || null,
+            tipo_producto: ruta.producto || null,
+            tipo_embajale: ruta.empaque || ruta.contenedor || null,
+            empaque: ruta.empaque || null,
+            valorMercancia: ruta.valor || null,
+            valor_declarado: ruta.valor || null,
+            valor_mercancia: ruta.valor || null,
+            vehiculo_requerido: ruta.vehiculo || null,
+            claseVehiculo: ruta.vehiculo || null,
+            vehiculo: ruta.vehiculo || null,
+            incoterm: ruta.incoterm || null,
+            observaciones: ruta.observaciones || null
+          };
+        });
+        
+        console.log('📝 Rutas mapeadas para updateQuoteData:', rutasMapeadas);
+        console.log('� CANTIDAD de rutas a enviar:', rutasMapeadas.length);
+        console.log('📝 Ruta 0:', rutasMapeadas[0]);
+        if (rutasMapeadas[1]) console.log('📝 Ruta 1:', rutasMapeadas[1]);
+        console.log('🔍 Antes de updateQuoteData - quoteData actual:', quoteData);
+        console.log('🔍 Antes de updateQuoteData - tipo:', Array.isArray(quoteData) ? 'array' : typeof quoteData);
+        
+        console.log('🚀 LLAMANDO updateQuoteData con', rutasMapeadas.length, 'rutas');
+        updateQuoteData(rutasMapeadas);
+        
+        // Verificar actualización después de un ciclo
+        setTimeout(() => {
+          console.log('✅ Después de updateQuoteData - quoteData:', quoteData);
+          console.log('✅ Después de updateQuoteData - tipo:', Array.isArray(quoteData) ? 'array' : typeof quoteData);
+        }, 100);
+        
+        // Agregar mensaje del asistente
+        if (result.data?.message && onUpdateMessages) {
+          setTimeout(() => {
+            onUpdateMessages(prev => [...prev, { 
+              role: 'assistant', 
+              text: result.data.message, 
+              created_at: new Date().toLocaleTimeString() 
+            }]);
+          }, 200);
+        }
+        
+        console.log('========== FIN processMessageWithAI (Multi-ruta) ==========\n');
+        return result.data;
+      }
+
+      // PROCESAR DATOS EXTRAÍDOS (RUTA ÚNICA)
       // 🔴 CRÍTICO: NO sobrescribir si ya hay múltiples rutas detectadas
       if (result.data?.extracted && Object.keys(result.data.extracted).length > 0) {
         const extractedData = result.data.extracted;
+        
+        // 🔧 FIX: Calcular peso una sola vez y sincronizar todos los campos
+        const pesoValue = extractedData.peso || currentData.pesoMercancia || currentData.peso_mercancia || null;
 
         const mappedData = {
           ciudadOrigen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
           ciudad_origen: extractedData.origen || currentData.ciudadOrigen || currentData.ciudad_origen || null,
           ciudadDestino: extractedData.destino || currentData.ciudadDestino || currentData.ciudad_destino || null,
           ciudad_destino: extractedData.destino || currentData.ciudadDestino || currentData.ciudad_destino || null,
-          pesoMercancia: extractedData.peso || currentData.pesoMercancia || currentData.peso_mercancia || null,
-          peso_mercancia: extractedData.peso || currentData.pesoMercancia || currentData.peso_mercancia || null,
+          // 🔧 FIX CRÍTICO: Sincronizar los 3 campos de peso
+          pesoMercancia: pesoValue,
+          peso_mercancia: pesoValue,
+          peso_kg: pesoValue,
           cantidadMercancia: extractedData.cantidad || currentData.cantidadMercancia || currentData.cantidad_unidades || null,
           cantidad: extractedData.cantidad || currentData.cantidadMercancia || currentData.cantidad || null,
           contenedor: extractedData.contenedor || currentData.contenedor || null,
           producto: extractedData.producto || currentData.producto || null,
           tipo_producto: extractedData.producto || currentData.tipo_producto || null,
           tipo_embajale: extractedData.contenedor || currentData.tipo_embajale || currentData.empaque || null,
+          tipo_embalaje: extractedData.contenedor || currentData.tipo_embalaje || currentData.empaque || null,
+          empaque: extractedData.empaque || currentData.empaque || null,
           valorMercancia: extractedData.valor || currentData.valorMercancia || currentData.valor_mercancia || null,
           valor_declarado: extractedData.valor || currentData.valorMercancia || currentData.valor_declarado || null,
+          vehiculo: extractedData.vehiculo || currentData.vehiculo || null,
           vehiculo_requerido: extractedData.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
           claseVehiculo: extractedData.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
           incoterm: extractedData.incoterm || currentData.incoterm || null,
@@ -1657,12 +1769,21 @@ const ChatModal = ({
 
         // Procesar datos extraídos para llenar campos
         // 🔴 SOLO procesar si hay datos reales (no array vacío ni objeto vacío)
+        // 🆕 Y SOLO si processMessageWithAI no los procesó ya (para evitar sobrescribir)
         const hasRealExtractedData = data.data.extracted_data && (
           (Array.isArray(data.data.extracted_data) && data.data.extracted_data.length > 0) ||
           (!Array.isArray(data.data.extracted_data) && Object.keys(data.data.extracted_data).length > 0)
         );
 
-        if (hasRealExtractedData) {
+        // 🔥 CRITICAL FIX: Si tenemos multi-ruta activa, NO procesar extracted_data de /api/chat/quote
+        // porque processMessageWithAI ya lo hizo correctamente
+        const hasActiveMultiRoute = Array.isArray(quoteData) && quoteData.length > 1;
+        const shouldSkipExtractedData = hasActiveMultiRoute && hasRealExtractedData;
+
+        if (shouldSkipExtractedData) {
+          console.log('⏭️ SALTANDO procesamiento de extracted_data porque processMessageWithAI ya lo procesó correctamente');
+          console.log('📊 quoteData actual tiene', quoteData.length, 'rutas - preservando estado');
+        } else if (hasRealExtractedData) {
           console.log('✅ Datos extraídos recibidos, auto-llenando campos:', data.data.extracted_data);
 
           // 🆕 DETECTAR SI ES ARRAY (MULTI-RUTA) O OBJETO (RUTA ÚNICA)
@@ -1743,17 +1864,23 @@ const ChatModal = ({
 
           // 🔴 CRÍTICO: MAPEAR CADA RUTA CON LOGGING DETALLADO
           const mappedRoutes = routesArray.map((route, idx) => {
+            // 🔧 FIX: Calcular peso una sola vez y sincronizar
+            const pesoValue = route.peso || route.peso_kg || route.peso_mercancia || null;
+            
             const mapped = {
               ciudadOrigen: route.origen || route.ciudad_origen || null,
               ciudad_origen: route.origen || route.ciudad_origen || null,
               ciudadDestino: route.destino || route.ciudad_destino || null,
               ciudad_destino: route.destino || route.ciudad_destino || null,
-              pesoMercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
-              peso_mercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
+              // 🔧 FIX CRÍTICO: Sincronizar los 3 campos de peso
+              pesoMercancia: pesoValue,
+              peso_mercancia: pesoValue,
+              peso_kg: pesoValue,
               cantidadMercancia: route.cantidad || route.cantidad_unidades || null,
               cantidad: route.cantidad || route.cantidad_unidades || null,
               contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
               tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
+              tipo_embalaje: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embalaje || null,
               producto: route.producto_mencionado || route.producto || route.tipo_producto || null, // 🔥 Priorizar producto_mencionado (usuario) NUNCA producto_nombre (BD)
               tipo_producto: route.producto_mencionado || route.producto || route.tipo_producto || null,
               producto_codigo: route.producto_codigo || null,
@@ -2158,17 +2285,22 @@ const ChatModal = ({
               const prevArray = Array.isArray(prev) ? prev : [];
               return routesArray.map((route, idx) => {
                 const existingRoute = prevArray[idx] || {};
+                // 🔧 FIX: Calcular peso una sola vez y sincronizar todos los campos
+                const pesoValue = route.peso || route.peso_kg || route.peso_mercancia || null;
                 const newRoute = {
                   ciudadOrigen: route.origen || route.ciudad_origen || null,
                   ciudad_origen: route.origen || route.ciudad_origen || null,
                   ciudadDestino: route.destino || route.ciudad_destino || null,
                   ciudad_destino: route.destino || route.ciudad_destino || null,
-                  pesoMercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
-                  peso_mercancia: route.peso || route.peso_kg || route.peso_mercancia || null,
+                  // 🔧 FIX CRÍTICO: Sincronizar los 3 campos de peso
+                  pesoMercancia: pesoValue,
+                  peso_mercancia: pesoValue,
+                  peso_kg: pesoValue,
                   cantidadMercancia: route.cantidad || route.cantidad_unidades || null,
                   cantidad: route.cantidad || route.cantidad_unidades || null,
                   contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
                   tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
+                  tipo_embalaje: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embalaje || null,
                   producto: route.producto || route.tipo_producto || null,
                   tipo_producto: route.producto || route.tipo_producto || null,
                   producto_codigo: route.producto_codigo || null,
@@ -2261,9 +2393,24 @@ const ChatModal = ({
               
               const updatedRoutes = prevArray.map((existingRoute, idx) => {
                 if (idx === editingRouteIndex) {
+                  // 🔧 NORMALIZAR campos de editedRoute (puede venir con diferentes nombres)
+                  const normalizedEdited = {
+                    origen: editedRoute.origen ?? editedRoute.ciudadOrigen,
+                    destino: editedRoute.destino ?? editedRoute.ciudadDestino,
+                    peso_kg: editedRoute.peso_kg ?? editedRoute.peso ?? editedRoute.pesoMercancia,
+                    cantidad: editedRoute.cantidad ?? editedRoute.cantidadMercancia,
+                    valor_declarado: editedRoute.valor_declarado ?? editedRoute.valor ?? editedRoute.valorMercancia,
+                    vehiculo: editedRoute.vehiculo ?? editedRoute.claseVehiculo,
+                    empaque: editedRoute.empaque,
+                    empaque_id: editedRoute.empaque_id,
+                    producto: editedRoute.producto ?? editedRoute.tipo_producto,
+                    contenedor: editedRoute.contenedor,
+                    incluye_tara: editedRoute.incluye_tara
+                  };
+
                   // Esta es la ruta que se está editando - fusionar cambios SOLO de campos que vienen
-                  const pesoBase = Number(editedRoute.peso_kg ?? existingRoute.pesoMercancia ?? 0) || 0;
-                  const backendYaTieneTara = editedRoute.incluye_tara === true;
+                  const pesoBase = Number(normalizedEdited.peso_kg ?? existingRoute.pesoMercancia ?? 0) || 0;
+                  const backendYaTieneTara = normalizedEdited.incluye_tara === true;
                   const existingIncluyeTara = existingRoute.incluye_tara === true;
                   
                   // 🆕 COMANDO EXPLÍCITO: Si el usuario dice "agrega tara" o "suma tara", SIEMPRE sumar
@@ -2308,38 +2455,57 @@ const ChatModal = ({
                   const mergedRoute = {
                     ...existingRoute,
                     // Solo sobrescribir si el valor viene definido (no undefined)
-                    ...(editedRoute.origen !== undefined && { ciudadOrigen: editedRoute.origen }),
-                    ...(editedRoute.destino !== undefined && { ciudadDestino: editedRoute.destino }),
-                    ...(pesoFinal && { pesoMercancia: pesoFinal }),
-                    ...(editedRoute.cantidad !== undefined && { cantidadMercancia: editedRoute.cantidad }),
-                    // 🔧 FIX: Preservar valorMercancia - verificar múltiples nombres de propiedad
-                    ...(editedRoute.valor_declarado !== undefined && { 
-                      valorMercancia: editedRoute.valor_declarado,
-                      valor_declarado: editedRoute.valor_declarado 
+                    ...(normalizedEdited.origen !== undefined && { 
+                      ciudadOrigen: normalizedEdited.origen,
+                      ciudad_origen: normalizedEdited.origen // 🔧 FIX: Sincronizar ambos campos
                     }),
-                    ...(editedRoute.valor_mercancia !== undefined && !editedRoute.valor_declarado && { 
-                      valorMercancia: editedRoute.valor_mercancia,
-                      valor_declarado: editedRoute.valor_mercancia 
+                    ...(normalizedEdited.destino !== undefined && { 
+                      ciudadDestino: normalizedEdited.destino,
+                      ciudad_destino: normalizedEdited.destino // 🔧 FIX: Sincronizar ambos campos
                     }),
-                    ...(editedRoute.vehiculo !== undefined && { claseVehiculo: editedRoute.vehiculo }),
-                    ...(editedRoute.empaque !== undefined && { empaque: editedRoute.empaque }),
-                    ...(editedRoute.empaque_id !== undefined && { empaque_id: editedRoute.empaque_id }),
-                    ...(editedRoute.producto !== undefined && {
-                      producto: editedRoute.producto,
-                      tipo_producto: editedRoute.producto
+                    // 🔧 FIX CRÍTICO: Sincronizar TODOS los campos de peso para que el panel se actualice
+                    ...(pesoFinal && { 
+                      pesoMercancia: pesoFinal,
+                      peso_mercancia: pesoFinal,
+                      peso_kg: pesoFinal 
                     }),
+                    ...(normalizedEdited.cantidad !== undefined && { 
+                      cantidadMercancia: normalizedEdited.cantidad,
+                      cantidad: normalizedEdited.cantidad // 🔧 FIX: Sincronizar ambos campos
+                    }),
+                    // 🔧 FIX: Preservar valorMercancia - usar datos normalizados
+                    ...(normalizedEdited.valor_declarado !== undefined && { 
+                      valorMercancia: normalizedEdited.valor_declarado,
+                      valor_declarado: normalizedEdited.valor_declarado 
+                    }),
+                    ...(normalizedEdited.vehiculo !== undefined && { 
+                      claseVehiculo: normalizedEdited.vehiculo,
+                      vehiculo: normalizedEdited.vehiculo,
+                      vehiculo_requerido: normalizedEdited.vehiculo // 🔧 FIX: Sincronizar todos los campos de vehículo
+                    }),
+                    ...(normalizedEdited.empaque !== undefined && { 
+                      empaque: normalizedEdited.empaque,
+                      tipo_embajale: normalizedEdited.empaque,
+                      tipo_embalaje: normalizedEdited.empaque // 🔧 FIX: Sincronizar campos de empaque
+                    }),
+                    ...(normalizedEdited.empaque_id !== undefined && { empaque_id: normalizedEdited.empaque_id }),
+                    ...(normalizedEdited.producto !== undefined && {
+                      producto: normalizedEdited.producto,
+                      tipo_producto: normalizedEdited.producto
+                    }),
+                    ...(normalizedEdited.contenedor !== undefined && { contenedor: normalizedEdited.contenedor }),
                     incluye_tara: incluyeTara,
                   };
 
                   console.log(`✏️ Ruta ${idx + 1} EDITADA - Campos actualizados:`, {
-                    origen: editedRoute.origen !== undefined,
-                    destino: editedRoute.destino !== undefined,
-                    peso: editedRoute.peso_kg !== undefined,
+                    origen: normalizedEdited.origen !== undefined,
+                    destino: normalizedEdited.destino !== undefined,
+                    peso: normalizedEdited.peso_kg !== undefined,
                     pesoFinal,
                     willAddTara,
                     willRemoveTara,
-                    cantidad: editedRoute.cantidad !== undefined,
-                    producto: editedRoute.producto !== undefined
+                    cantidad: normalizedEdited.cantidad !== undefined,
+                    producto: normalizedEdited.producto !== undefined
                   });
                   console.log('🔍 Resultado merge:', mergedRoute);
                   
@@ -2368,39 +2534,39 @@ const ChatModal = ({
 
               console.log(`📊 Rutas actualizadas (1 editada, ${updatedRoutes.length - 1} sin cambios):`, updatedRoutes);
 
-              // 🆕 Si se agregó/quitó tara, guardar extracted_data en BD
-              if (taraWasModified) {
-                const extractedDataToSave = updatedRoutes.map(r => ({
-                  origen: r.ciudadOrigen,
-                  destino: r.ciudadDestino,
-                  peso_kg: r.pesoMercancia,
-                  cantidad: r.cantidadMercancia,
-                  valor_declarado: r.valorMercancia,
-                  vehiculo: r.claseVehiculo,
-                  empaque: r.empaque,
-                  producto: r.producto,
-                  incluye_tara: r.incluye_tara
-                }));
+              // 🆕 SIEMPRE guardar extracted_data en BD después de editar cualquier ruta
+              // (antes solo se guardaba si se modificaba la tara, ahora se guarda SIEMPRE)
+              const extractedDataToSave = updatedRoutes.map(r => ({
+                origen: r.ciudadOrigen,
+                destino: r.ciudadDestino,
+                peso_kg: r.pesoMercancia,
+                cantidad: r.cantidadMercancia,
+                valor_declarado: r.valorMercancia || r.valor_declarado,
+                vehiculo: r.claseVehiculo,
+                empaque: r.empaque,
+                empaque_id: r.empaque_id,
+                producto: r.producto || r.tipo_producto,
+                incluye_tara: r.incluye_tara
+              }));
 
-                // Guardar en BD de manera asíncrona
-                fetch('/api/chat/update-extracted-data', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
-                  },
-                  body: JSON.stringify({
-                    group_id: clientData.groupId,
-                    extracted_data: extractedDataToSave
-                  })
-                }).then(resp => resp.json())
-                  .then(data => {
-                    if (data.success) {
-                      console.log('✅ extracted_data actualizado en BD');
-                    }
-                  })
-                  .catch(err => console.error('❌ Error guardando extracted_data:', err));
-              }
+              // Guardar en BD de manera asíncrona
+              fetch('/api/chat/update-extracted-data', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+                },
+                body: JSON.stringify({
+                  group_id: clientData.groupId,
+                  extracted_data: extractedDataToSave
+                })
+              }).then(resp => resp.json())
+                .then(data => {
+                  if (data.success) {
+                    console.log('✅ extracted_data actualizado en BD con todas las rutas');
+                  }
+                })
+                .catch(err => console.error('❌ Error guardando extracted_data:', err));
 
               // Notificar al usuario
               if (onUpdateMessages) {
@@ -2486,13 +2652,25 @@ const ChatModal = ({
                 ...existingRoute,
                 // Solo actualizar campos que vienen del backend Y tienen valor
                 // El backend puede enviar: origen/ciudad_origen, destino/ciudad_destino
+                // 🔧 FIX: Sincronizar TODOS los campos duplicados para que el panel se actualice
                 ciudadOrigen: routeData.origen || routeData.ciudad_origen || existingRoute.ciudadOrigen || null,
+                ciudad_origen: routeData.origen || routeData.ciudad_origen || existingRoute.ciudad_origen || existingRoute.ciudadOrigen || null,
                 ciudadDestino: routeData.destino || routeData.ciudad_destino || existingRoute.ciudadDestino || null,
+                ciudad_destino: routeData.destino || routeData.ciudad_destino || existingRoute.ciudad_destino || existingRoute.ciudadDestino || null,
+                // 🔧 FIX CRÍTICO: Sincronizar los 3 campos de peso
                 pesoMercancia: pesoFinal || routeData.peso_kg || existingRoute.pesoMercancia || null,
+                peso_mercancia: pesoFinal || routeData.peso_kg || existingRoute.peso_mercancia || null,
+                peso_kg: pesoFinal || routeData.peso_kg || existingRoute.peso_kg || null,
                 cantidadMercancia: routeData.cantidad || existingRoute.cantidadMercancia || null,
+                cantidad: routeData.cantidad || existingRoute.cantidad || null,
                 valorMercancia: routeData.valor_declarado || existingRoute.valorMercancia || null,
+                valor_declarado: routeData.valor_declarado || existingRoute.valor_declarado || null,
                 claseVehiculo: routeData.vehiculo || existingRoute.claseVehiculo || null,
+                vehiculo: routeData.vehiculo || existingRoute.vehiculo || null,
+                vehiculo_requerido: routeData.vehiculo || existingRoute.vehiculo_requerido || null,
                 empaque: routeData.empaque || existingRoute.empaque || null,
+                tipo_embajale: routeData.empaque || existingRoute.tipo_embajale || null,
+                tipo_embalaje: routeData.empaque || existingRoute.tipo_embalaje || null,
                 empaque_id: routeData.empaque_id || existingRoute.empaque_id || null,
                 producto: routeData.producto || routeData.tipo_producto || existingRoute.producto || null,
                 tipo_producto: routeData.producto || routeData.tipo_producto || existingRoute.tipo_producto || null,
@@ -3608,12 +3786,7 @@ const ChatModal = ({
 
           {/* Panel de Detalles de Cotización - React Component */}
           <QuoteDetailsPanel
-            key={`quote-${JSON.stringify(routesData.map(r => ({ 
-              peso: r.peso_kg || r.peso_mercancia || r.pesoMercancia || 0,
-              producto: r.producto || r.tipo_producto,
-              origen: r.ciudadOrigen || r.ciudad_origen,
-              destino: r.ciudadDestino || r.ciudad_destino
-            })))}`}
+            key={`quote-panel-${panelKey}`}
             routes={routesData}
             selectedProduct={selectedProduct}
             selectedEmpaque={selectedEmpaque}

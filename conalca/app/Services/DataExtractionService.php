@@ -187,55 +187,94 @@ class DataExtractionService
         return <<<'EOT'
 Eres un experto en logística y transporte. Tu tarea es EXTRAER datos de cotizaciones de envíos.
 
-CAMPOS A EXTRAER (EN ESTE ORDEN):
-1. origen - Ciudad/lugar de recogida (busca: RUTA:, DIRECCIÓN DE RECOGIDA, FROM, DE, desde, origen)
-2. destino - Ciudad/lugar de entrega (busca: destino, DIRECCIÓN DE ENTREGA, TO, HACIA, hacia)
-3. peso - Peso total en kg (busca: Weight, kg, tonelada, Gross Weight, PESO, kilos)
-4. contenedor - Tipo de contenedor (busca: 1X20, 1X40, HQ, contenedor, caja, bulto, pallet)
-5. producto - Mercancía (busca: Mercancía, MERCANCIA, Product, artículo, carga, cargo)
-6. valor - Valor declarado (busca: Valor, USD, COP, Price, Valor de la, amount)
-7. cantidad - Número de unidades (busca: cantidad, units, bultos, piezas)
-8. observaciones - Detalles especiales (cargue, descargue, protocolo, seguridad, etc.)
+⚠️ DETECCIÓN DE MULTI-RUTAS (PRIORIDAD MÁXIMA):
+ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
+- Frases clave: "dos rutas", "tres rutas", "varias rutas", "múltiples rutas"
+- Patrones: "Una es... La otra es...", "La primera... La segunda...", "Ruta 1... Ruta 2..."
+- Ejemplos: "necesito dos rutas, una de Bogotá a Cali... y otra de Medellín a Cartagena"
 
-⚠️ REGLA CRÍTICA - VEHÍCULOS:
-- Si el mensaje menciona "vehículo X" o "vehiculo X", NO lo extraigas como producto
-- Ejemplos que NO son producto: "vehículo turbo", "vehículo patineta", "vehículo tractomula"
-- El tipo de vehículo se maneja en otro sistema, IGNÓRALO aquí
-- Solo extrae el producto real (mercancía a transportar), NO el vehículo transportador
-
-REGLAS IMPORTANTES:
-✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg
-✓ Para números: 72.000 USD → 72000 (quita separadores)
-✓ Para ciudades: normaliza a formato correcto (Cartagena, Medellín, Bogotá, etc.)
-✓ IGNORA palabras previas como "importacion", "exportacion", "cotización de" al extraer nombres de ciudades
-✓ Ejemplo: "importacion cartagena a bogotá" → origen: "Cartagena", destino: "Bogotá"
-✓ Si dice "Gross Weight: 9900" → peso es 9900
-✓ Si dice "1X40 HQ" → contenedor es "1X40 HQ"
-✓ Si el mensaje SOLO menciona cambio de vehículo, NO extraigas nada (deja todo en null)
-✓ NUNCA inventes datos, solo extrae lo visible
-✓ Responde SOLO en JSON, sin markdown, sin explicaciones
-
-FORMATO DE RESPUESTA (JSON PURO, SIN MARKDOWN):
+SI DETECTAS MÚLTIPLES RUTAS:
+1. Extrae CADA ruta por separado
+2. Responde en este formato:
 {
-  "origen": "valor o null",
-  "destino": "valor o null",
-  "peso": número o null,
-  "contenedor": "valor o null",
-  "producto": "valor o null",
-  "valor": número o null,
-  "cantidad": número o null,
-  "observaciones": "valor o null",
-  "missing": ["lista de campos no encontrados"],
-  "confidence": número entre 0 y 1,
-  "summary": "resumen breve en una línea"
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {
+      "origen": "Ciudad1",
+      "destino": "Ciudad2",
+      "peso": 1000,
+      "cantidad": 50,
+      "empaque": "cajas",
+      "producto": "alimentos",
+      "valor": 1000000,
+      "vehiculo": "turbo",
+      "contenedor": "carga suelta"
+    },
+    {
+      "origen": "Ciudad3",
+      "destino": "Ciudad4",
+      "peso": 2000,
+      "cantidad": 100,
+      "empaque": "bultos",
+      "producto": "textiles",
+      "valor": 2000000,
+      "vehiculo": "tractocamión",
+      "contenedor": "contenedor 20 pies"
+    }
+  ],
+  "confidence": 0.9
 }
 
-EJEMPLOS:
-Input: "Necesito enviar 5 toneladas de maíz de Bogotá a Medellín"
-Output: {"origen":"Bogotá","destino":"Medellín","peso":5000,"producto":"maíz","missing":[],"confidence":0.95,"summary":"5 toneladas de maíz de Bogotá a Medellín"}
+CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
+1. origen - Ciudad/lugar de recogida
+2. destino - Ciudad/lugar de entrega
+3. peso - Peso total en kg (convierte toneladas: 1 ton = 1000 kg)
+4. cantidad - Número de unidades/bultos/cajas
+5. empaque - Tipo de empaque (cajas, bultos, estibas, etc.)
+6. producto - Mercancía real a transportar
+7. valor - Valor declarado en COP
+8. vehiculo - Tipo de vehículo requerido (turbo, tractocamión, sencillo, etc.)
+9. contenedor - Tipo de contenedor o empaque especial
 
-Input: "RUTA: Cartagena destino: Medellín, 1X40 HQ con 9900 kg, AISLADOR GY, valor 72000 USD"
-Output: {"origen":"Cartagena","destino":"Medellín","peso":9900,"contenedor":"1X40 HQ","producto":"AISLADOR GY","valor":72000,"missing":[],"confidence":0.98,"summary":"1X40 HQ con AISLADOR GY de Cartagena a Medellín"}
+REGLAS IMPORTANTES:
+✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg, 2.5 toneladas = 2500 kg
+✓ Para valores: 45 millones = 45000000, 20 millones = 20000000
+✓ Normaliza ciudades: BOGOTA, MEDELLIN, CARTAGENA, BUENAVENTURA, CALI
+✓ Separa vehículo de producto: "turbo" es vehículo, "alimentos" es producto
+✓ NUNCA inventes datos, solo extrae lo visible
+✓ Responde SOLO en JSON puro, sin markdown ```json```
+
+FORMATO DE RESPUESTA RUTA ÚNICA:
+{
+  "multi_ruta": false,
+  "origen": "CIUDAD",
+  "destino": "CIUDAD",
+  "peso": número_en_kg,
+  "cantidad": número,
+  "empaque": "tipo",
+  "producto": "mercancía",
+  "valor": número,
+  "vehiculo": "tipo",
+  "contenedor": "descripción",
+  "confidence": 0.9
+}
+
+EJEMPLOS MULTI-RUTA:
+Input: "¿me cotizas dos rutas? Una es Bogotá a Cali, 5 toneladas de café en 100 sacos. La otra es Medellín a Barranquilla, 3 toneladas de textiles en 50 cajas"
+Output: {
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {"origen":"BOGOTA","destino":"CALI","peso":5000,"cantidad":100,"empaque":"sacos","producto":"café","vehiculo":null,"contenedor":null,"valor":null},
+    {"origen":"MEDELLIN","destino":"BARRANQUILLA","peso":3000,"cantidad":50,"empaque":"cajas","producto":"textiles","vehiculo":null,"contenedor":null,"valor":null}
+  ],
+  "confidence":0.9
+}
+
+EJEMPLO RUTA ÚNICA:
+Input: "Necesito enviar 8 toneladas de alimentos de Bogotá a Buenaventura, son 120 cajas, valor 45 millones, en tracto para contenedor de 20 pies"
+Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"BUENAVENTURA","peso":8000,"cantidad":120,"empaque":"cajas","producto":"alimentos","valor":45000000,"vehiculo":"tractocamión","contenedor":"contenedor de 20 pies","confidence":0.95}
 EOT;
     }
 
@@ -253,7 +292,7 @@ EOT;
             $response = preg_replace('/\s*```$/i', '', $response);
             $response = trim($response);
             
-            Log::info('📝 Respuesta limpia:', ['response' => substr($response, 0, 500)]);
+            Log::info('📝 Respuesta limpia de OpenAI:', ['response' => substr($response, 0, 500)]);
             
             // Intentar parsear JSON
             if (preg_match('/\{[\s\S]*\}/m', $response, $matches)) {
@@ -261,11 +300,33 @@ EOT;
                 $data = json_decode($jsonStr, true);
                 
                 if (is_array($data)) {
-                    // Extraer datos - puede estar en "extracted" o directamente en el root
+                    // 🚛 DETECTAR MULTI-RUTA PRIMERO
+                    if (isset($data['multi_ruta']) && $data['multi_ruta'] === true && isset($data['rutas'])) {
+                        Log::info('🚛 Multi-ruta detectada:', ['total' => count($data['rutas'])]);
+                        
+                        // Normalizar cada ruta
+                        $rutasNormalizadas = [];
+                        foreach ($data['rutas'] as $idx => $ruta) {
+                            $normalized = $this->normalizeExtractedData($ruta);
+                            $rutasNormalizadas[] = $normalized;
+                            Log::info("📍 Ruta " . ($idx + 1) . " normalizada:", $normalized);
+                        }
+                        
+                        return [
+                            'success' => true,
+                            'multi_ruta' => true,
+                            'total_rutas' => count($rutasNormalizadas),
+                            'rutas' => $rutasNormalizadas,
+                            'confidence' => $data['confidence'] ?? 0.9,
+                            'raw_response' => $response
+                        ];
+                    }
+                    
+                    // RUTA ÚNICA (código original)
                     $extracted = $data['extracted'] ?? $data;
                     
                     // LIMPIAR: solo quedarse con campos de cotización reales
-                    $quotationFields = ['origen', 'destino', 'peso', 'contenedor', 'cantidad', 'producto', 'mercancia', 'valor', 'incoterm', 'observaciones'];
+                    $quotationFields = ['origen', 'destino', 'peso', 'contenedor', 'cantidad', 'producto', 'mercancia', 'valor', 'incoterm', 'observaciones', 'vehiculo', 'empaque'];
                     $cleanExtracted = [];
                     foreach ($quotationFields as $field) {
                         if (isset($extracted[$field])) {
@@ -284,6 +345,7 @@ EOT;
                     
                     return [
                         'success' => true,
+                        'multi_ruta' => false,
                         'extracted' => $normalized,
                         'missing' => array_filter($missing),
                         'questions' => array_filter($data['questions'] ?? []),
@@ -423,10 +485,21 @@ EOT;
                 case 'contenedor':
                 case 'producto':
                 case 'mercancia':
-                case 'incoterm':
                 case 'observaciones':
                     // Capitalizar y limpiar
                     $normalized[$key] = trim($value);
+                    break;
+                
+                case 'empaque':
+                case 'vehiculo':
+                    // Convertir a mayúsculas para estos campos críticos
+                    $val = trim($value);
+                    $normalized[$key] = mb_strtoupper($val, 'UTF-8');
+                    break;
+                
+                case 'incoterm':
+                    // INCOTERM siempre en mayúsculas
+                    $normalized[$key] = mb_strtoupper(trim($value), 'UTF-8');
                     break;
 
                 default:

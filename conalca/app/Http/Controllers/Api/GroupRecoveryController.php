@@ -71,7 +71,9 @@ class GroupRecoveryController extends Controller
                 'jen_set' => $group->jen_set,
                 'combustible' => $group->combustible,
                 'kit_derrames' => $group->kit_derrames,
-                'pictogramas' => $group->pictogramas
+                'pictogramas' => $group->pictogramas,
+                // 🚛 Incluir extracted_data para soportar formato multi-ruta
+                'extracted_data' => $group->extracted_data ? json_decode($group->extracted_data, true) : null
             ];
 
             // Preparar los datos de las cotizaciones

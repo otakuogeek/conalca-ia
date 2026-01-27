@@ -218,8 +218,19 @@ class QuoteRoutesController extends Controller
                     'extracted_data' => $extractedData
                 ]);
                 
-                // Si extracted_data es un objeto único (no array de rutas)
-                $routesArray = isset($extractedData[0]) ? $extractedData : [$extractedData];
+                // 🚛 DETECTAR MULTI-RUTA PRIMERO
+                $routesArray = [];
+                if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+                    // Es multi-ruta, usar el array 'rutas'
+                    $routesArray = $extractedData['rutas'];
+                    Log::info('🚛 Multi-ruta detectada en extracted_data', ['total' => count($routesArray)]);
+                } elseif (isset($extractedData[0])) {
+                    // Es un array indexado de rutas
+                    $routesArray = $extractedData;
+                } else {
+                    // Es un objeto único (ruta única)
+                    $routesArray = [$extractedData];
+                }
                 
                 $routes = collect($routesArray)->map(function ($extracted, $index) {
                     return [

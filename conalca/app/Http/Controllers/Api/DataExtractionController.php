@@ -132,10 +132,78 @@ class DataExtractionController extends Controller
             Log::info('🎯 Datos extraídos del mensaje:', [
                 'extracted' => $result['extracted'] ?? [],
                 'missing' => $result['missing'] ?? [],
-                'confidence' => $result['confidence'] ?? 0
+                'confidence' => $result['confidence'] ?? 0,
+                'multi_ruta' => $result['multi_ruta'] ?? false,
+                'has_extracted_data' => isset($result['extracted_data']),
+                'extracted_data_preview' => isset($result['extracted_data']) ? array_keys($result['extracted_data']) : null
             ]);
             
-            // 🆕 FIX #557: Guardar datos extraídos en group_cotizations.extracted_data
+            // 🆕 FIX: Si MCPAssistantService retornó extracted_data, normalizarlo
+            if (isset($result['extracted_data'])) {
+                $extractedData = $result['extracted_data'];
+                
+                Log::info('🔍 Verificando extracted_data recibido', [
+                    'type' => gettype($extractedData),
+                    'has_multi_ruta' => isset($extractedData['multi_ruta']),
+                    'multi_ruta_value' => $extractedData['multi_ruta'] ?? null,
+                    'has_rutas' => isset($extractedData['rutas']),
+                    'rutas_count' => isset($extractedData['rutas']) ? count($extractedData['rutas']) : 0
+                ]);
+                
+                // Verificar si es formato multi-ruta
+                if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+                    Log::info('🚛 Multi-ruta detectada en extracted_data (después de edición)', [
+                        'total_rutas' => count($extractedData['rutas']),
+                        'edited_route_index' => $result['edited_route_index'] ?? null
+                    ]);
+                    
+                    // Normalizar respuesta para que el frontend la entienda
+                    return response()->json([
+                        'success' => true,
+                        'data' => [
+                            'multi_ruta' => true,
+                            'rutas' => $extractedData['rutas'],
+                            'total_rutas' => $extractedData['total_rutas'] ?? count($extractedData['rutas']),
+                            'message' => $assistantResponse,
+                            'edited_route_index' => $result['edited_route_index'] ?? null,
+                            'metadata' => [
+                                'confidence' => $result['confidence'] ?? 0.9
+                            ]
+                        ]
+                    ]);
+                }
+            }
+            
+            // 🚛 MANEJAR MULTI-RUTA (detección directa)
+            if (isset($result['multi_ruta']) && $result['multi_ruta'] === true) {
+                Log::info('🚛 Multi-ruta detectada en controlador', [
+                    'total_rutas' => $result['total_rutas'] ?? 0,
+                    'rutas' => $result['rutas'] ?? []
+                ]);
+                
+                // Generar respuesta para multi-ruta
+                $multiRutaResponse = $this->buildMultiRutaResponse($result);
+                
+                // Guardar en grupo si hay group_id
+                if (isset($validated['group_id'])) {
+                    $this->saveMultiRutaToGroup($validated['group_id'], $result);
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'multi_ruta' => true,
+                        'rutas' => $result['rutas'] ?? [],
+                        'total_rutas' => $result['total_rutas'] ?? 0,
+                        'message' => $multiRutaResponse,
+                        'metadata' => [
+                            'confidence' => $result['confidence'] ?? 0.9
+                        ]
+                    ]
+                ]);
+            }
+            
+            // 🆕 FIX #557: Guardar datos extraídos en group_cotizations.extracted_data (RUTA ÚNICA)
             if (isset($validated['group_id']) && !empty($result['extracted'])) {
                 $groupId = $validated['group_id'];
                 $extracted = $result['extracted'];
@@ -162,17 +230,30 @@ class DataExtractionController extends Controller
                 if (!empty($normalizedData)) {
                     $group = \App\Models\GroupCotization::find($groupId);
                     if ($group) {
-                        // Mergear con datos existentes
                         $existingData = json_decode($group->extracted_data ?? '{}', true) ?? [];
-                        $mergedData = array_merge($existingData, $normalizedData);
-                        $group->extracted_data = json_encode($mergedData);
-                        $group->save();
                         
-                        Log::info('💾 Datos de DataExtractionService guardados en grupo', [
-                            'group_id' => $groupId,
-                            'campos_nuevos' => array_keys($normalizedData),
-                            'total_campos' => count($mergedData)
-                        ]);
+                        // 🚛 CRÍTICO: NO sobrescribir si es formato multi-ruta
+                        // MCPAssistantService ya guardó los datos correctamente dentro de rutas[]
+                        $isMultiRuta = isset($existingData['multi_ruta']) && $existingData['multi_ruta'] === true && isset($existingData['rutas']);
+                        
+                        if ($isMultiRuta) {
+                            Log::info('⚠️ Formato multi-ruta detectado - NO sobrescribir con campos globales', [
+                                'group_id' => $groupId,
+                                'campos_ignorados' => array_keys($normalizedData),
+                                'razon' => 'MCPAssistantService ya guardó dentro de rutas[]'
+                            ]);
+                        } else {
+                            // Ruta única: mergear normalmente
+                            $mergedData = array_merge($existingData, $normalizedData);
+                            $group->extracted_data = json_encode($mergedData);
+                            $group->save();
+                            
+                            Log::info('💾 Datos de DataExtractionService guardados en grupo', [
+                                'group_id' => $groupId,
+                                'campos_nuevos' => array_keys($normalizedData),
+                                'total_campos' => count($mergedData)
+                            ]);
+                        }
                     }
                 }
             }
@@ -295,6 +376,93 @@ class DataExtractionController extends Controller
         }
 
         return trim($response);
+    }
+
+    /**
+     * Genera respuesta para multi-ruta
+     */
+    private function buildMultiRutaResponse(array $result): string
+    {
+        $totalRutas = $result['total_rutas'] ?? 0;
+        $rutas = $result['rutas'] ?? [];
+        
+        $response = "Perfecto, he registrado las {$totalRutas} rutas solicitadas:\n\n";
+        
+        foreach ($rutas as $idx => $ruta) {
+            $numero = $idx + 1;
+            $origen = $ruta['origen'] ?? '?';
+            $destino = $ruta['destino'] ?? '?';
+            $peso = $ruta['peso'] ?? '?';
+            $producto = $ruta['producto'] ?? '?';
+            $cantidad = $ruta['cantidad'] ?? '?';
+            $valor = isset($ruta['valor']) ? number_format($ruta['valor'], 0, ',', '.') : '?';
+            $vehiculo = $ruta['vehiculo'] ?? '?';
+            
+            $response .= "{$numero}. Ruta {$origen} → {$destino}:\n";
+            $response .= "   - Peso: {$peso} kg\n";
+            $response .= "   - Producto: {$producto}\n";
+            if ($cantidad !== '?') {
+                $empaqueInfo = isset($ruta['empaque']) ? " {$ruta['empaque']}" : ' unidades';
+                $response .= "   - Cantidad: {$cantidad}{$empaqueInfo}\n";
+            }
+            if ($vehiculo !== '?') {
+                $response .= "   - Vehículo: {$vehiculo}\n";
+            }
+            if ($valor !== '?') {
+                $response .= "   - Valor declarado: \${$valor} COP\n";
+            }
+            $response .= "\n";
+        }
+        
+        $response .= "¿Deseas proceder con la creación de las cotizaciones para estas rutas?";
+        
+        return $response;
+    }
+    
+    /**
+     * Guarda multi-ruta en el grupo
+     */
+    private function saveMultiRutaToGroup(int $groupId, array $result): void
+    {
+        try {
+            $group = \App\Models\GroupCotization::find($groupId);
+            if (!$group) {
+                Log::warning('⚠️ Grupo no encontrado para guardar multi-ruta', ['group_id' => $groupId]);
+                return;
+            }
+            
+            // 🆔 Agregar ID único a cada ruta si no lo tiene
+            $rutasConId = [];
+            foreach ($result['rutas'] ?? [] as $idx => $ruta) {
+                if (!isset($ruta['ruta_id'])) {
+                    $ruta['ruta_id'] = 'ruta_' . uniqid() . '_' . ($idx + 1);
+                    Log::info('🆔 ID generado para nueva ruta', [
+                        'ruta_id' => $ruta['ruta_id'],
+                        'index' => $idx
+                    ]);
+                }
+                $rutasConId[] = $ruta;
+            }
+            
+            // Guardar todas las rutas en extracted_data como array
+            $group->extracted_data = json_encode([
+                'multi_ruta' => true,
+                'total_rutas' => $result['total_rutas'] ?? count($rutasConId),
+                'rutas' => $rutasConId
+            ]);
+            $group->save();
+            
+            Log::info('💾 Multi-ruta guardada en grupo', [
+                'group_id' => $groupId,
+                'total_rutas' => $result['total_rutas'] ?? 0
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error guardando multi-ruta', [
+                'group_id' => $groupId,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**

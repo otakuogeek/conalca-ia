@@ -546,7 +546,8 @@ class ChatController extends Controller
                 'will_send_run_id' => !$isCompleted,
                 'has_extracted_data' => !empty($extractedData),
                 'extracted_data_keys' => !empty($extractedData) ? array_keys($extractedData) : [],
-                'is_multi_route' => is_array($extractedData) && isset($extractedData[0]) && is_array($extractedData[0]),
+                'is_multi_route' => (is_array($extractedData) && isset($extractedData[0]) && is_array($extractedData[0])) || 
+                                   (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true),
                 'group_id' => $request->group_id
             ]);
 
@@ -851,26 +852,79 @@ class ChatController extends Controller
                 ], 403);
             }
 
-            // Actualizar extracted_data
-            $group->extracted_data = json_encode($extractedData);
+            // � NORMALIZAR nombres de campos antes de guardar
+            // 🚛 Si viene con formato multi-ruta mixto (con campos globales extras), extraer solo las rutas
+            $rutasParaNormalizar = $extractedData;
+            if (isset($extractedData['rutas']) && is_array($extractedData['rutas'])) {
+                // Tiene formato {rutas: [...], peso_kg: 40000, ...}
+                $rutasParaNormalizar = $extractedData['rutas'];
+                Log::info('🔧 Limpiando campos globales extras en multi-ruta', [
+                    'campos_extras' => array_keys(array_diff_key($extractedData, ['rutas' => 1, 'multi_ruta' => 1, 'total_rutas' => 1]))
+                ]);
+            }
+            
+            $normalizedData = [];
+            foreach ($rutasParaNormalizar as $ruta) {
+                // Saltar si no es un array (podría ser un campo global extra)
+                if (!is_array($ruta)) {
+                    continue;
+                }
+                $normalized = [
+                    'origen' => $ruta['origen'] ?? null,
+                    'destino' => $ruta['destino'] ?? null,
+                    // Normalizar peso: peso_kg, peso, pesoMercancia
+                    'peso_kg' => $ruta['peso_kg'] ?? $ruta['peso'] ?? $ruta['pesoMercancia'] ?? null,
+                    'cantidad' => $ruta['cantidad'] ?? $ruta['cantidadMercancia'] ?? null,
+                    // Normalizar valor: valor_declarado, valor, valorMercancia
+                    'valor_declarado' => $ruta['valor_declarado'] ?? $ruta['valor'] ?? $ruta['valorMercancia'] ?? null,
+                    'vehiculo' => $ruta['vehiculo'] ?? $ruta['claseVehiculo'] ?? null,
+                    'empaque' => $ruta['empaque'] ?? null,
+                    'empaque_id' => $ruta['empaque_id'] ?? null,
+                    'producto' => $ruta['producto'] ?? $ruta['tipo_producto'] ?? null,
+                    'contenedor' => $ruta['contenedor'] ?? null,
+                    'incluye_tara' => $ruta['incluye_tara'] ?? false
+                ];
+                // Remover nulls
+                $normalizedData[] = array_filter($normalized, fn($v) => $v !== null);
+            }
+
+            // 🚛 Si son múltiples rutas, guardar en formato multi-ruta
+            if (count($normalizedData) > 1) {
+                $multiRutaData = [
+                    'multi_ruta' => true,
+                    'total_rutas' => count($normalizedData),
+                    'rutas' => $normalizedData
+                ];
+                $group->extracted_data = json_encode($multiRutaData);
+                Log::info('🚛 Guardando extracted_data en formato multi-ruta NORMALIZADO', [
+                    'group_id' => $groupId,
+                    'total_rutas' => count($normalizedData)
+                ]);
+            } else {
+                // Ruta única
+                $group->extracted_data = json_encode($normalizedData);
+                Log::info('📍 Guardando extracted_data en formato ruta única NORMALIZADO', [
+                    'group_id' => $groupId
+                ]);
+            }
             $group->save();
             
             // 🆕 También actualizar peso_mercancia en cotizacion_models si existe
             $cotizaciones = $group->cotizaciones()->get();
             foreach ($cotizaciones as $index => $cotizacion) {
-                if (isset($extractedData[$index]['peso_kg'])) {
-                    $cotizacion->peso_mercancia = $extractedData[$index]['peso_kg'];
+                if (isset($normalizedData[$index]['peso_kg'])) {
+                    $cotizacion->peso_mercancia = $normalizedData[$index]['peso_kg'];
                     $cotizacion->save();
                     Log::info('Peso actualizado en cotizacion', [
                         'cotizacion_id' => $cotizacion->id,
-                        'peso_nuevo' => $extractedData[$index]['peso_kg']
+                        'peso_nuevo' => $normalizedData[$index]['peso_kg']
                     ]);
                 }
             }
             
-            Log::info('extracted_data actualizado', [
+            Log::info('✅ extracted_data actualizado correctamente', [
                 'group_id' => $groupId,
-                'routes_count' => count($extractedData)
+                'routes_count' => count($normalizedData)
             ]);
 
             return response()->json([

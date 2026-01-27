@@ -1071,42 +1071,58 @@ class MCPAssistantService
             Log::info('🚀 Procesando EDICIÓN MÚLTIPLE', ['campos' => $camposMultiples]);
             
             $extractedData = $previousExtractedData;
-            $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
+            
+            // 🚛 Detectar formato multi-ruta
+            $isMultiRutaFormat = isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas']);
+            $isMultiRouteData = $isMultiRutaFormat || (isset($extractedData[0]) && is_array($extractedData[0]));
             
             // Aplicar TODOS los cambios a la ruta seleccionada (o primera ruta si no hay selección)
             if ($isMultiRouteData) {
                 $targetIndex = $selectedRouteIndex !== null ? $selectedRouteIndex : 0;
-                if (isset($extractedData[$targetIndex])) {
+                
+                // Determinar dónde está el array de rutas
+                if ($isMultiRutaFormat) {
+                    // Formato {multi_ruta: true, rutas: [...]}
+                    $rutasArray = &$extractedData['rutas'];
+                } else {
+                    // Formato [ruta1, ruta2, ruta3]
+                    $rutasArray = &$extractedData;
+                }
+                
+                if (isset($rutasArray[$targetIndex])) {
                     foreach ($camposMultiples as $campo => $valor) {
                         if ($campo === 'origen') {
-                            $extractedData[$targetIndex]['origen'] = $valor;
-                            $extractedData[$targetIndex]['ciudad_origen'] = $valor;
+                            $rutasArray[$targetIndex]['origen'] = $valor;
+                            $rutasArray[$targetIndex]['ciudad_origen'] = $valor;
                         } elseif ($campo === 'destino') {
-                            $extractedData[$targetIndex]['destino'] = $valor;
-                            $extractedData[$targetIndex]['ciudad_destino'] = $valor;
+                            $rutasArray[$targetIndex]['destino'] = $valor;
+                            $rutasArray[$targetIndex]['ciudad_destino'] = $valor;
                         } elseif ($campo === 'vehiculo') {
-                            $extractedData[$targetIndex]['vehiculo'] = $valor;
-                            $extractedData[$targetIndex]['vehiculo_requerido'] = $valor;
-                            $extractedData[$targetIndex]['claseVehiculo'] = $valor;
+                            $rutasArray[$targetIndex]['vehiculo'] = $valor;
+                            $rutasArray[$targetIndex]['vehiculo_requerido'] = $valor;
+                            $rutasArray[$targetIndex]['claseVehiculo'] = $valor;
                         } elseif ($campo === 'producto') {
-                            $extractedData[$targetIndex]['producto'] = $valor;
-                            $extractedData[$targetIndex]['producto_mencionado'] = $valor;
+                            $rutasArray[$targetIndex]['producto'] = $valor;
+                            $rutasArray[$targetIndex]['producto_mencionado'] = $valor;
                             // Nota: NO buscamos en BD durante edición múltiple para no bloquear
                         } elseif ($campo === 'peso_kg') {
-                            $extractedData[$targetIndex]['peso_kg'] = $valor;
+                            $rutasArray[$targetIndex]['peso_kg'] = $valor;
+                            $rutasArray[$targetIndex]['peso'] = $valor; // Sincronizar alias
                         } elseif ($campo === 'cantidad') {
-                            $extractedData[$targetIndex]['cantidad'] = $valor;
+                            $rutasArray[$targetIndex]['cantidad'] = $valor;
                         } elseif ($campo === 'valor_declarado') {
-                            $extractedData[$targetIndex]['valor_declarado'] = $valor;
+                            $rutasArray[$targetIndex]['valor_declarado'] = $valor;
+                            $rutasArray[$targetIndex]['valor'] = $valor; // Sincronizar alias
                         } elseif ($campo === 'empaque') {
-                            $extractedData[$targetIndex]['empaque'] = $valor;
-                            $extractedData[$targetIndex]['tipo_embajale'] = $valor;
+                            $rutasArray[$targetIndex]['empaque'] = $valor;
+                            $rutasArray[$targetIndex]['tipo_embajale'] = $valor;
                         }
                     }
                     
-                    Log::info('✅ Cambios múltiples aplicados a ruta', [
+                    Log::info('✅ Cambios múltiples aplicados a ruta en formato multi-ruta', [
                         'ruta_index' => $targetIndex,
-                        'datos_actualizados' => $extractedData[$targetIndex]
+                        'formato' => $isMultiRutaFormat ? 'multi_ruta' : 'array_indexado',
+                        'datos_actualizados' => $rutasArray[$targetIndex]
                     ]);
                 }
             } else {
@@ -1622,14 +1638,31 @@ class MCPAssistantService
             }
             
             $extractedData = $previousExtractedData;
+            
+            // 🔧 DETECCIÓN CORRECTA: Soportar AMBOS formatos de multi-ruta
+            // Formato 1: Array indexado [0, 1, 2]
+            // Formato 2: Objeto {multi_ruta: true, rutas: [...]}
             $isMultiRouteData = isset($extractedData[0]) && is_array($extractedData[0]);
+            $isMultiRutaFormat = isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas']);
             
             if ($isMultiRouteData) {
+                // � Asegurar que todas las rutas tengan ID único
+                foreach ($extractedData as $idx => $ruta) {
+                    if (is_array($ruta) && is_numeric($idx) && !isset($ruta['ruta_id'])) {
+                        $extractedData[$idx]['ruta_id'] = 'ruta_' . uniqid() . '_' . ($idx + 1);
+                        Log::info('🆔 ID generado para ruta indexada', [
+                            'ruta_id' => $extractedData[$idx]['ruta_id'],
+                            'index' => $idx
+                        ]);
+                    }
+                }
+                
                 // 🆕 EDICIÓN DE RUTA ESPECÍFICA: Si hay una ruta seleccionada, editar SOLO esa
                 if ($selectedRouteIndex !== null && isset($extractedData[$selectedRouteIndex])) {
                     // Editar solo la ruta seleccionada
                     Log::info('✏️ Editando SOLO ruta seleccionada (edición temprana)', [
                         'ruta_index' => $selectedRouteIndex,
+                        'ruta_id' => $extractedData[$selectedRouteIndex]['ruta_id'] ?? 'sin_id',
                         'campo' => $campoEditadoTemprano,
                         'valor' => $esEliminacion ? '(eliminar)' : $valorEditadoTemprano
                     ]);
@@ -1749,6 +1782,89 @@ class MCPAssistantService
                     }
 
                 }
+            } elseif ($isMultiRutaFormat) {
+                // 🚛 FORMATO {multi_ruta: true, rutas: [...]} - Editar dentro del array 'rutas'
+                Log::info('🔍 Detectado formato multi_ruta con array rutas', [
+                    'total_rutas' => count($extractedData['rutas']),
+                    'selected_route_index' => $selectedRouteIndex,
+                    'campo' => $campoEditadoTemprano
+                ]);
+                
+                // 🔴 CRÍTICO: Si no hay ruta seleccionada, usar la primera por defecto
+                if ($selectedRouteIndex === null) {
+                    Log::warning('⚠️ Edición multi-ruta SIN ruta seleccionada', [
+                        'campo' => $campoEditadoTemprano,
+                        'valor' => $valorEditadoTemprano,
+                        'total_rutas' => count($extractedData['rutas'])
+                    ]);
+                    $selectedRouteIndex = 0;
+                    Log::info('📍 Usando ruta 0 por defecto');
+                }
+                
+                // 🆕 MAPEAR CAMPOS DUPLICADOS
+                $camposAActualizar = [$campoEditadoTemprano];
+                if ($campoEditadoTemprano === 'origen') {
+                    $camposAActualizar = ['origen', 'ciudad_origen'];
+                } elseif ($campoEditadoTemprano === 'destino') {
+                    $camposAActualizar = ['destino', 'ciudad_destino'];
+                } elseif ($campoEditadoTemprano === 'producto') {
+                    $camposAActualizar = ['producto', 'tipo_producto'];
+                } elseif ($campoEditadoTemprano === 'vehiculo') {
+                    $camposAActualizar = ['vehiculo', 'claseVehiculo', 'vehiculo_requerido'];
+                } elseif ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                    $camposAActualizar = ['peso_kg', 'peso_mercancia', 'pesoMercancia'];
+                }
+                
+                // Editar SOLO dentro de rutas[$selectedRouteIndex], NUNCA a nivel global
+                if (isset($extractedData['rutas'][$selectedRouteIndex])) {
+                    if ($campoEditadoTemprano === 'tara') {
+                        // Lógica especial para tara
+                        $comandoExplicitoSumar = preg_match('/(?:agrega|añade|suma|pon|coloca)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit);
+                        $yaConTara = !empty($extractedData['rutas'][$selectedRouteIndex]['incluye_tara']);
+                        
+                        if ($comandoExplicitoSumar || !$yaConTara) {
+                            $peso = floatval(str_replace(',', '', (string)($extractedData['rutas'][$selectedRouteIndex]['peso_kg'] ?? 0)));
+                            $extractedData['rutas'][$selectedRouteIndex]['peso_kg'] = $peso + 3400;
+                            $extractedData['rutas'][$selectedRouteIndex]['incluye_tara'] = true;
+                            $valorEditadoTemprano = $comandoExplicitoSumar ? "Sumado (+3400kg)" : "Sí (+3400kg)";
+                            Log::info('✅ Tara agregada a ruta', [
+                                'ruta' => $selectedRouteIndex,
+                                'peso_anterior' => $peso,
+                                'peso_nuevo' => $peso + 3400
+                            ]);
+                        } else {
+                            $valorEditadoTemprano = "Ya incluido";
+                        }
+                    } else {
+                        // Edición normal de campo
+                        foreach ($camposAActualizar as $campo) {
+                            if ($esEliminacion) {
+                                unset($extractedData['rutas'][$selectedRouteIndex][$campo]);
+                            } else {
+                                $extractedData['rutas'][$selectedRouteIndex][$campo] = $valorEditadoTemprano;
+                            }
+                        }
+                        
+                        // Sincronizar peso_kg con peso_mercancia
+                        if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                            $extractedData['rutas'][$selectedRouteIndex]['peso_kg'] = $valorEditadoTemprano;
+                            $extractedData['rutas'][$selectedRouteIndex]['peso_mercancia'] = $valorEditadoTemprano;
+                            $extractedData['rutas'][$selectedRouteIndex]['pesoMercancia'] = $valorEditadoTemprano;
+                        }
+                    }
+                    
+                    Log::info('✏️ Editada ruta individual en formato multi_ruta', [
+                        'ruta_index' => $selectedRouteIndex,
+                        'campo' => $campoEditadoTemprano,
+                        'valor' => $valorEditadoTemprano,
+                        'es_eliminacion' => $esEliminacion
+                    ]);
+                } else {
+                    Log::error('❌ Ruta no encontrada en formato multi_ruta', [
+                        'selected_index' => $selectedRouteIndex,
+                        'total_rutas' => count($extractedData['rutas'])
+                    ]);
+                }
             } else {
                 // 🆕 Ruta única - también mapear campos duplicados
                 $camposAActualizar = [$campoEditadoTemprano];
@@ -1764,19 +1880,23 @@ class MCPAssistantService
                     $camposAActualizar = ['peso_kg', 'peso_mercancia', 'pesoMercancia'];
                 }
                 
-                foreach ($camposAActualizar as $campo) {
-                    if ($esEliminacion) {
-                        unset($extractedData[$campo]);
-                    } else {
-                        $extractedData[$campo] = $valorEditadoTemprano;
+                // Ruta única: editar a nivel global (comportamiento original)
+                if (true) {
+                    // Ruta única: editar a nivel global (comportamiento original)
+                    foreach ($camposAActualizar as $campo) {
+                        if ($esEliminacion) {
+                            unset($extractedData[$campo]);
+                        } else {
+                            $extractedData[$campo] = $valorEditadoTemprano;
+                        }
                     }
-                }
-                
-                // 🔧 FIX BUG #1: Sincronizar peso_kg con peso_mercancia para ruta única
-                if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
-                    $extractedData['peso_kg'] = $valorEditadoTemprano;
-                    $extractedData['peso_mercancia'] = $valorEditadoTemprano;
-                    $extractedData['pesoMercancia'] = $valorEditadoTemprano;
+                    
+                    // 🔧 FIX BUG #1: Sincronizar peso_kg con peso_mercancia para ruta única
+                    if ($campoEditadoTemprano === 'peso' || $campoEditadoTemprano === 'peso_kg') {
+                        $extractedData['peso_kg'] = $valorEditadoTemprano;
+                        $extractedData['peso_mercancia'] = $valorEditadoTemprano;
+                        $extractedData['pesoMercancia'] = $valorEditadoTemprano;
+                    }
                 }
             }
             
@@ -1962,17 +2082,25 @@ class MCPAssistantService
         // Esto permite que el usuario corrija datos diciendo "producto es miel" etc.
         $extractedData = $previousExtractedData;
         if (!empty($newExtractedData)) {
-            // Detectar si es multi-ruta (ambos son arrays indexados)
+            // Detectar si es multi-ruta (AMBOS FORMATOS)
+            // Formato 1: Array indexado [0, 1, 2]
+            // Formato 2: Objeto {multi_ruta: true, rutas: [...]}
             $isNewMultiRoute = isset($newExtractedData[0]) && is_array($newExtractedData[0]);
-            $isPreviousMultiRoute = isset($previousExtractedData[0]) && is_array($previousExtractedData[0]);
+            $isPreviousMultiRoute = (isset($previousExtractedData[0]) && is_array($previousExtractedData[0])) ||
+                                   (isset($previousExtractedData['multi_ruta']) && $previousExtractedData['multi_ruta'] === true && isset($previousExtractedData['rutas']));
             
             // 🆕 EDICIÓN DE RUTA ESPECÍFICA: Si hay una ruta seleccionada y los nuevos datos
             // son para una sola ruta (no multi-ruta), aplicar solo a esa ruta
             
             // 🔧 FIX: Recalcular existingRoutesCount automáticamente si es necesario
             if ($isPreviousMultiRoute && $existingRoutesCount === 0) {
-                $existingRoutesCount = count(array_filter(array_keys($extractedData), 'is_numeric'));
-                Log::info('📊 Rutas existentes contadas automáticamente', ['count' => $existingRoutesCount]);
+                // Contar rutas según el formato
+                if (isset($previousExtractedData['rutas'])) {
+                    $existingRoutesCount = count($previousExtractedData['rutas']);
+                } else {
+                    $existingRoutesCount = count(array_filter(array_keys($extractedData), 'is_numeric'));
+                }
+                Log::info('📊 Rutas existentes contadas automáticamente', ['count' => $existingRoutesCount, 'formato' => isset($previousExtractedData['rutas']) ? 'objeto' : 'array']);
             }
             
             $isSingleRouteEdit = $selectedRouteIndex !== null && 
@@ -1985,25 +2113,35 @@ class MCPAssistantService
                 Log::info('✏️ Modo EDICIÓN DE RUTA INDIVIDUAL', [
                     'selected_route_index' => $selectedRouteIndex,
                     'existing_routes_count' => $existingRoutesCount,
-                    'new_fields' => array_keys($newExtractedData)
+                    'new_fields' => array_keys($newExtractedData),
+                    'formato' => isset($previousExtractedData['rutas']) ? 'objeto {multi_ruta, rutas}' : 'array indexado'
                 ]);
                 
+                // Determinar dónde está el array de rutas según el formato
+                if (isset($extractedData['rutas'])) {
+                    // Formato: {multi_ruta: true, rutas: [...]}
+                    $targetRuta = &$extractedData['rutas'][$selectedRouteIndex];
+                } else {
+                    // Formato: [0, 1, 2]
+                    $targetRuta = &$extractedData[$selectedRouteIndex];
+                }
+                
                 // Verificar que la ruta seleccionada existe
-                if (isset($extractedData[$selectedRouteIndex])) {
+                if (isset($targetRuta)) {
                     // Aplicar cambios solo a la ruta seleccionada
                     foreach ($newExtractedData as $key => $value) {
                         if (!empty($value) && !is_numeric($key)) {
                             // Solo aplicar campos de datos (no índices numéricos)
-                            $oldValue = $extractedData[$selectedRouteIndex][$key] ?? null;
-                            $extractedData[$selectedRouteIndex][$key] = $value;
+                            $oldValue = $targetRuta[$key] ?? null;
+                            $targetRuta[$key] = $value;
                             
                             // 🔧 FIX: Sincronizar campos duplicados
                             if ($key === 'ciudad_origen' || $key === 'origen') {
-                                $extractedData[$selectedRouteIndex]['origen'] = $value;
-                                $extractedData[$selectedRouteIndex]['ciudad_origen'] = $value;
+                                $targetRuta['origen'] = $value;
+                                $targetRuta['ciudad_origen'] = $value;
                             } elseif ($key === 'ciudad_destino' || $key === 'destino') {
-                                $extractedData[$selectedRouteIndex]['destino'] = $value;
-                                $extractedData[$selectedRouteIndex]['ciudad_destino'] = $value;
+                                $targetRuta['destino'] = $value;
+                                $targetRuta['ciudad_destino'] = $value;
                             }
                             
                             Log::info("✏️ Ruta {$selectedRouteIndex}: {$key} = {$value}" . ($oldValue ? " (antes: {$oldValue})" : " (nuevo)"));

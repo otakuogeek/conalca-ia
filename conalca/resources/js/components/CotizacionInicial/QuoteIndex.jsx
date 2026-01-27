@@ -89,7 +89,10 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       }
       
       const result = await response.json();
-      console.log('Datos recuperados:', result);
+      console.log('📦 Datos recuperados del backend:', result);
+      console.log('🔍 Grupo completo:', result.data?.group);
+      console.log('🔍 extracted_data recibido:', result.data?.group?.extracted_data);
+      console.log('🔍 Tipo de extracted_data:', typeof result.data?.group?.extracted_data);
       
       if (result.success) {
         const { client, group, cotizaciones } = result.data;
@@ -118,8 +121,59 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           threadId: group.openai_thread_id
         }));
         
-        // Si hay cotizaciones, restaurar los datos de rutas
-        if (cotizaciones && cotizaciones.length > 0) {
+        // 🚛 PRIORIDAD: Si hay extracted_data en formato multi-ruta, usarlo
+        const extractedData = group.extracted_data;
+        console.log('🔍 Verificando extracted_data:', {
+          exists: !!extractedData,
+          type: typeof extractedData,
+          isMultiRuta: extractedData?.multi_ruta,
+          hasRutas: !!extractedData?.rutas,
+          isArray: Array.isArray(extractedData?.rutas),
+          rutasLength: extractedData?.rutas?.length,
+          cotizacionesLength: cotizaciones?.length || 0
+        });
+        
+        const isMultiRuta = extractedData?.multi_ruta && extractedData?.rutas && Array.isArray(extractedData.rutas);
+        
+        if (isMultiRuta && extractedData.rutas.length > 0) {
+          console.log('🚛 Formato multi-ruta detectado en recovered data:', extractedData.rutas.length, 'rutas');
+          console.log('📦 Rutas crudas:', extractedData.rutas);
+          
+          const routeData = extractedData.rutas.map((ruta, idx) => {
+            const mappedRoute = {
+              ruta_id: ruta.ruta_id || `temp_ruta_${idx + 1}`, // 🆔 Preservar ID único
+              ruta_numero: idx + 1,
+              ciudadOrigen: ruta.origen,
+              ciudad_origen: ruta.origen,
+              ciudadDestino: ruta.destino,
+              ciudad_destino: ruta.destino,
+              pesoMercancia: ruta.peso || ruta.peso_kg,
+              peso_mercancia: ruta.peso || ruta.peso_kg,
+              peso_kg: ruta.peso || ruta.peso_kg,
+              cantidadMercancia: ruta.cantidad,
+              cantidad: ruta.cantidad,
+              producto: ruta.producto,
+              tipo_producto: ruta.producto,
+              empaque: ruta.empaque,
+              tipo_embajale: ruta.empaque,
+              valorMercancia: ruta.valor,
+              valor_declarado: ruta.valor,
+              vehiculo: ruta.vehiculo,
+              vehiculo_requerido: ruta.vehiculo,
+              claseVehiculo: ruta.vehiculo,
+              contenedor: ruta.contenedor,
+              tipo_contenedor: ruta.contenedor
+            };
+            console.log(`📍 Ruta ${idx + 1} mapeada:`, mappedRoute);
+            return mappedRoute;
+          });
+          
+          setQuoteData(routeData);
+          console.log('✅ Rutas cargadas desde extracted_data:', routeData);
+          setShowChatModal(true);
+          setStep(1);
+        } else if (cotizaciones && cotizaciones.length > 0) {
+          // Si hay cotizaciones en BD, usar esas
           const routeData = cotizaciones.map(cot => ({
             ciudad_origen: cot.ciudad_origen,
             ciudad_destino: cot.ciudad_destino,
@@ -143,6 +197,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           }));
           
           setQuoteData(routeData);
+          console.log('✅ Rutas cargadas desde cotizacion_models:', routeData);
           
           // Si ya hay precios configurados, ir directo al modal de precios
           const hasPricings = cotizaciones.some(cot => cot.pricing_id);
