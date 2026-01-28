@@ -170,15 +170,22 @@ class DataExtractionController extends Controller
                                 'campos_actualizados' => array_keys(array_filter($extractedFields, fn($v) => $v !== null))
                             ]);
                             
-                            // 🔧 CRÍTICO: Aplicar tara a todas las rutas antes de devolver
+                            // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
                             $rutasConTara = [];
                             foreach ($existingData['rutas'] as $idx => $ruta) {
-                                $pesoBase = $ruta['peso'] ?? 0;
+                                // 🔧 FIX: Buscar peso en ambos campos posibles
+                                $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
                                 $incluyeTara = $ruta['incluye_tara'] ?? false;
                                 
                                 if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
                                     $ruta['peso'] = $pesoBase + 3400;
+                                    $ruta['peso_kg'] = $pesoBase + 3400;
                                     $ruta['incluye_tara'] = true;
+                                    Log::info('🏋️ TARA aplicada en edición fusionada, ruta ' . ($idx + 1));
+                                } else if ($incluyeTara) {
+                                    // Ya tiene tara, sincronizar campos
+                                    $ruta['peso'] = $pesoBase;
+                                    $ruta['peso_kg'] = $pesoBase;
                                 }
                                 $rutasConTara[] = $ruta;
                             }
@@ -235,19 +242,26 @@ class DataExtractionController extends Controller
                         'edited_route_index' => $result['edited_route_index'] ?? null
                     ]);
                     
-                    // 🔧 FIX CRÍTICO: Aplicar tara a las rutas ANTES de enviar al frontend
+                    // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
                     $rutasConTara = [];
                     foreach ($extractedData['rutas'] ?? [] as $idx => $ruta) {
-                        $pesoBase = $ruta['peso'] ?? 0;
+                        // 🔧 FIX: Buscar peso en ambos campos posibles
+                        $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
                         $incluyeTara = $ruta['incluye_tara'] ?? false;
                         
                         if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
                             $ruta['peso'] = $pesoBase + 3400;
+                            $ruta['peso_kg'] = $pesoBase + 3400;
                             $ruta['incluye_tara'] = true;
                             Log::info('🏋️ TARA aplicada para frontend (edición) en ruta ' . ($idx + 1), [
                                 'peso_original' => $pesoBase,
                                 'peso_con_tara' => $ruta['peso']
                             ]);
+                        } else if ($incluyeTara) {
+                            // Ya tiene tara, sincronizar campos
+                            $ruta['peso'] = $pesoBase;
+                            $ruta['peso_kg'] = $pesoBase;
+                            Log::info('✅ TARA ya incluida (edición) en ruta ' . ($idx + 1) . ', peso: ' . $pesoBase . ' kg');
                         }
                         $rutasConTara[] = $ruta;
                     }
@@ -276,19 +290,28 @@ class DataExtractionController extends Controller
                     'rutas' => $result['rutas'] ?? []
                 ]);
                 
-                // 🔧 FIX CRÍTICO: Aplicar tara a las rutas ANTES de enviar al frontend
+                // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
+                // MCPAssistantService ya suma la tara y marca incluye_tara = true
                 $rutasConTara = [];
                 foreach ($result['rutas'] ?? [] as $idx => $ruta) {
-                    $pesoBase = $ruta['peso'] ?? 0;
+                    // 🔧 FIX: Buscar peso en ambos campos posibles
+                    $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
                     $incluyeTara = $ruta['incluye_tara'] ?? false;
                     
                     if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                        // Solo sumar si NO tiene tara y hay peso
                         $ruta['peso'] = $pesoBase + 3400;
+                        $ruta['peso_kg'] = $pesoBase + 3400;
                         $ruta['incluye_tara'] = true;
                         Log::info('🏋️ TARA aplicada para frontend en ruta ' . ($idx + 1), [
                             'peso_original' => $pesoBase,
                             'peso_con_tara' => $ruta['peso']
                         ]);
+                    } else if ($incluyeTara) {
+                        // Ya tiene tara, solo sincronizar campos
+                        $ruta['peso'] = $pesoBase;
+                        $ruta['peso_kg'] = $pesoBase;
+                        Log::info('✅ TARA ya incluida en ruta ' . ($idx + 1) . ', peso: ' . $pesoBase . ' kg');
                     }
                     $rutasConTara[] = $ruta;
                 }

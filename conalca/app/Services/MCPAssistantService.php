@@ -3707,6 +3707,43 @@ class MCPAssistantService
                 Log::info('📝 pricing_id agregado por defecto', ['pricing_id' => 43214]);
             }
 
+            // 🔧 FIX CRÍTICO: Aplicar TARA al peso antes de crear cotización
+            // OpenAI extrae el peso del mensaje del usuario sin aplicar tara
+            // Debemos interceptar y aplicar la tara aquí
+            if ($functionName === 'create_cotizacion' && isset($arguments['peso_mercancia'])) {
+                $pesoOriginal = (float) preg_replace('/[^0-9.]/', '', $arguments['peso_mercancia']);
+                
+                // Obtener el mensaje original del usuario para detectar si menciona tara
+                $lastUserMsg = '';
+                if (isset($session)) {
+                    $lastMsg = ConversationMessage::where('session_id', $session->id)
+                        ->where('role', 'user')
+                        ->orderBy('timestamp', 'desc')
+                        ->first();
+                    $lastUserMsg = strtolower($lastMsg->content ?? '');
+                }
+                
+                // Detectar si el usuario indicó que la tara YA está incluida
+                $taraYaIncluida = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara|tara\s+incluida|peso\s+bruto/ui', $lastUserMsg);
+                
+                // Si NO dice que ya incluye tara, agregar 3400 kg
+                if (!$taraYaIncluida && $pesoOriginal > 0) {
+                    $pesoConTara = $pesoOriginal + 3400;
+                    $arguments['peso_mercancia'] = (string) $pesoConTara;
+                    Log::info('🏋️ TARA aplicada en create_cotizacion', [
+                        'peso_original' => $pesoOriginal,
+                        'tara' => 3400,
+                        'peso_con_tara' => $pesoConTara,
+                        'razon' => $taraYaIncluida ? 'N/A (tara ya incluida)' : 'no mencionó tara incluida'
+                    ]);
+                } else {
+                    Log::info('✅ TARA ya incluida, peso se mantiene', [
+                        'peso' => $pesoOriginal,
+                        'tara_ya_incluida' => (bool) $taraYaIncluida
+                    ]);
+                }
+            }
+
             // Llamar a la herramienta MCP
             $result = self::callMCPTool($functionName, $arguments);
 
@@ -4200,6 +4237,40 @@ class MCPAssistantService
                 
                 // 🆕 FIX #556: Extraer argumentos originales de la tool call
                 $toolCallId = $result['tool_call_id'] ?? null;
+                // 🔧 FIX CRÍTICO: Priorizar datos del RESULTADO de la cotización creada
+                // Estos datos YA tienen la tara aplicada (desde processToolCalls)
+                if (isset($content['cotizacion'])) {
+                    $cotizacion = $content['cotizacion'];
+                    
+                    // Mapear campos de la cotización creada a extracted_data
+                    $extractedFields = [
+                        'origen' => $cotizacion['ciudad_origen'] ?? null,
+                        'destino' => $cotizacion['ciudad_destino'] ?? null,
+                        'peso_kg' => $cotizacion['peso_mercancia'] ?? null,
+                        'producto' => $cotizacion['producto'] ?? $cotizacion['tipo_producto'] ?? null,
+                        'valor_declarado' => $cotizacion['valor_declarado'] ?? null,
+                        'cantidad' => $cotizacion['cantidad'] ?? null,
+                        'empaque' => $cotizacion['tipo_embalaje'] ?? $cotizacion['empaque'] ?? null,
+                        'vehiculo' => $cotizacion['vehiculo'] ?? $cotizacion['vehiculo_requerido'] ?? null,
+                        'incluye_tara' => true, // Siempre true porque ya se aplicó en processToolCalls
+                    ];
+                    
+                    // Filtrar campos null
+                    $extractedFields = array_filter($extractedFields, fn($v) => $v !== null);
+                    
+                    Log::info('📊 Datos extraídos del RESULTADO de create_cotizacion', [
+                        'campos' => array_keys($extractedFields),
+                        'peso_kg' => $extractedFields['peso_kg'] ?? 'N/A'
+                    ]);
+                    
+                    if (!empty($extractedFields)) {
+                        return $extractedFields;
+                    }
+                }
+                
+                // FALLBACK: Si no hay datos en el resultado, extraer de argumentos
+                // (pero aplicar tara ya que los argumentos originales no la tienen)
+                $toolCallId = $result['tool_call_id'] ?? null;
                 if ($toolCallId && isset($toolCallsById[$toolCallId])) {
                     $toolCall = $toolCallsById[$toolCallId];
                     $argsJson = $toolCall['function']['arguments'] ?? '{}';
@@ -4224,15 +4295,26 @@ class MCPAssistantService
                             }
                         }
                         
-                        Log::info('📊 Datos extraídos de argumentos de create_cotizacion', [
+                        // 🔧 FIX: Aplicar TARA al peso (fallback - los argumentos no la tienen)
+                        if (isset($extractedFields['peso_kg'])) {
+                            $pesoOriginal = (float) preg_replace('/[^0-9.]/', '', $extractedFields['peso_kg']);
+                            
+                            // Solo aplicar si el peso es razonable y no parece ya tener tara
+                            if ($pesoOriginal > 0 && $pesoOriginal < 100000) {
+                                $pesoConTara = $pesoOriginal + 3400;
+                                $extractedFields['peso_kg'] = $pesoConTara;
+                                $extractedFields['incluye_tara'] = true;
+                                Log::info('🏋️ TARA aplicada en extractQuoteData (fallback)', [
+                                    'peso_original' => $pesoOriginal,
+                                    'peso_con_tara' => $pesoConTara
+                                ]);
+                            }
+                        }
+                        
+                        Log::info('📊 Datos extraídos de argumentos de create_cotizacion (fallback)', [
                             'campos' => array_keys($extractedFields)
                         ]);
                     }
-                }
-                
-                // Si también hay datos en la cotización creada, agregarlos
-                if (isset($content['cotizacion'])) {
-                    $quoteData[] = $content['cotizacion'];
                 }
                 
                 // Retornar extractedFields si se encontraron
@@ -7301,16 +7383,19 @@ class MCPAssistantService
         }
         
         if ($detectoNoIncluyeTara) {
-            $route['incluye_tara'] = false;
             // 🆕 CRÍTICO: Si no incluye tara y hay peso, SUMAR 3400 kg
             if (isset($route['peso_kg']) && $route['peso_kg'] > 0) {
                 $pesoOriginal = $route['peso_kg'];
                 $route['peso_kg'] = $pesoOriginal + 3400;
+                // 🔧 FIX: Marcar incluye_tara = true DESPUÉS de sumar para evitar doble suma
+                $route['incluye_tara'] = true;
                 Log::info('📦 TARA SUMADA automáticamente (no incluye tara)', [
                     'peso_original' => $pesoOriginal,
                     'tara' => 3400,
                     'peso_con_tara' => $route['peso_kg']
                 ]);
+            } else {
+                $route['incluye_tara'] = false; // Sin peso, mantener false para que se sume después
             }
         } elseif ($detectoYaIncluyeTara) {
             $route['incluye_tara'] = true;
@@ -7320,15 +7405,18 @@ class MCPAssistantService
             ]);
         } else {
             // 🔧 FIX: Si NO se menciona nada sobre tara, por defecto DEBE agregarse
-            $route['incluye_tara'] = false;
             if (isset($route['peso_kg']) && $route['peso_kg'] > 0) {
                 $pesoOriginal = $route['peso_kg'];
                 $route['peso_kg'] = $pesoOriginal + 3400;
+                // 🔧 FIX: Marcar incluye_tara = true DESPUÉS de sumar para evitar doble suma
+                $route['incluye_tara'] = true;
                 Log::info('📦 TARA SUMADA automáticamente (no especificado - default)', [
                     'peso_original' => $pesoOriginal,
                     'tara' => 3400,
                     'peso_con_tara' => $route['peso_kg']
                 ]);
+            } else {
+                $route['incluye_tara'] = false; // Sin peso, mantener false para que se sume después
             }
         }
         
