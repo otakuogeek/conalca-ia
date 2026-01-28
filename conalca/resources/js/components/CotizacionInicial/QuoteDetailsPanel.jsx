@@ -1,6 +1,57 @@
 import React from 'react';
 
 /**
+ * 🆕 FIX: Normalizar peso desde formato español/latinoamericano
+ * Convierte "7.600" (7600) o "7,5" (7.5) a número correcto
+ * @param {string|number} rawWeight El peso en formato string o número
+ * @returns {number} El peso normalizado en kg
+ */
+const normalizeWeight = (rawWeight) => {
+  if (rawWeight === null || rawWeight === undefined || rawWeight === '') {
+    return 0;
+  }
+  
+  // Si ya es número, devolverlo directamente
+  if (typeof rawWeight === 'number') {
+    return rawWeight;
+  }
+  
+  const raw = String(rawWeight).trim();
+  
+  // Caso 1: Formato de miles español con punto (7.600 = 7600)
+  // Patrón: X.XXX o X.XXX.XXX (1-3 dígitos, luego grupos de 3 dígitos separados por punto)
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(raw)) {
+    const peso = parseInt(raw.replace(/\./g, ''), 10);
+    console.log(`📊 normalizeWeight: formato miles español: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 2: Formato decimal con coma (7,5 = 7.5 kg)
+  if (/^\d+,\d{1,2}$/.test(raw)) {
+    const peso = Math.round(parseFloat(raw.replace(',', '.')));
+    console.log(`📊 normalizeWeight: decimal con coma: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 3: Formato decimal con punto (7.5 = 7.5 kg) - solo 1-2 decimales
+  if (/^\d+\.\d{1,2}$/.test(raw)) {
+    const peso = Math.round(parseFloat(raw));
+    console.log(`📊 normalizeWeight: decimal con punto: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 4: Número entero simple
+  if (/^\d+$/.test(raw)) {
+    return parseInt(raw, 10);
+  }
+  
+  // Caso 5: Fallback - limpiar puntos y comas
+  const peso = parseInt(raw.replace(/[.,]/g, ''), 10);
+  console.log(`📊 normalizeWeight: fallback: ${raw} → ${peso}`);
+  return isNaN(peso) ? 0 : peso;
+};
+
+/**
  * Panel de detalles de cotización - Cards individuales por ruta con selector
  * Muestra los datos extraídos del chat en tiempo real sin polling
  * Permite seleccionar rutas individuales para edición vía chat
@@ -93,9 +144,9 @@ const QuoteDetailsPanel = ({
 
   // Calcular resumen total
   const totalRoutes = routes.length;
-  // 🔧 FIX: Considerar peso_kg (backend lo envía en KILOGRAMOS ya)
+  // 🔧 FIX: Usar normalizeWeight para manejar formato miles español (7.600 = 7600)
   const totalPeso = routes.reduce((sum, r) => {
-    const peso = parseFloat(r.pesoMercancia || r.peso_mercancia || r.peso_kg || 0);
+    const peso = normalizeWeight(r.pesoMercancia || r.peso_mercancia || r.peso_kg || 0);
     return sum + peso;
   }, 0);
   const totalValor = routes.reduce((sum, r) => sum + (parseFloat(r.valorMercancia || r.valor_declarado) || 0), 0);
@@ -266,9 +317,9 @@ const QuoteDetailsPanel = ({
                   )}
                   <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
                     {(() => {
-                      // 🔧 FIX: peso_kg viene en KILOGRAMOS ya del backend
-                      const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg;
-                      return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : 'Sin peso';
+                      // 🔧 FIX: Usar normalizeWeight para formato miles español (7.600 = 7600)
+                      const peso = normalizeWeight(route.pesoMercancia || route.peso_mercancia || route.peso_kg);
+                      return peso ? `${peso.toLocaleString('es-CO')} kg` : 'Sin peso';
                     })()}
                   </span>
                 </div>
@@ -350,9 +401,9 @@ const QuoteDetailsPanel = ({
                     })()
                   }`}>
                     {(() => {
-                      // 🔧 FIX: peso_kg viene en KILOGRAMOS ya del backend
-                      const peso = route.pesoMercancia || route.peso_mercancia || route.peso_kg;
-                      return peso ? `${parseFloat(peso).toLocaleString('es-CO')} kg` : '❌ Faltante';
+                      // 🔧 FIX: Usar normalizeWeight para formato miles español (7.600 = 7600)
+                      const peso = normalizeWeight(route.pesoMercancia || route.peso_mercancia || route.peso_kg);
+                      return peso ? `${peso.toLocaleString('es-CO')} kg` : '❌ Faltante';
                     })()}
                   </p>
                 </div>

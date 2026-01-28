@@ -23,6 +23,58 @@ class ChatController extends Controller
         return env('ASSISTANT_SERVICE', 'mcp');
     }
     
+    /**
+     * 🆕 Normalizar peso desde formato español/latinoamericano
+     * Convierte "12.400" (12400) o "7,5" (7.5) a número correcto
+     * @param mixed $rawWeight El peso en formato string o número
+     * @return int El peso normalizado en kg
+     */
+    private function normalizeWeight($rawWeight)
+    {
+        if (empty($rawWeight)) {
+            return 0;
+        }
+        
+        // Si ya es número, devolverlo directamente
+        if (is_numeric($rawWeight) && !is_string($rawWeight)) {
+            return (int)$rawWeight;
+        }
+        
+        $raw = trim((string)$rawWeight);
+        
+        // Caso 1: Formato de miles español con punto (12.400 = 12400)
+        // Patrón: X.XXX o X.XXX.XXX (1-3 dígitos, luego grupos de 3 dígitos separados por punto)
+        if (preg_match('/^\d{1,3}(?:\.\d{3})+$/', $raw)) {
+            $peso = (int)str_replace('.', '', $raw);
+            Log::info('📊 normalizeWeight: formato miles español', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 2: Formato decimal con coma (7,5 = 7.5 kg)
+        if (preg_match('/^\d+,\d{1,2}$/', $raw)) {
+            $peso = (int)round((float)str_replace(',', '.', $raw));
+            Log::info('📊 normalizeWeight: decimal con coma', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 3: Formato decimal con punto (7.5 = 7.5 kg) - solo 1-2 decimales
+        if (preg_match('/^\d+\.\d{1,2}$/', $raw)) {
+            $peso = (int)round((float)$raw);
+            Log::info('📊 normalizeWeight: decimal con punto', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 4: Número entero simple
+        if (preg_match('/^\d+$/', $raw)) {
+            return (int)$raw;
+        }
+        
+        // Caso 5: Fallback - limpiar puntos y comas
+        $peso = (int)str_replace(['.', ','], '', $raw);
+        Log::info('📊 normalizeWeight: fallback limpieza total', ['raw' => $raw, 'result' => $peso]);
+        return $peso;
+    }
+    
     public function chat(Request $request)
     {
         $request->validate([
@@ -869,11 +921,16 @@ class ChatController extends Controller
                 if (!is_array($ruta)) {
                     continue;
                 }
+                
+                // 🆕 FIX: Normalizar peso usando helper para manejar formato miles español (12.400 = 12400)
+                $pesoRaw = $ruta['peso_kg'] ?? $ruta['peso'] ?? $ruta['pesoMercancia'] ?? null;
+                $pesoNormalizado = $pesoRaw !== null ? $this->normalizeWeight($pesoRaw) : null;
+                
                 $normalized = [
                     'origen' => $ruta['origen'] ?? null,
                     'destino' => $ruta['destino'] ?? null,
                     // Normalizar peso: peso_kg, peso, pesoMercancia
-                    'peso_kg' => $ruta['peso_kg'] ?? $ruta['peso'] ?? $ruta['pesoMercancia'] ?? null,
+                    'peso_kg' => $pesoNormalizado,
                     'cantidad' => $ruta['cantidad'] ?? $ruta['cantidadMercancia'] ?? null,
                     // Normalizar valor: valor_declarado, valor, valorMercancia
                     'valor_declarado' => $ruta['valor_declarado'] ?? $ruta['valor'] ?? $ruta['valorMercancia'] ?? null,

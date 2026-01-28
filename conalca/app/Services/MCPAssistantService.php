@@ -1007,15 +1007,16 @@ class MCPAssistantService
             }
             
             // Detectar PESO (con o sin conectores)
+            // 🆕 FIX: Usar normalizeWeight para manejar formato miles español (7.600 kg = 7600 kg)
             if (preg_match('/(?:el\s+)?peso\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $m)) {
-                $peso = floatval(str_replace(',', '.', $m[1]));
+                $peso = self::normalizeWeight($m[1]);
                 if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                     $peso = $peso * 1000;
                 }
                 $camposMultiples['peso_kg'] = $peso;
             } elseif (preg_match('/(?:el\s+)?peso\s+([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
                 // Sin conector: "peso 900kg,"
-                $peso = floatval(str_replace(',', '.', $m[1]));
+                $peso = self::normalizeWeight($m[1]);
                 if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                     $peso = $peso * 1000;
                 }
@@ -1330,18 +1331,20 @@ class MCPAssistantService
             $valorEditadoTemprano = strtoupper(preg_replace('/[^a-záéíóúñ\s]/ui', '', $vehiculoRaw));
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?peso\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $matchPeso)) {
             // 🆕 MEJORADO: Permite "peso es 900kg" sin espacio
+            // 🆕 FIX: Usar normalizeWeight para formato miles español (7.600 kg = 7600 kg)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'peso_kg';
-            $peso = floatval(str_replace(',', '.', $matchPeso[1]));
+            $peso = self::normalizeWeight($matchPeso[1]);
             if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                 $peso = $peso * 1000;
             }
             $valorEditadoTemprano = $peso;
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?peso\s*(?:a|por)?\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $matchPeso)) {
             // 🆕 NUEVO: "cambia peso a 900" o "modifica el peso a 5000kg"
+            // 🆕 FIX: Usar normalizeWeight para formato miles español (7.600 kg = 7600 kg)
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'peso_kg';
-            $peso = floatval(str_replace(',', '.', $matchPeso[1]));
+            $peso = self::normalizeWeight($matchPeso[1]);
             if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                 $peso = $peso * 1000;
             }
@@ -2825,10 +2828,11 @@ class MCPAssistantService
             $valorEditado = self::normalizeCityName(trim($matches[1]));
         }
         // Detectar corrección de peso
+        // 🆕 FIX: Usar normalizeWeight para manejar formato miles español (7.600 kg = 7600 kg)
         elseif (preg_match('/(?:el\s+)?peso\s*(?:es|será|sea|cambia\s*a|:)\s+([\d.,]+)\s*(?:kg|kilos?|toneladas?)?/ui', $lastUserMessage, $matches)) {
             $esEdicionSimple = true;
             $campoEditado = 'peso';
-            $peso = floatval(str_replace(',', '.', $matches[1]));
+            $peso = self::normalizeWeight($matches[1]);
             // Convertir toneladas a kg si es necesario
             if (preg_match('/toneladas?/ui', $lastUserMessage)) {
                 $peso = $peso * 1000;
@@ -3261,12 +3265,43 @@ class MCPAssistantService
                                     $datosAI['valor_declarado'] = $datosAI['valor'];
                                     unset($datosAI['valor']);
                                 }
+                                
+                                // 🔧 FIX CRÍTICO: NO sobrescribir peso si ya existe uno correcto
+                                // OpenAI convierte "12.400" (español: 12400) a 12.4 incorrectamente
                                 if (isset($datosAI['peso'])) {
-                                    $datosAI['peso_kg'] = $datosAI['peso'];
+                                    $pesoOpenAI = self::normalizeWeight($datosAI['peso']);
+                                    $pesoExistente = isset($extractedData['peso_kg']) ? (int)$extractedData['peso_kg'] : 0;
+                                    
+                                    // Solo usar peso de OpenAI si:
+                                    // 1. No hay peso existente, O
+                                    // 2. El peso de OpenAI es mayor o similar al existente (no 100x menor)
+                                    if ($pesoExistente == 0 || $pesoOpenAI >= $pesoExistente * 0.9) {
+                                        $datosAI['peso_kg'] = $pesoOpenAI;
+                                        Log::info('📊 Peso de OpenAI aceptado', [
+                                            'peso_openai' => $pesoOpenAI,
+                                            'peso_existente' => $pesoExistente
+                                        ]);
+                                    } else {
+                                        // OpenAI envió un peso sospechosamente bajo, ignorarlo
+                                        Log::warning('⚠️ Peso de OpenAI rechazado (sospechosamente bajo)', [
+                                            'peso_openai_malo' => $pesoOpenAI,
+                                            'peso_existente_bueno' => $pesoExistente
+                                        ]);
+                                        unset($datosAI['peso']);
+                                    }
                                 }
                                 
-                                // Mergear con extractedData existente (OpenAI tiene prioridad)
+                                // Mergear con extractedData existente 
+                                // PERO no sobrescribir peso_kg si ya existe un valor válido
+                                $pesoBackup = $extractedData['peso_kg'] ?? null;
                                 $extractedData = array_merge($extractedData, $datosAI);
+                                
+                                // Restaurar peso si fue sobrescrito con valor malo
+                                if ($pesoBackup !== null && isset($datosAI['peso_kg']) && $datosAI['peso_kg'] < $pesoBackup * 0.9) {
+                                    $extractedData['peso_kg'] = $pesoBackup;
+                                    $extractedData['pesoMercancia'] = $pesoBackup;
+                                    $extractedData['peso_mercancia'] = $pesoBackup;
+                                }
                                 
                                 Log::info('📊 Datos adicionales extraídos de respuesta JSON de OpenAI', [
                                     'campos_agregados' => array_keys($datosAI),
@@ -3711,32 +3746,57 @@ class MCPAssistantService
             // OpenAI extrae el peso del mensaje del usuario sin aplicar tara
             // Debemos interceptar y aplicar la tara aquí
             if ($functionName === 'create_cotizacion' && isset($arguments['peso_mercancia'])) {
-                $pesoOriginal = (float) preg_replace('/[^0-9.]/', '', $arguments['peso_mercancia']);
-                
-                // Obtener el mensaje original del usuario para detectar si menciona tara
+                // Obtener el mensaje original del usuario para:
+                // 1. Re-extraer el peso correctamente (OpenAI convierte "12.400" a "12.4" incorrectamente)
+                // 2. Detectar si menciona tara
                 $lastUserMsg = '';
                 if (isset($session)) {
                     $lastMsg = ConversationMessage::where('session_id', $session->id)
                         ->where('role', 'user')
                         ->orderBy('timestamp', 'desc')
                         ->first();
-                    $lastUserMsg = strtolower($lastMsg->content ?? '');
+                    $lastUserMsg = $lastMsg->content ?? '';
+                }
+                
+                // 🆕 FIX CRÍTICO: Re-extraer peso del mensaje original del usuario
+                // Porque OpenAI convierte "12.400" (español: 12400) a "12.4" (decimal) incorrectamente
+                $pesoExtraidoDelMensaje = self::extractPeso($lastUserMsg);
+                $pesoDeOpenAI = self::normalizeWeight($arguments['peso_mercancia']);
+                
+                // Usar el peso extraído del mensaje si es mayor que el de OpenAI
+                // Esto detecta cuando OpenAI interpretó mal un número con punto de miles
+                if ($pesoExtraidoDelMensaje !== null && $pesoExtraidoDelMensaje > $pesoDeOpenAI * 100) {
+                    $pesoOriginal = $pesoExtraidoDelMensaje;
+                    Log::info('🔧 Peso re-extraído del mensaje original (OpenAI interpretó mal formato español)', [
+                        'peso_openai_mal' => $pesoDeOpenAI,
+                        'peso_extraido_correcto' => $pesoExtraidoDelMensaje,
+                        'mensaje' => substr($lastUserMsg, 0, 200)
+                    ]);
+                } else {
+                    $pesoOriginal = $pesoDeOpenAI;
                 }
                 
                 // Detectar si el usuario indicó que la tara YA está incluida
-                $taraYaIncluida = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara|tara\s+incluida|peso\s+bruto/ui', $lastUserMsg);
+                $lastUserMsgLower = strtolower($lastUserMsg);
+                $taraYaIncluida = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara|tara\s+incluida|peso\s+bruto/ui', $lastUserMsgLower);
                 
-                // Si NO dice que ya incluye tara, agregar 3400 kg
-                if (!$taraYaIncluida && $pesoOriginal > 0) {
+                // Detectar si el usuario dice "sin tara" - significa que debemos AGREGAR la tara
+                $sinTara = preg_match('/sin\s+tara/ui', $lastUserMsgLower);
+                
+                // Si dice "sin tara" O no menciona tara en absoluto, agregar 3400 kg
+                if (($sinTara || !$taraYaIncluida) && $pesoOriginal > 0) {
                     $pesoConTara = $pesoOriginal + 3400;
                     $arguments['peso_mercancia'] = (string) $pesoConTara;
                     Log::info('🏋️ TARA aplicada en create_cotizacion', [
                         'peso_original' => $pesoOriginal,
                         'tara' => 3400,
                         'peso_con_tara' => $pesoConTara,
-                        'razon' => $taraYaIncluida ? 'N/A (tara ya incluida)' : 'no mencionó tara incluida'
+                        'sin_tara_detectado' => (bool) $sinTara,
+                        'razon' => $sinTara ? 'usuario dijo "sin tara"' : 'no mencionó tara incluida'
                     ]);
                 } else {
+                    // Asegurar que el peso se actualiza con el valor correcto
+                    $arguments['peso_mercancia'] = (string) $pesoOriginal;
                     Log::info('✅ TARA ya incluida, peso se mantiene', [
                         'peso' => $pesoOriginal,
                         'tara_ya_incluida' => (bool) $taraYaIncluida
@@ -4295,9 +4355,9 @@ class MCPAssistantService
                             }
                         }
                         
-                        // 🔧 FIX: Aplicar TARA al peso (fallback - los argumentos no la tienen)
+                        // 🔧 FIX CRÍTICO: Usar normalizeWeight() y aplicar TARA si corresponde
                         if (isset($extractedFields['peso_kg'])) {
-                            $pesoOriginal = (float) preg_replace('/[^0-9.]/', '', $extractedFields['peso_kg']);
+                            $pesoOriginal = self::normalizeWeight($extractedFields['peso_kg']);
                             
                             // Solo aplicar si el peso es razonable y no parece ya tener tara
                             if ($pesoOriginal > 0 && $pesoOriginal < 100000) {
@@ -5121,11 +5181,19 @@ class MCPAssistantService
         // Extraer modificaciones del texto
         $modificaciones = [];
         
-        // Peso: "el peso es X toneladas" o "cambia el peso a X ton"
-        if (preg_match('/(?:el\s+)?peso\s+(?:es|a|cambia)\s+(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $texto, $matchPeso)) {
-            $modificaciones['peso_kg'] = (float)str_replace(',', '.', $matchPeso[1]) * 1000;
-        } elseif (preg_match('/(?:el\s+)?peso\s+(?:es|a|cambia)\s+(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?)/ui', $texto, $matchPeso)) {
-            $modificaciones['peso_kg'] = (float)str_replace(',', '.', $matchPeso[1]);
+        // 🔧 FIX CRÍTICO: Usar extractPeso() para manejar formato español (12.400 = 12400)
+        $pesoExtraido = self::extractPeso($texto);
+        if ($pesoExtraido) {
+            // Detectar si dice "sin tara" y aplicar
+            if (preg_match('/sin\s+tara/ui', $texto)) {
+                $modificaciones['peso_kg'] = $pesoExtraido + 3400;
+                Log::info('⚖️ TARA aplicada en modificación', [
+                    'peso_original' => $pesoExtraido,
+                    'peso_con_tara' => $modificaciones['peso_kg']
+                ]);
+            } else {
+                $modificaciones['peso_kg'] = $pesoExtraido;
+            }
         }
         
         // Producto: "el producto es X" o "producto X"
@@ -5620,15 +5688,42 @@ class MCPAssistantService
                     // 🔧 CRÍTICO: Extraer datos específicos SOLO del contextoDespues (datos que vienen DESPUÉS del par de ciudades)
                     // Esto evita que se mezclen datos de la ruta anterior
                     
-                    // Extraer peso del contextoDespues PRIMERO
-                    if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $contextoDespues, $pesoMatch)) {
-                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]) * 1000;
-                    } elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?)/ui', $contextoDespues, $pesoMatch)) {
-                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]);
+                    // 🔧 FIX CRÍTICO: Usar extractPeso() para manejar correctamente formato español (12.400 = 12400)
+                    // Además, detectar y aplicar tara si corresponde
+                    $pesoExtraido = self::extractPeso($contextoDespues);
+                    $sinTaraDetectado = preg_match('/sin\s+tara/ui', $contextoDespues);
+                    
+                    if ($pesoExtraido) {
+                        // Si dice "sin tara", agregar 3400 kg de tara
+                        if ($sinTaraDetectado) {
+                            $routeData['peso_kg'] = $pesoExtraido + 3400;
+                            $routeData['peso_bruto'] = $pesoExtraido;
+                            $routeData['tara'] = 3400;
+                            $routeData['incluye_tara'] = true;
+                            Log::info("⚖️ TARA aplicada en extracción de ruta #{$routeData['ruta_numero']}", [
+                                'peso_sin_tara' => $pesoExtraido,
+                                'tara' => 3400,
+                                'peso_con_tara' => $routeData['peso_kg']
+                            ]);
+                        } else {
+                            $routeData['peso_kg'] = $pesoExtraido;
+                        }
                     }
-                    // Si no se encuentra peso después, buscar antes (fallback)
-                    elseif (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton\b)/ui', $contextoAntes, $pesoMatch)) {
-                        $routeData['peso_kg'] = (float)str_replace(',', '.', $pesoMatch[1]) * 1000;
+                    // Fallback: buscar en contextoAntes
+                    elseif ($contextoAntes) {
+                        $pesoExtraido = self::extractPeso($contextoAntes);
+                        $sinTaraDetectado = preg_match('/sin\s+tara/ui', $contextoAntes);
+                        
+                        if ($pesoExtraido) {
+                            if ($sinTaraDetectado) {
+                                $routeData['peso_kg'] = $pesoExtraido + 3400;
+                                $routeData['peso_bruto'] = $pesoExtraido;
+                                $routeData['tara'] = 3400;
+                                $routeData['incluye_tara'] = true;
+                            } else {
+                                $routeData['peso_kg'] = $pesoExtraido;
+                            }
+                        }
                     }
                     
                     // 🔧 CRÍTICO: Usar extractProducto() para distinguir correctamente producto de embalaje
@@ -7682,6 +7777,53 @@ class MCPAssistantService
         return true;
     }
 
+    /**
+     * 🆕 Normalizar peso desde formato español/latinoamericano
+     * Convierte "7.600" (7600) o "7,5" (7.5) a número correcto
+     * @param string $rawWeight El peso en formato string
+     * @return int El peso normalizado en kg
+     */
+    private static function normalizeWeight($rawWeight)
+    {
+        if (empty($rawWeight)) {
+            return 0;
+        }
+        
+        $raw = trim($rawWeight);
+        
+        // Caso 1: Formato de miles español con punto (7.600 = 7600)
+        // Patrón: X.XXX o X.XXX.XXX (1-3 dígitos, luego grupos de 3 dígitos separados por punto)
+        if (preg_match('/^\d{1,3}(?:\.\d{3})+$/', $raw)) {
+            $peso = str_replace('.', '', $raw);
+            Log::info('📊 normalizeWeight: formato miles español', ['raw' => $raw, 'result' => $peso]);
+            return (int)$peso;
+        }
+        
+        // Caso 2: Formato decimal con coma (7,5 = 7.5 kg)
+        if (preg_match('/^\d+,\d{1,2}$/', $raw)) {
+            $peso = str_replace(',', '.', $raw);
+            Log::info('📊 normalizeWeight: decimal con coma', ['raw' => $raw, 'result' => $peso]);
+            return (int)round((float)$peso);
+        }
+        
+        // Caso 3: Formato decimal con punto (7.5 = 7.5 kg) - solo 1-2 decimales
+        if (preg_match('/^\d+\.\d{1,2}$/', $raw)) {
+            Log::info('📊 normalizeWeight: decimal con punto', ['raw' => $raw, 'result' => $raw]);
+            return (int)round((float)$raw);
+        }
+        
+        // Caso 4: Número entero simple
+        if (preg_match('/^\d+$/', $raw)) {
+            Log::info('📊 normalizeWeight: entero simple', ['raw' => $raw, 'result' => $raw]);
+            return (int)$raw;
+        }
+        
+        // Caso 5: Formato mixto (intentar limpiar puntos y comas)
+        $peso = str_replace(['.', ','], '', $raw);
+        Log::info('📊 normalizeWeight: fallback limpieza total', ['raw' => $raw, 'result' => $peso]);
+        return (int)$peso;
+    }
+
     private static function normalizeCityName($cityName)
     {
         // 🔥 POST-PROCESAMIENTO: Eliminar prefijos "importacion", "exportacion", "cotizacion"
@@ -8285,9 +8427,29 @@ class MCPAssistantService
             return (int)($toneladas * 1000);
         }
         
-        // Kilogramos (simple)
+        // 🆕 FIX: Kilogramos con formato de miles español/latinoamericano (7.600 kg = 7600 kg)
+        // Patrón: Número con punto de miles seguido de kg/kilos/kilogramos
+        // Ejemplo: "7.600 kilogramos" → 7600, "12.500 kg" → 12500, "1.200.000 kg" → 1200000
+        if (preg_match('/(\d{1,3}(?:\.\d{3})+)\s*(?:kg|kilos?|kilogramos?)/ui', $text, $matches)) {
+            // Remover puntos de miles (formato español/latam)
+            $peso = str_replace('.', '', $matches[1]);
+            Log::info('📊 Peso detectado (formato miles español: X.XXX kg)', ['raw' => $matches[1], 'parsed' => $peso]);
+            return (int)$peso;
+        }
+        
+        // Kilogramos (simple) - números sin separador de miles
         if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)/ui', $text, $matches)) {
-            return (int)str_replace(',', '.', $matches[1]);
+            // Si tiene punto o coma y es formato decimal (ej: 7.5 kg)
+            $valor = $matches[1];
+            // Detectar si es decimal real (solo 1-2 dígitos después del punto/coma)
+            if (preg_match('/^(\d+)[.,](\d{1,2})$/', $valor, $decMatch)) {
+                // Es decimal: 7.5 kg → 7.5 kg, 10,5 kg → 10.5 kg
+                $peso = (float)str_replace(',', '.', $valor);
+                Log::info('📊 Peso detectado (decimal)', ['raw' => $valor, 'parsed' => $peso]);
+                return (int)round($peso);
+            }
+            // Número entero simple
+            return (int)str_replace([',', '.'], '', $valor);
         }
 
         return null;

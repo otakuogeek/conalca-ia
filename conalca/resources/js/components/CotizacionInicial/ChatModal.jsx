@@ -10,6 +10,57 @@ import { prepareRoutesForPanel, hasAllRequiredData as checkHasAllRequiredData, m
 // Constante para tara
 const TARA_KG = 3400;
 
+/**
+ * 🆕 FIX: Normalizar peso desde formato español/latinoamericano
+ * Convierte "7.600" (7600) o "7,5" (7.5) a número correcto
+ * @param {string|number} rawWeight El peso en formato string o número
+ * @returns {number} El peso normalizado en kg
+ */
+const normalizeWeight = (rawWeight) => {
+  if (rawWeight === null || rawWeight === undefined || rawWeight === '') {
+    return 0;
+  }
+  
+  // Si ya es número, devolverlo directamente
+  if (typeof rawWeight === 'number') {
+    return rawWeight;
+  }
+  
+  const raw = String(rawWeight).trim();
+  
+  // Caso 1: Formato de miles español con punto (7.600 = 7600)
+  // Patrón: X.XXX o X.XXX.XXX (1-3 dígitos, luego grupos de 3 dígitos separados por punto)
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(raw)) {
+    const peso = parseInt(raw.replace(/\./g, ''), 10);
+    console.log(`📊 normalizeWeight: formato miles español: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 2: Formato decimal con coma (7,5 = 7.5 kg)
+  if (/^\d+,\d{1,2}$/.test(raw)) {
+    const peso = Math.round(parseFloat(raw.replace(',', '.')));
+    console.log(`📊 normalizeWeight: decimal con coma: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 3: Formato decimal con punto (7.5 = 7.5 kg) - solo 1-2 decimales
+  if (/^\d+\.\d{1,2}$/.test(raw)) {
+    const peso = Math.round(parseFloat(raw));
+    console.log(`📊 normalizeWeight: decimal con punto: ${raw} → ${peso}`);
+    return peso;
+  }
+  
+  // Caso 4: Número entero simple
+  if (/^\d+$/.test(raw)) {
+    return parseInt(raw, 10);
+  }
+  
+  // Caso 5: Fallback - limpiar puntos y comas
+  const peso = parseInt(raw.replace(/[.,]/g, ''), 10);
+  console.log(`📊 normalizeWeight: fallback: ${raw} → ${peso}`);
+  return isNaN(peso) ? 0 : peso;
+};
+
 // 🆕 Función para normalizar ciudades a MAYÚSCULAS sin acentos
 const normalizeCiudad = (ciudad) => {
   if (!ciudad || typeof ciudad !== 'string') return null;
@@ -34,10 +85,16 @@ const normalizeRouteData = (ruta, userMessage = '') => {
   if (ruta.ciudad_origen) normalized.ciudad_origen = normalizeCiudad(ruta.ciudad_origen);
   if (ruta.ciudad_destino) normalized.ciudad_destino = normalizeCiudad(ruta.ciudad_destino);
   
-  // 2. 🔧 FIX: NO volver a aplicar tara - el backend ya la aplicó
-  // Solo registrar para debugging
-  const peso = parseFloat(ruta.peso || ruta.peso_kg || 0);
+  // 2. 🔧 FIX: Normalizar peso usando normalizeWeight para manejar formato miles español
+  // NO volver a aplicar tara - el backend ya la aplicó
+  const peso = normalizeWeight(ruta.peso || ruta.peso_kg || 0);
   const incluyeTara = ruta.incluye_tara === true;
+  
+  // 🆕 Guardar el peso normalizado
+  if (peso > 0) {
+    normalized.peso = peso;
+    normalized.peso_kg = peso;
+  }
   
   if (incluyeTara) {
     console.log(`✅ TARA ya aplicada por backend, peso se mantiene: ${peso} kg`);
@@ -152,8 +209,8 @@ const ChatModal = ({
     
     // 🔧 FIX: Normalizar rutas con TODOS los campos en el formato que espera el backend
     const normalizedRoutes = routes.map((r, idx) => {
-      // 🔥 Sincronizar todos los campos de peso
-      const pesoValue = r.peso || r.peso_kg || r.peso_mercancia || r.pesoMercancia || 0;
+      // 🔥 Sincronizar todos los campos de peso - usar normalizeWeight para manejar formato miles español
+      const pesoValue = normalizeWeight(r.peso || r.peso_kg || r.peso_mercancia || r.pesoMercancia || 0);
       
       return {
         id: r.id || null, // Importante: mantener el ID si existe
@@ -637,7 +694,8 @@ const ChatModal = ({
           || (index === 0 ? selectedProduct?.nombre : null);
 
         // 🔧 FIX: Asegurar que todos los campos de peso estén presentes
-        const pesoFinal = route.peso_kg || route.peso_mercancia || route.pesoMercancia || 0;
+        // 🆕 Usar normalizeWeight para manejar formato miles español (7.600 = 7600)
+        const pesoFinal = normalizeWeight(route.peso_kg || route.peso_mercancia || route.pesoMercancia || 0);
 
         return {
           ...route,
@@ -668,8 +726,8 @@ const ChatModal = ({
         || quoteData.producto 
         || quoteData.tipo_producto;
 
-      // 🔧 FIX: Sincronizar campos de peso
-      const pesoFinal = quoteData.peso_kg || quoteData.peso_mercancia || quoteData.pesoMercancia || 0;
+      // 🔧 FIX: Sincronizar campos de peso - usar normalizeWeight para manejar formato miles español
+      const pesoFinal = normalizeWeight(quoteData.peso_kg || quoteData.peso_mercancia || quoteData.pesoMercancia || 0);
 
       const result = [{
         ...quoteData,
@@ -877,8 +935,11 @@ const ChatModal = ({
               const processedRoutes = allRoutes.map((route, idx) => {
                 console.log(`📍 Procesando ruta ${idx + 1}:`, route);
                 
-                // 🔧 FIX BUG #1: Sincronizar TODOS los campos de peso al mismo valor
-                const pesoValue = route.peso_mercancia ?? route.peso_kg ?? route.pesoMercancia ?? route.peso ?? null;
+                // 🔧 FIX CRÍTICO: Usar normalizeWeight para manejar formato miles español (12.400 = 12400)
+                const pesoRaw = route.peso_mercancia ?? route.peso_kg ?? route.pesoMercancia ?? route.peso ?? null;
+                const pesoValue = normalizeWeight(pesoRaw);
+                
+                console.log(`📊 Peso ruta ${idx + 1}: raw=${pesoRaw} → normalizado=${pesoValue}`);
                 
                 return {
                   id: route.id ?? null, // 🔥 CRÍTICO: Preservar ID si existe
@@ -931,8 +992,9 @@ const ChatModal = ({
                       console.log('✅ Datos actuales de BD obtenidos:', data.routes.length, 'rutas');
                       // Convertir formato de BD a formato del componente
                       return data.routes.map(r => {
-                        // 🔧 FIX BUG #1: Sincronizar TODOS los campos de peso
-                        const pesoValue = r.peso_mercancia || r.peso_kg || r.pesoMercancia || r.peso || null;
+                        // 🔧 FIX CRÍTICO: Usar normalizeWeight para manejar formato miles español
+                        const pesoRaw = r.peso_mercancia || r.peso_kg || r.pesoMercancia || r.peso || null;
+                        const pesoValue = normalizeWeight(pesoRaw);
                         
                         return {
                           id: r.id, // 🔥 CRÍTICO: Preservar ID para updates
@@ -3000,7 +3062,8 @@ const ChatModal = ({
 
     // 🆕 PROCESAR TODAS LAS RUTAS - cada una con sus datos explícitos
     const routesToSave = routesArray.map((route, idx) => {
-      const pesoMercancia = route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0;
+      // 🆕 Usar normalizeWeight para manejar formato miles español (7.600 = 7600)
+      const pesoMercancia = normalizeWeight(route.pesoMercancia || route.peso_mercancia || route.peso_kg || 0);
       const vehiculoRecomendado = route.claseVehiculo || route.vehiculo || recommendVehicle(pesoMercancia);
       const empaqueNombre = route.empaque || route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.nome || selectedEmpaque?.nombre || 'Caja';
       const empaqueCodigo = route.tipo_embajale || route.tipo_embalaje || selectedEmpaque?.Codigo || selectedEmpaque?.codigo || empaqueNombre;
