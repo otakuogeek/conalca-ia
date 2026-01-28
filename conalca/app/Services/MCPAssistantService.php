@@ -5003,17 +5003,40 @@ class MCPAssistantService
                 'producto_buscado' => $productoName
             ]);
 
+            // 🔧 FIX: Si el producto es muy genérico, no buscar en BD
+            // Evita mapeos incorrectos como "productos de consumo masivo" → "LACTOSUERO..."
+            $productosGenericos = [
+                'productos de consumo masivo', 'consumo masivo', 'productos varios',
+                'mercancia variada', 'mercancias varias', 'carga general',
+                'productos industriales', 'productos alimenticios', 'alimentos',
+                'productos', 'mercancia', 'carga', 'material'
+            ];
+            
+            $productoLower = strtolower(trim($productoName));
+            if (in_array($productoLower, $productosGenericos)) {
+                Log::info('⚠️ Producto genérico detectado - NO buscar en BD', [
+                    'producto' => $productoName,
+                    'razon' => 'Evitar mapeo incorrecto'
+                ]);
+                return null; // Dejar que el usuario lo especifique mejor
+            }
+
             // Intentar búsqueda exacta primero
             $producto = \DB::table('products')
                 ->where('producto_nombre', 'LIKE', '%' . $productoName . '%')
                 ->first();
 
-            // Si no encuentra exacto, buscar por similitud con SOUNDEX o partes del nombre
-            if (!$producto) {
-                // Separar palabras y buscar por cada una
+            // 🔧 FIX: NO buscar por palabras individuales si el nombre es corto o genérico
+            // Esto evita que "productos de consumo" mapee a cualquier cosa con "productos" en el nombre
+            if (!$producto && strlen($productoName) > 10) {
+                // Solo buscar por la primera palabra si es específica (> 5 caracteres, no genérica)
                 $palabras = explode(' ', $productoName);
-                foreach ($palabras as $palabra) {
-                    if (strlen($palabra) > 3) { // Ignorar palabras muy cortas
+                $primerasPalabras = array_slice($palabras, 0, 2); // Solo primeras 2 palabras
+                
+                $palabrasGenericas = ['productos', 'producto', 'mercancia', 'mercancias', 'carga', 'material', 'consumo', 'masivo'];
+                
+                foreach ($primerasPalabras as $palabra) {
+                    if (strlen($palabra) > 5 && !in_array(strtolower($palabra), $palabrasGenericas)) {
                         $producto = \DB::table('products')
                             ->where('producto_nombre', 'LIKE', '%' . $palabra . '%')
                             ->first();
