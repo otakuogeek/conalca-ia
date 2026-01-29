@@ -92,19 +92,40 @@ class DataExtractionService
             
             // 🔧 FIX: Detectar si debe agregar tara
             // Casos que requieren agregar tara:
-            // 1. "agrega/incluye/suma tara" (explícito)
-            // 2. "el peso no incluye tara" o "sin tara" o "peso neto" (explícito negativo)
-            // 3. Default: si NO dice "tara incluida/con tara/peso bruto", agregar tara
-            $agregarTara = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar)\s+(?:la\s+)?tara/ui', $lastUserMessage);
+            // 1. "agrega/incluye/suma tara" (explícito) - SIEMPRE, incluso en edición
+            // 2. "peso X suma tara" o "peso X kg suma tara" (nuevo patrón)
+            // 3. "el peso no incluye tara" o "sin tara" o "peso neto" (explícito negativo)
+            // 4. Default: si NO dice "tara incluida/con tara/peso bruto", agregar tara (solo para nuevas rutas)
+            $agregarTaraExplicito = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar|sumar|ponga)\s+(?:la\s+)?tara/ui', $lastUserMessage);
+            // 🆕 Nuevo patrón: "peso 25000 suma tara" o "peso 25000 kg suma tara"
+            $pesoConSumaTara = preg_match('/peso\s+([\d.,]+)\s*(?:kg|kilos?)?\s+(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessage, $matchPesoTara);
             $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye/ui', $lastUserMessage);
             $yaIncluyeTara = preg_match('/(?:tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye\s+tara|peso\s+ya\s+incluye)/ui', $lastUserMessage);
             
-            // Determinar si se debe agregar tara (pero NO si estamos editando)
-            $debeAgregarTara = !$esEdicionCampo && ($agregarTara || $noIncluyeTara || (!$yaIncluyeTara));
+            // 🔧 FIX CRÍTICO: Si el usuario EXPLÍCITAMENTE dice "suma tara" o "agrega tara", 
+            // SIEMPRE agregar la tara, incluso en modo edición
+            $comandoExplicitoTara = $agregarTaraExplicito || $pesoConSumaTara;
+            
+            // Determinar si se debe agregar tara
+            // - Si hay comando explícito ("suma tara"), SIEMPRE agregar (incluso en edición)
+            // - Si NO está editando Y (no incluye tara O no dice que ya incluye), agregar por defecto
+            $debeAgregarTara = $comandoExplicitoTara || (!$esEdicionCampo && ($noIncluyeTara || (!$yaIncluyeTara)));
             
             if ($debeAgregarTara && !$yaIncluyeTara) {
-                // Buscar peso en extracción actual o datos previos
-                $pesoActual = $extractedData['extracted']['peso'] ?? $currentData['peso_mercancia'] ?? $currentData['peso'] ?? 0;
+                // 🆕 FIX: Si se detectó patrón "peso X suma tara", usar ese peso específico
+                if ($pesoConSumaTara && isset($matchPesoTara[1])) {
+                    $pesoDelMensaje = $matchPesoTara[1];
+                    // Normalizar formato de peso (manejar 12.400 como 12400, no 12.4)
+                    $pesoDelMensaje = str_replace(['.', ','], ['', '.'], $pesoDelMensaje);
+                    $pesoActual = (float) $pesoDelMensaje;
+                    Log::info('🎯 Peso extraído del patrón "peso X suma tara"', [
+                        'peso_raw' => $matchPesoTara[1],
+                        'peso_normalizado' => $pesoActual
+                    ]);
+                } else {
+                    // Buscar peso en extracción actual o datos previos
+                    $pesoActual = $extractedData['extracted']['peso'] ?? $currentData['peso_mercancia'] ?? $currentData['peso'] ?? 0;
+                }
                 
                 // Limpiar peso si viene como string
                 if (is_string($pesoActual)) {
@@ -112,40 +133,48 @@ class DataExtractionService
                 }
                 
                 // 🔥 HEURÍSTICO MEJORADO: Detectar si OpenAI ya sumó la tara
-                // Si (peso - 3400) es múltiplo exacto de 1000, probablemente ya tiene tara
-                // Ejemplos: 15400-3400=12000 (12 ton), 27400-3400=24000 (24 ton), 34200-3400=30800 (30.8 ton - ¡duplicado!)
-                $pesoSinPosibleTara = $pesoActual - 3400;
-                $esProbablementeDuplicado = ($pesoSinPosibleTara > 0 && $pesoSinPosibleTara % 1000 == 0);
-                
-                // También verificar si el mensaje menciona "con tara" o "ya tara"
-                $mensionaTara = preg_match('/(?<!no\s)(?:con\s+tara|ya.*tara|tara\s+incluida|peso\s+bruto)/ui', $lastUserMessage);
-                
-                $pareceYaTenerTara = ($pesoActual >= 3400 && ($esProbablementeDuplicado || $mensionaTara));
+                // PERO si hay comando explícito "suma tara", NO aplicar heurístico (el usuario quiere sumar)
+                if ($comandoExplicitoTara) {
+                    // Usuario pidió explícitamente sumar tara, NO verificar heurísticos
+                    $pareceYaTenerTara = false;
+                    Log::info('⚡ Comando explícito de tara detectado - ignorando heurísticos', [
+                        'comando' => $pesoConSumaTara ? 'peso X suma tara' : 'agrega/suma tara'
+                    ]);
+                } else {
+                    // Si (peso - 3400) es múltiplo exacto de 1000, probablemente ya tiene tara
+                    $pesoSinPosibleTara = $pesoActual - 3400;
+                    $esProbablementeDuplicado = ($pesoSinPosibleTara > 0 && $pesoSinPosibleTara % 1000 == 0);
+                    
+                    // También verificar si el mensaje menciona "con tara" o "ya tara"
+                    $mensionaTara = preg_match('/(?<!no\s)(?:con\s+tara|ya.*tara|tara\s+incluida|peso\s+bruto)/ui', $lastUserMessage);
+                    
+                    $pareceYaTenerTara = ($pesoActual >= 3400 && ($esProbablementeDuplicado || $mensionaTara));
+                }
                 
                 // Solo sumar si hay un peso base y NO parece tener tara ya incluida
                 if ($pesoActual > 0 && !$pareceYaTenerTara) {
                      $nuevoPeso = $pesoActual + 3400;
                      $extractedData['extracted']['peso'] = $nuevoPeso;
-                     // 🔥 FIX #3: Agregar peso_kg en toneladas para que frontend lo use correctamente
-                     $extractedData['extracted']['peso_kg'] = round($nuevoPeso / 1000, 2);
+                     // � FIX: peso_kg debe estar en KG, no en toneladas
+                     $extractedData['extracted']['peso_kg'] = $nuevoPeso;
                      // Asegurar que se incluya en la respuesta
                      $extractedData['extracted']['incluye_tara'] = true;
                      
                      Log::info('📦 TARA agregada en Quick Extraction', [
                          'peso_anterior' => $pesoActual,
                          'nuevo_peso' => $nuevoPeso,
-                         'peso_kg_ton' => round($nuevoPeso / 1000, 2),
+                         'comando_explicito' => $comandoExplicitoTara,
+                         'es_edicion' => $esEdicionCampo,
                          'selected_route_index' => $selectedRouteIndex
                      ]);
-                } else if ($pareceYaTenerTara) {
+                } else if ($pareceYaTenerTara && !$comandoExplicitoTara) {
                     Log::info('⚠️ TARA NO agregada: ya parece estar incluida', [
                         'peso_actual' => $pesoActual,
-                        'peso_sin_posible_tara' => $pesoSinPosibleTara,
-                        'es_multiplo_1000' => $esProbablementeDuplicado,
-                        'menciona_tara' => $mensionaTara,
-                        'razon' => $esProbablementeDuplicado 
-                            ? 'Heurístico: (peso - 3400) es múltiplo de 1000, OpenAI probablemente ya sumó tara'
-                            : 'Mensaje menciona que tara ya está incluida'
+                        'razon' => 'Heurístico detectó que probablemente ya tiene tara'
+                    ]);
+                } else if ($pesoActual <= 0) {
+                    Log::info('⚠️ TARA NO agregada: peso es 0 o negativo', [
+                        'peso_actual' => $pesoActual
                     ]);
                 }
             } else if ($esEdicionCampo) {

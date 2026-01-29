@@ -170,14 +170,27 @@ class DataExtractionController extends Controller
                                 'campos_actualizados' => array_keys(array_filter($extractedFields, fn($v) => $v !== null))
                             ]);
                             
-                            // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
+                            // 🔧 FIX: Si el peso ya tiene tara incluida (por DataExtractionService),
+                            // NO volver a aplicarla. Solo sincronizar campos.
                             $rutasConTara = [];
                             foreach ($existingData['rutas'] as $idx => $ruta) {
                                 // 🔧 FIX: Buscar peso en ambos campos posibles
                                 $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
                                 $incluyeTara = $ruta['incluye_tara'] ?? false;
                                 
-                                if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                                // 🆕 FIX CRÍTICO: Si la ruta que se está editando ya tiene el peso
+                                // actualizado por DataExtractionService (con tara incluida), NO duplicar
+                                if ($idx === $rutaIdx && isset($extractedFields['incluye_tara']) && $extractedFields['incluye_tara'] === true) {
+                                    // DataExtractionService ya aplicó la tara, solo sincronizar
+                                    $pesoConTara = $extractedFields['peso'] ?? $extractedFields['peso_kg'] ?? $pesoBase;
+                                    $ruta['peso'] = $pesoConTara;
+                                    $ruta['peso_kg'] = $pesoConTara;
+                                    $ruta['incluye_tara'] = true;
+                                    Log::info('✅ Tara ya aplicada por DataExtractionService, solo sincronizando campos', [
+                                        'ruta' => $idx + 1,
+                                        'peso' => $pesoConTara
+                                    ]);
+                                } else if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
                                     $ruta['peso'] = $pesoBase + 3400;
                                     $ruta['peso_kg'] = $pesoBase + 3400;
                                     $ruta['incluye_tara'] = true;

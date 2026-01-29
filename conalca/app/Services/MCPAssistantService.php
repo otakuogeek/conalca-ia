@@ -1338,6 +1338,12 @@ class MCPAssistantService
             if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                 $peso = $peso * 1000;
             }
+            // 🔧 FIX: Detectar si el usuario quiere sumar tara junto con el peso
+            // Patrones: "peso 15000 suma tara", "peso 15000kg agrega tara", "peso 15000 ponga tara"
+            if (preg_match('/(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit)) {
+                $peso = $peso + 3400;
+                Log::info('⚖️ Tara sumada al editar peso', ['peso_sin_tara' => $peso - 3400, 'tara' => 3400, 'peso_con_tara' => $peso]);
+            }
             $valorEditadoTemprano = $peso;
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:cambia|modifica|ajusta|actualiza)\s+(?:el\s+)?peso\s*(?:a|por)?\s*([\d.,]+)\s*(?:kg|kilos?|toneladas?|ton)?/ui', $lastUserMessageForEdit, $matchPeso)) {
             // 🆕 NUEVO: "cambia peso a 900" o "modifica el peso a 5000kg"
@@ -1347,6 +1353,11 @@ class MCPAssistantService
             $peso = self::normalizeWeight($matchPeso[1]);
             if (preg_match('/toneladas?|ton\b/ui', $lastUserMessageForEdit)) {
                 $peso = $peso * 1000;
+            }
+            // 🔧 FIX: Detectar si el usuario quiere sumar tara junto con el peso
+            if (preg_match('/(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit)) {
+                $peso = $peso + 3400;
+                Log::info('⚖️ Tara sumada al editar peso (cambia/modifica)', ['peso_sin_tara' => $peso - 3400, 'tara' => 3400, 'peso_con_tara' => $peso]);
             }
             $valorEditadoTemprano = $peso;
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:la\s+)?cantidad\s*(?:' . $palabrasAgregar . ')\s*(\d+)/ui', $lastUserMessageForEdit, $matchCantidad)) {
@@ -1391,6 +1402,14 @@ class MCPAssistantService
             $esEdicionSimpleTemprana = true;
             $campoEditadoTemprano = 'producto';
             $valorEditadoTemprano = strtoupper(trim($matchProductoSimple[1]));
+        } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:el\s+)?peso\s+([\d.,]+)\s*(?:kg|kilos?)?\s+(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit, $matchPesoTara)) {
+            // 🔧 FIX: Nuevo patrón para "peso 15000 suma tara" o "peso 30000kg agrega tara"
+            $esEdicionSimpleTemprana = true;
+            $campoEditadoTemprano = 'peso_kg';
+            $peso = self::normalizeWeight($matchPesoTara[1]);
+            $peso = $peso + 3400; // Sumar tara
+            $valorEditadoTemprano = $peso;
+            Log::info('⚖️ Peso con tara detectado (patrón directo)', ['peso_sin_tara' => $peso - 3400, 'tara' => 3400, 'peso_con_tara' => $peso]);
         } elseif ($esEdicionSimpleHabilitada && preg_match('/(?:agrega|pon|sumar?|inclu(?:ye|ir))\s+(?:la\s+)?tara/ui', $lastUserMessageForEdit)) {
             // 🆕 NUEVO: "Agrega Tara" detectado tempranamente
             $esEdicionSimpleTemprana = true;
