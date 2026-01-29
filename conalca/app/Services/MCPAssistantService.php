@@ -8913,22 +8913,43 @@ class MCPAssistantService
         // "el empaque es cajas" o "empaque: bultos" o "cambia el empaque a sacos" o "empaque son cajas"
         $empaqueKeyword = null;
         
+        // 🔧 FIX: Detectar contenedor con tamaño PRIMERO (contenedor de 20/40 pies)
+        // Patrón: "contenedor de 20 pies", "1 contenedor de 40 pies", "contenedor 20'"
+        if (preg_match('/contenedor(?:es)?\s+(?:de\s+)?(\d+)\s*(?:pies|\'|")?/ui', $lowerText, $containerMatch)) {
+            $tamaño = $containerMatch[1];
+            if ($tamaño == '20') {
+                $empaqueKeyword = 'contenedor de 20';
+                Log::info('📦 Empaque detectado (contenedor de 20 pies)', ['keyword' => $empaqueKeyword]);
+            } elseif ($tamaño == '40') {
+                $empaqueKeyword = 'contenedor de 40';
+                Log::info('📦 Empaque detectado (contenedor de 40 pies)', ['keyword' => $empaqueKeyword]);
+            }
+        }
+        // También detectar "20 pies" o "40 pies" sin "contenedor" explícito
+        elseif (preg_match('/(\d+)\s*pies/ui', $lowerText, $piesMatch)) {
+            $tamaño = $piesMatch[1];
+            if ($tamaño == '20' || $tamaño == '40') {
+                $empaqueKeyword = $tamaño . ' pies';
+                Log::info('📦 Empaque detectado (N pies)', ['keyword' => $empaqueKeyword]);
+            }
+        }
+        
         // 🆕 NUEVO: Detectar "empacadas/empacados en X" o "embaladas en X" PRIMERO
         // "60 unidades empacadas en cajas" → cajas
-        if (preg_match('/(?:empacad[ao]s?|embalad[ao]s?|envuelto?s?)\s+(?:en|con)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches)) {
+        if (!$empaqueKeyword && preg_match('/(?:empacad[ao]s?|embalad[ao]s?|envuelto?s?)\s+(?:en|con)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches)) {
             $empaqueKeyword = strtolower(trim($matches[1]));
             Log::info('📦 Empaque detectado (patrón "empacadas en X")', ['keyword' => $empaqueKeyword]);
         }
         // Patrón: "cambia el empaque a X" o "empaque cambialo a X"
         // 🔧 FIX BUG #530-2: Agregar soporte para plural (empaques/embalajes) y artículos (el/los)
-        elseif (preg_match('/(?:cambia|cambiar)(?:\s+(?:el|los))?\s+(?:empaque|embalaje)s?\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches) ||
-            preg_match('/(?:empaque|embalaje)s?\s+cambialo\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches)) {
+        elseif (!$empaqueKeyword && (preg_match('/(?:cambia|cambiar)(?:\s+(?:el|los))?\s+(?:empaque|embalaje)s?\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches) ||
+            preg_match('/(?:empaque|embalaje)s?\s+cambialo\s+(?:a|por)\s+([a-záéíóúñ]+)/ui', $lowerText, $matches))) {
             $empaqueKeyword = strtolower(trim($matches[1]));
             Log::info('📦 Empaque detectado (patrón "cambia empaque a X")', ['keyword' => $empaqueKeyword]);
         }
         // Patrón: "empaque es/son X" o "empaque: X"
         // 🔧 FIX BUG #530-2: Agregar soporte para plural (empaques/embalajes) y artículos (el/los)
-        elseif (preg_match('/(?:(?:el|los)\s+)?(?:empaque|embalaje)s?\s*(?:es|son|será|sea|queda|:)\s*([a-záéíóúñ\s]+?)(?:\s*[.,;]|\s+y\s+|$)/ui', $lowerText, $matches)) {
+        elseif (!$empaqueKeyword && preg_match('/(?:(?:el|los)\s+)?(?:empaque|embalaje)s?\s*(?:es|son|será|sea|queda|:)\s*([a-záéíóúñ\s]+?)(?:\s*[.,;]|\s+y\s+|$)/ui', $lowerText, $matches)) {
             $empaqueKeyword = strtolower(trim($matches[1]));
             Log::info('📦 Empaque detectado (patrón CORRECCIÓN)', ['keyword' => $empaqueKeyword]);
         }
@@ -8961,12 +8982,14 @@ class MCPAssistantService
             'granel líquido' => 'GRANEL LIQUIDO',
             'líquido' => 'GRANEL LIQUIDO',
             'liquido' => 'GRANEL LIQUIDO',
-            // Contenedores
-            'contenedor' => 'CONTENEDOR (1) 20 PIES',
-            'contenedor 20' => 'CONTENEDOR (1) 20 PIES',
-            'contenedor 40' => 'CONTENEDOR 40 PIES',
-            '20 pies' => 'CONTENEDOR (1) 20 PIES',
-            '40 pies' => 'CONTENEDOR 40 PIES',
+            // Contenedores - 🔧 FIX: Agregar variaciones con "de" - Formato corto para UI
+            'contenedor de 20' => 'CONTENEDOR 20',
+            'contenedor de 40' => 'CONTENEDOR 40',
+            'contenedor 20' => 'CONTENEDOR 20',
+            'contenedor 40' => 'CONTENEDOR 40',
+            '20 pies' => 'CONTENEDOR 20',
+            '40 pies' => 'CONTENEDOR 40',
+            'contenedor' => 'CONTENEDOR',  // Default sin tamaño (el usuario deberá especificar)
             // Otros
             'tonel' => 'TONEL',
             'toneles' => 'TONEL',
@@ -9006,7 +9029,7 @@ class MCPAssistantService
                 continue;
             }
             
-            if (strpos($searchText, $keyword) !== false) {
+                if (strpos($searchText, $keyword) !== false) {
                 // Priorizar keywords más largos (más específicos)
                 if (strlen($keyword) > $foundLength) {
                     $found = $empaqueType;
@@ -9016,6 +9039,29 @@ class MCPAssistantService
         }
         
         if ($found) {
+            // 🔧 FIX: Para contenedores con tamaño, retornar el formato corto directamente
+            // sin buscar en BD (para mostrar "CONTENEDOR 20" en lugar de "CONTENEDOR (1) 20 PIES")
+            if (preg_match('/^CONTENEDOR\s*(\d+)$/i', $found, $containerMatch)) {
+                $tamaño = $containerMatch[1];
+                $empaqueCorto = 'CONTENEDOR ' . $tamaño;
+                
+                // Buscar ID en BD usando el nombre largo para compatibilidad
+                $nombreLargoBD = ($tamaño == '20') ? 'CONTENEDOR (1) 20 PIES' : 'CONTENEDOR 40 PIES';
+                $empaqueFromDB = self::getEmpaqueFromDB($nombreLargoBD);
+                
+                Log::info('📦 Empaque contenedor detectado - formato corto', [
+                    'keyword_encontrado' => $found,
+                    'empaque_mostrar' => $empaqueCorto,
+                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null
+                ]);
+                
+                return [
+                    'empaque' => $empaqueCorto,
+                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null
+                ];
+            }
+            
+            // Para otros empaques, buscar normalmente en BD
             $empaqueFromDB = self::getEmpaqueFromDB($found);
             if ($empaqueFromDB) {
                 Log::info('📦 Empaque detectado y validado en BD', [

@@ -584,6 +584,50 @@ EOT;
             }
         }
 
+        // 🔧 FIX: Post-procesamiento para combinar empaque CONTENEDOR con tamaño
+        // Si el empaque es "CONTENEDOR" genérico, verificar el campo 'contenedor' para obtener el tamaño
+        if (isset($normalized['empaque']) && isset($normalized['contenedor'])) {
+            $empaqueUpper = mb_strtoupper($normalized['empaque']);
+            $contenedor = mb_strtolower($normalized['contenedor']);
+            
+            // Si el empaque es CONTENEDOR genérico (sin tamaño)
+            if ($empaqueUpper === 'CONTENEDOR' || (strpos($empaqueUpper, 'CONTENEDOR') !== false && !preg_match('/\d+/', $empaqueUpper))) {
+                // Buscar tamaño en el campo contenedor: "contenedor de 20 pies", "20'", "40 pies"
+                if (preg_match('/(\d+)\s*(?:pies|\'|")?/i', $contenedor, $matches)) {
+                    $tamaño = $matches[1];
+                    if ($tamaño == '20') {
+                        $normalized['empaque'] = 'CONTENEDOR 20';
+                        Log::info('📦 Empaque actualizado con tamaño de contenedor', [
+                            'empaque_original' => $empaqueUpper,
+                            'contenedor' => $normalized['contenedor'],
+                            'empaque_final' => $normalized['empaque']
+                        ]);
+                    } elseif ($tamaño == '40') {
+                        $normalized['empaque'] = 'CONTENEDOR 40';
+                        Log::info('📦 Empaque actualizado con tamaño de contenedor', [
+                            'empaque_original' => $empaqueUpper,
+                            'contenedor' => $normalized['contenedor'],
+                            'empaque_final' => $normalized['empaque']
+                        ]);
+                    }
+                }
+            }
+        }
+        
+        // 🔧 FIX: También verificar si el empaque mencionado directamente tiene tamaño
+        // "contenedor de 20 pies" debería resultar en "CONTENEDOR 20"
+        if (isset($normalized['empaque'])) {
+            $empaqueUpper = mb_strtoupper($normalized['empaque']);
+            if (preg_match('/CONTENEDOR.*?(\d+)/i', $empaqueUpper, $matches)) {
+                $tamaño = $matches[1];
+                if ($tamaño == '20') {
+                    $normalized['empaque'] = 'CONTENEDOR 20';
+                } elseif ($tamaño == '40') {
+                    $normalized['empaque'] = 'CONTENEDOR 40';
+                }
+            }
+        }
+
         return $normalized;
     }
 

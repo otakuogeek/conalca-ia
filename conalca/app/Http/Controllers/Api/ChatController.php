@@ -926,6 +926,48 @@ class ChatController extends Controller
                 $pesoRaw = $ruta['peso_kg'] ?? $ruta['peso'] ?? $ruta['pesoMercancia'] ?? null;
                 $pesoNormalizado = $pesoRaw !== null ? $this->normalizeWeight($pesoRaw) : null;
                 
+                // 🔧 FIX: Obtener empaque y combinarlo con tamaño de contenedor si aplica
+                $empaque = $ruta['empaque'] ?? null;
+                $contenedor = $ruta['contenedor'] ?? null;
+                
+                // Si el empaque es CONTENEDOR genérico, verificar si hay tamaño en el campo contenedor
+                if ($empaque && $contenedor) {
+                    $empaqueUpper = mb_strtoupper($empaque);
+                    $contenedorLower = mb_strtolower($contenedor);
+                    
+                    if ($empaqueUpper === 'CONTENEDOR' || (strpos($empaqueUpper, 'CONTENEDOR') !== false && !preg_match('/\d+/', $empaqueUpper))) {
+                        // Buscar tamaño en el campo contenedor: "contenedor de 20 pies", "20'", "40 pies"
+                        if (preg_match('/(\d+)\s*(?:pies|\'|")?/i', $contenedorLower, $matches)) {
+                            $tamaño = $matches[1];
+                            if ($tamaño == '20') {
+                                $empaque = 'CONTENEDOR 20';
+                                Log::info('📦 Empaque actualizado con tamaño de contenedor (ChatController)', [
+                                    'empaque_original' => $empaqueUpper,
+                                    'contenedor' => $contenedor,
+                                    'empaque_final' => $empaque
+                                ]);
+                            } elseif ($tamaño == '40') {
+                                $empaque = 'CONTENEDOR 40';
+                                Log::info('📦 Empaque actualizado con tamaño de contenedor (ChatController)', [
+                                    'empaque_original' => $empaqueUpper,
+                                    'contenedor' => $contenedor,
+                                    'empaque_final' => $empaque
+                                ]);
+                            }
+                        }
+                    }
+                }
+                
+                // También verificar si el empaque tiene tamaño embebido
+                if ($empaque && preg_match('/CONTENEDOR.*?(\d+)/i', $empaque, $matches)) {
+                    $tamaño = $matches[1];
+                    if ($tamaño == '20') {
+                        $empaque = 'CONTENEDOR 20';
+                    } elseif ($tamaño == '40') {
+                        $empaque = 'CONTENEDOR 40';
+                    }
+                }
+                
                 $normalized = [
                     'origen' => $ruta['origen'] ?? null,
                     'destino' => $ruta['destino'] ?? null,
@@ -935,10 +977,10 @@ class ChatController extends Controller
                     // Normalizar valor: valor_declarado, valor, valorMercancia
                     'valor_declarado' => $ruta['valor_declarado'] ?? $ruta['valor'] ?? $ruta['valorMercancia'] ?? null,
                     'vehiculo' => $ruta['vehiculo'] ?? $ruta['claseVehiculo'] ?? null,
-                    'empaque' => $ruta['empaque'] ?? null,
+                    'empaque' => $empaque,
                     'empaque_id' => $ruta['empaque_id'] ?? null,
                     'producto' => $ruta['producto'] ?? $ruta['tipo_producto'] ?? null,
-                    'contenedor' => $ruta['contenedor'] ?? null,
+                    'contenedor' => $contenedor,
                     'incluye_tara' => $ruta['incluye_tara'] ?? false
                 ];
                 // Remover nulls
