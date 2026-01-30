@@ -8896,9 +8896,10 @@ class MCPAssistantService
             return $contenedor;
         }
         
-        // 🆕 Patrón PRIORITARIO: Formato "1X40 HQ" o "2X20 GP" o "1x40hc" (NxTAMAÑO TIPO)
+        // 🆕 Patrón PRIORITARIO: Formato "1X40 HQ" o "2X20 GP" o "1x40hc" o "1x40'HC" (NxTAMAÑO TIPO)
         // Este formato es muy común en solicitudes de logística
-        if (preg_match('/(\d+)\s*[Xx]\s*(\d+)\s*(HQ|HC|GP|RF|OT|FR)?/ui', $text, $matches)) {
+        // 🔧 FIX: Agregar soporte para comilla simple (') entre tamaño y tipo: "1x40'HC"
+        if (preg_match('/(\d+)\s*[Xx]\s*(\d+)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/ui', $text, $matches)) {
             $cantidad = $matches[1];
             $tamaño = $matches[2];
             $tipo = isset($matches[3]) && !empty($matches[3]) ? strtoupper($matches[3]) : 'GP';
@@ -8932,9 +8933,23 @@ class MCPAssistantService
         // "el empaque es cajas" o "empaque: bultos" o "cambia el empaque a sacos" o "empaque son cajas"
         $empaqueKeyword = null;
         
-        // 🔧 FIX: Detectar contenedor con tamaño PRIMERO (contenedor de 20/40 pies)
+        // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" PRIMERO (formato logístico estándar)
+        // Patrón: "1x40'HC", "1X40HC", "2x20'GP", etc.
+        if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/ui', $lowerText, $formatoMatch)) {
+            $tamaño = $formatoMatch[2];
+            $tipo = isset($formatoMatch[3]) && !empty($formatoMatch[3]) ? strtoupper($formatoMatch[3]) : 'GP';
+            if ($tipo === 'HQ') $tipo = 'HC';
+            if ($tamaño == '20') {
+                $empaqueKeyword = 'contenedor de 20';
+                Log::info('📦 Empaque detectado (formato NxTAMAÑO)', ['raw' => $formatoMatch[0], 'keyword' => $empaqueKeyword, 'tipo' => $tipo]);
+            } elseif ($tamaño == '40' || $tamaño == '45') {
+                $empaqueKeyword = 'contenedor de 40';
+                Log::info('📦 Empaque detectado (formato NxTAMAÑO)', ['raw' => $formatoMatch[0], 'keyword' => $empaqueKeyword, 'tipo' => $tipo]);
+            }
+        }
+        // 🔧 FIX: Detectar contenedor con tamaño (contenedor de 20/40 pies)
         // Patrón: "contenedor de 20 pies", "1 contenedor de 40 pies", "contenedor 20'"
-        if (preg_match('/contenedor(?:es)?\s+(?:de\s+)?(\d+)\s*(?:pies|\'|")?/ui', $lowerText, $containerMatch)) {
+        elseif (preg_match('/contenedor(?:es)?\s+(?:de\s+)?(\d+)\s*(?:pies|\'|")?/ui', $lowerText, $containerMatch)) {
             $tamaño = $containerMatch[1];
             if ($tamaño == '20') {
                 $empaqueKeyword = 'contenedor de 20';

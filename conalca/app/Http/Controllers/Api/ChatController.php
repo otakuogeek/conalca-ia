@@ -968,6 +968,25 @@ class ChatController extends Controller
                     }
                 }
                 
+                // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" en el campo contenedor
+                // Si el contenedor tiene formato NxTAMAÑO'TIPO, extraer el tamaño para el empaque
+                if ($contenedor) {
+                    $contenedorUpper = mb_strtoupper($contenedor);
+                    // Patrón: "1X40'HC", "2X20GP", "1X40 HC", etc.
+                    if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/i', $contenedorUpper, $matches)) {
+                        $tamaño = $matches[2];
+                        if ($tamaño == '20') {
+                            $empaque = 'CONTENEDOR 20';
+                        } elseif ($tamaño == '40' || $tamaño == '45') {
+                            $empaque = 'CONTENEDOR 40';
+                        }
+                        Log::info('📦 Empaque detectado de formato contenedor NxTAMAÑO (ChatController)', [
+                            'contenedor' => $contenedor,
+                            'empaque_final' => $empaque
+                        ]);
+                    }
+                }
+                
                 $normalized = [
                     'origen' => $ruta['origen'] ?? null,
                     'destino' => $ruta['destino'] ?? null,

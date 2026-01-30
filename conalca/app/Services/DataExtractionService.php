@@ -271,12 +271,19 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 2. destino - Ciudad/lugar de entrega
 3. peso - Peso total en kg (convierte toneladas: 1 ton = 1000 kg)
 4. cantidad - Número de unidades/bultos/cajas
-5. empaque - Tipo de empaque (cajas, bultos, estibas, etc.)
+5. empaque - Tipo de empaque (cajas, bultos, estibas, CONTENEDOR 20, CONTENEDOR 40)
 6. producto - Mercancía real a transportar
 7. valor - Valor declarado en COP
 8. vehiculo - Tipo de vehículo requerido (turbo, tractocamión, sencillo, etc.)
 9. contenedor - Tipo de contenedor o empaque especial
 10. incluye_tara - IMPORTANTE: true si dice "tara incluida", "con tara", "peso bruto"; false si dice "sin tara", "no incluye tara", "peso neto", o NO menciona nada de tara
+
+⚠️ FORMATO DE CONTENEDORES (MUY IMPORTANTE):
+- "1x40'HC" = 1 contenedor de 40 pies High Cube → empaque: "CONTENEDOR 40", contenedor: "1X40' HC"
+- "1x20'HC" = 1 contenedor de 20 pies High Cube → empaque: "CONTENEDOR 20", contenedor: "1X20' HC"
+- "2x40GP" = 2 contenedores de 40 pies estándar → empaque: "CONTENEDOR 40", contenedor: "2X40' GP"
+- "40HC", "40'HC" = contenedor de 40 pies → empaque: "CONTENEDOR 40"
+- "20GP", "20'GP" = contenedor de 20 pies → empaque: "CONTENEDOR 20"
 
 ⚠️ REGLA CRÍTICA DE TARA:
 - Si dice "X kg con tara incluida" o "peso incluye tara" → incluye_tara: true
@@ -654,6 +661,25 @@ EOT;
                 } elseif ($tamaño == '40') {
                     $normalized['empaque'] = 'CONTENEDOR 40';
                 }
+            }
+        }
+        
+        // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" en el campo contenedor para extraer el empaque
+        // Si el contenedor tiene formato NxTAMAÑO'TIPO, extraer el tamaño para el empaque
+        if (isset($normalized['contenedor'])) {
+            $contenedorUpper = mb_strtoupper($normalized['contenedor']);
+            // Patrón: "1X40'HC", "2X20GP", "1X40 HC", etc.
+            if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/i', $contenedorUpper, $matches)) {
+                $tamaño = $matches[2];
+                if ($tamaño == '20') {
+                    $normalized['empaque'] = 'CONTENEDOR 20';
+                } elseif ($tamaño == '40' || $tamaño == '45') {
+                    $normalized['empaque'] = 'CONTENEDOR 40';
+                }
+                Log::info('📦 Empaque detectado de formato contenedor NxTAMAÑO', [
+                    'contenedor' => $normalized['contenedor'],
+                    'empaque_final' => $normalized['empaque']
+                ]);
             }
         }
 
