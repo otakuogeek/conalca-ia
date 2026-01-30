@@ -8500,6 +8500,26 @@ class MCPAssistantService
      */
     private static function extractProducto($text)
     {
+        // 🔧 FIX: Lista de palabras que son VEHÍCULOS y NO deben detectarse como productos
+        $vehiculosExcluidos = ['patineta', 'tractomula', 'turbo', 'sencillo', 'dobletroque', 'camioneta', 
+                               'minimula', 'tractocamión', 'tractocamion', 'camion', 'camión', 'trailer',
+                               'furgon', 'furgón', 'niñera', 'ninera', 'mula', 'doble troque', 'cama baja',
+                               'camabaja', 'estacas', 'plataforma', 'carrotanque', 'volqueta'];
+        
+        // 🔧 FIX: Función auxiliar para validar y retornar producto (evita duplicar código)
+        $validarYRetornarProducto = function($producto, $patron) use ($vehiculosExcluidos) {
+            $productoLower = mb_strtolower(trim($producto), 'UTF-8');
+            // Verificar si es un vehículo
+            foreach ($vehiculosExcluidos as $vehiculo) {
+                if (strpos($productoLower, $vehiculo) !== false || $productoLower === $vehiculo) {
+                    Log::info("🚛 Producto '{$producto}' es un vehículo, ignorando (patrón: {$patron})");
+                    return null; // Es un vehículo, no retornar como producto
+                }
+            }
+            Log::info("📦 Producto detectado ({$patron})", ['producto' => $producto]);
+            return mb_strtoupper(trim($producto), 'UTF-8');
+        };
+        
         // 🆕 PATRÓN NARRATIVO: "Una carga de PRODUCTO" (incluso si texto está truncado)
         // Ejemplo: "Una carga de maíz de Bogotá a Cali" → Producto: MAÍZ
         // También: "Una carga de maíz" (truncado) → Producto: MAÍZ
@@ -8508,9 +8528,11 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             // Excluir palabras comunes que no son productos
             $excludeWords = ['origen', 'destino', 'bogota', 'bogotá', 'cali', 'medellin', 'medellín', 'barranquilla', 'cartagena', 'bucaramanga', 'manizales', 'pereira', 'ibague', 'ibagué', 'pasto', 'cucuta', 'cúcuta', 'villavicencio', 'neiva', 'santa', 'marta', 'monteria', 'montería', 'popayan', 'popayán', 'valledupar', 'quibdo', 'quibdó', 'florencia', 'yopal', 'armenia', 'tunja', 'sincelejo', 'riohacha', 'rionegro'];
+            // 🔧 FIX: También excluir vehículos
+            $excludeWords = array_merge($excludeWords, $vehiculosExcluidos);
             if (strlen($producto) > 2 && strlen($producto) < 50 && !in_array(mb_strtolower($producto, 'UTF-8'), $excludeWords)) {
-                Log::info('📦 Producto detectado (patrón "Una carga de X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'Una carga de X');
+                if ($result) return $result;
             }
         }
         
@@ -8518,8 +8540,8 @@ class MCPAssistantService
         // Detectar productos específicos mencionados en paréntesis o como detalle principal
         if (preg_match('/(?:productos?\s+electr[óo]nicos?|electr[óo]nicos?)\s*\(([a-záéíóúñ\s]+)\)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
-            Log::info('📦 Producto detectado (patrón "productos electrónicos (X)")', ['producto' => $producto]);
-            return mb_strtoupper($producto, 'UTF-8');
+            $result = $validarYRetornarProducto($producto, 'productos electrónicos (X)');
+            if ($result) return $result;
         }
         
         // 🆕 PATRÓN: "N cajas/palets de PRODUCTO" (donde PRODUCTO es el bien, no el material del empaque)
@@ -8532,8 +8554,8 @@ class MCPAssistantService
             $producto = trim($producto);
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
-                Log::info('📦 Producto detectado (patrón "X cajas/palets de PRODUCTO")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'X cajas/palets de PRODUCTO');
+                if ($result) return $result;
             }
         }
         
@@ -8544,8 +8566,8 @@ class MCPAssistantService
         if (preg_match('/(?:\d+(?:[.,]\d+)?\s+)?(?:toneladas?|kg|kilos?|kilogramos?)\s+(?:sin\s+tara\s+)?(?:con\s+tara\s+)?de\s+([a-záéíóúñ\s]+?)(?:\s*,|\s+(?:en|veh[ií]culo|empaque|embalaje|cantidad|valor|y\s+|con\s+)|$)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
             if (strlen($producto) > 1 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón "X toneladas de Y")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'X toneladas de Y');
+                if ($result) return $result;
             }
         }
         
@@ -8554,8 +8576,8 @@ class MCPAssistantService
         if (preg_match('/Tipo\s+de\s+mercancía\s*:\s*([A-Za-záéíóúñÁÉÍÓÚÑ\s0-9]+?)(?:\s*\n|$)/ui', $text, $matches)) {
             $producto = trim($matches[1]);
             if (strlen($producto) > 1 && strlen($producto) < 100) {
-                Log::info('📦 Producto detectado (patrón "Tipo de mercancía: X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'Tipo de mercancía: X');
+                if ($result) return $result;
             }
         }
         
@@ -8568,8 +8590,8 @@ class MCPAssistantService
             
             // Validar que no sea vacío y no sea un valor monetario
             if (strlen($producto) > 1 && strlen($producto) < 100 && !preg_match('/^[\d.,]+\s*(USD|COP)?$/ui', $producto)) {
-                Log::info('📦 Producto detectado (patrón "Producto: X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'Producto: X');
+                if ($result) return $result;
             }
         }
         
@@ -8585,8 +8607,8 @@ class MCPAssistantService
             
             // Validar que no sea un número o valor monetario
             if (strlen($producto) > 1 && strlen($producto) < 100 && !preg_match('/^\d+[.,]?\d*\s*(USD|COP)?$/ui', $producto)) {
-                Log::info('📦 Producto detectado (patrón "Mercancía: X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'Mercancía: X');
+                if ($result) return $result;
             }
         }
         
@@ -8599,8 +8621,8 @@ class MCPAssistantService
             $producto = trim($producto);
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón CORRECCIÓN "producto es X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'producto es X');
+                if ($result) return $result;
             }
         }
         
@@ -8609,8 +8631,8 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón "aqui el producto es X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'aqui el producto es X');
+                if ($result) return $result;
             }
         }
         
@@ -8619,8 +8641,8 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón "cambia el producto a X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'cambia el producto a X');
+                if ($result) return $result;
             }
         }
         
@@ -8631,8 +8653,8 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             
             if (strlen($producto) > 2 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón "cambia a X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'cambia a X');
+                if ($result) return $result;
             }
         }
         
@@ -8641,8 +8663,8 @@ class MCPAssistantService
             $producto = trim($matches[1]);
             
             if (strlen($producto) > 1 && strlen($producto) < 50) {
-                Log::info('📦 Producto detectado (patrón "producto...deja X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'producto...deja X');
+                if ($result) return $result;
             }
         }
         
@@ -8653,8 +8675,8 @@ class MCPAssistantService
             $producto = trim($producto);
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
-                Log::info('📦 Producto detectado (patrón "X toneladas de PRODUCTO")', ['producto' => $producto, 'text_sample' => substr($text, 0, 200)]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'X toneladas de PRODUCTO');
+                if ($result) return $result;
             }
         }
         
@@ -8665,8 +8687,8 @@ class MCPAssistantService
             $producto = trim($producto);
             
             if (strlen($producto) > 2 && strlen($producto) < 100) {
-                Log::info('📦 Producto detectado (patrón "producto X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+                $result = $validarYRetornarProducto($producto, 'producto X');
+                if ($result) return $result;
             }
         }
         
@@ -8676,10 +8698,21 @@ class MCPAssistantService
             $producto = preg_replace('/\b(para|llevar|transportar|toneladas?|de|cada\s+una)\b/ui', '', $producto);
             $producto = trim($producto);
             
-            if (strlen($producto) > 2 && strlen($producto) < 100) {
-                Log::info('📦 Producto detectado (patrón "transportar X")', ['producto' => $producto]);
-                return mb_strtoupper($producto, 'UTF-8');
+            // 🔧 FIX: Verificar que no sea un vehículo
+            if (strlen($producto) > 2 && strlen($producto) < 100 && !in_array(mb_strtolower($producto, 'UTF-8'), $vehiculosExcluidos)) {
+                $result = $validarYRetornarProducto($producto, 'transportar X');
+                if ($result) return $result;
             }
+        }
+        
+        // 🔧 FIX FINAL: Buscar la última palabra del texto que podría ser producto
+        // Ejemplo: "Mosquera - Itagui patineta" → patineta es vehículo, NO producto
+        // Si la última palabra es un vehículo, NO usarla como producto
+        $palabras = preg_split('/[\s\-]+/', trim($text));
+        $ultimaPalabra = end($palabras);
+        if ($ultimaPalabra && in_array(mb_strtolower($ultimaPalabra, 'UTF-8'), $vehiculosExcluidos)) {
+            Log::info('🚛 Última palabra es un vehículo, no detectar como producto', ['palabra' => $ultimaPalabra]);
+            // No retornar producto, es un vehículo
         }
 
         Log::warning('⚠️ No se pudo extraer producto del texto', ['text_sample' => substr($text, 0, 200)]);
@@ -8950,6 +8983,19 @@ class MCPAssistantService
      */
     private static function extractEmpaque($lowerText)
     {
+        // 🔧 FIX: Lista de palabras que son VEHÍCULOS y NO deben detectarse como empaques
+        $vehiculosExcluidos = ['patineta', 'tractomula', 'turbo', 'sencillo', 'dobletroque', 'camioneta', 
+                               'minimula', 'tractocamión', 'tractocamion', 'camion', 'camión', 'trailer',
+                               'furgon', 'furgón', 'niñera', 'ninera'];
+        
+        // 🔧 FIX: Si el texto SOLO menciona un vehículo (sin contexto de empaque), NO detectar empaque
+        // Ejemplo: "Mosquera - Itagui patineta" → patineta es vehículo, no empaque
+        $textoSinVehiculos = $lowerText;
+        foreach ($vehiculosExcluidos as $vehiculo) {
+            $textoSinVehiculos = preg_replace('/\b' . preg_quote($vehiculo, '/') . '\b/ui', '', $textoSinVehiculos);
+        }
+        $textoSinVehiculos = trim($textoSinVehiculos);
+        
         // 🆕 Patrón PRIORITARIO: Corrección de empaque
         // "el empaque es cajas" o "empaque: bultos" o "cambia el empaque a sacos" o "empaque son cajas"
         $empaqueKeyword = null;
@@ -9005,8 +9051,20 @@ class MCPAssistantService
         // Patrón: "empaque es/son X" o "empaque: X"
         // 🔧 FIX BUG #530-2: Agregar soporte para plural (empaques/embalajes) y artículos (el/los)
         elseif (!$empaqueKeyword && preg_match('/(?:(?:el|los)\s+)?(?:empaque|embalaje)s?\s*(?:es|son|será|sea|queda|:)\s*([a-záéíóúñ\s]+?)(?:\s*[.,;]|\s+y\s+|$)/ui', $lowerText, $matches)) {
-            $empaqueKeyword = strtolower(trim($matches[1]));
-            Log::info('📦 Empaque detectado (patrón CORRECCIÓN)', ['keyword' => $empaqueKeyword]);
+            $posibleEmpaque = strtolower(trim($matches[1]));
+            // 🔧 FIX: Verificar que NO sea un vehículo
+            if (!in_array($posibleEmpaque, $vehiculosExcluidos)) {
+                $empaqueKeyword = $posibleEmpaque;
+                Log::info('📦 Empaque detectado (patrón CORRECCIÓN)', ['keyword' => $empaqueKeyword]);
+            } else {
+                Log::info('🚛 Palabra ignorada como empaque (es vehículo)', ['palabra' => $posibleEmpaque]);
+            }
+        }
+        
+        // 🔧 FIX: Si el empaqueKeyword detectado es un vehículo, ignorarlo
+        if ($empaqueKeyword && in_array($empaqueKeyword, $vehiculosExcluidos)) {
+            Log::info('🚛 empaqueKeyword ignorado (es vehículo)', ['keyword' => $empaqueKeyword]);
+            $empaqueKeyword = null;
         }
         
         // Mapeo de keywords a nombres de empaques en la BD
@@ -9072,6 +9130,12 @@ class MCPAssistantService
         // "productos varios enlatados", "productos varios"
         $esVariosDeProducto = preg_match('/producto[s]?\s+varios/ui', $lowerText);
         
+        // 🔧 FIX: Si el searchText es un vehículo, no buscar empaque
+        if (in_array(trim($searchText), $vehiculosExcluidos)) {
+            Log::info('🚛 searchText es un vehículo, no buscar empaque', ['searchText' => $searchText]);
+            return null;
+        }
+        
         foreach ($empaques as $keyword => $empaqueType) {
             // 🆕 Si es contenedor de vehículo, NO usarlo como empaque
             if ($esContenedorDeVehiculo && strpos($keyword, 'contenedor') !== false) {
@@ -9084,7 +9148,12 @@ class MCPAssistantService
                 continue;
             }
             
-                if (strpos($searchText, $keyword) !== false) {
+            // 🔧 FIX: No detectar vehículos como empaques
+            if (in_array($keyword, $vehiculosExcluidos)) {
+                continue;
+            }
+            
+            if (strpos($searchText, $keyword) !== false) {
                 // Priorizar keywords más largos (más específicos)
                 if (strlen($keyword) > $foundLength) {
                     $found = $empaqueType;

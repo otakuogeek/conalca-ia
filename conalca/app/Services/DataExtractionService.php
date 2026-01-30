@@ -688,6 +688,32 @@ EOT;
             }
         }
 
+        // 🔧 FIX: Validar que el "producto" NO sea un vehículo
+        // Si la IA devolvió un nombre de vehículo como producto, corregirlo
+        $vehiculosConocidos = ['patineta', 'tractomula', 'turbo', 'sencillo', 'dobletroque', 'camioneta', 
+                               'minimula', 'tractocamión', 'tractocamion', 'camion', 'camión', 'trailer',
+                               'furgon', 'furgón', 'niñera', 'ninera', 'mula', 'doble troque', 'cama baja',
+                               'camabaja', 'estacas', 'plataforma', 'carrotanque', 'volqueta'];
+        
+        if (isset($normalized['producto']) && !empty($normalized['producto'])) {
+            $productoLower = mb_strtolower(trim($normalized['producto']), 'UTF-8');
+            foreach ($vehiculosConocidos as $vehiculo) {
+                if ($productoLower === $vehiculo || strpos($productoLower, $vehiculo) !== false) {
+                    Log::info('🚛 Corrigiendo: producto era un vehículo, moviendo al campo vehiculo', [
+                        'producto_original' => $normalized['producto'],
+                        'vehiculo_detectado' => $vehiculo
+                    ]);
+                    // Si no hay vehículo asignado, usar este
+                    if (empty($normalized['vehiculo'])) {
+                        $normalized['vehiculo'] = mb_strtoupper($normalized['producto'], 'UTF-8');
+                    }
+                    // Limpiar el producto
+                    $normalized['producto'] = null;
+                    break;
+                }
+            }
+        }
+
         return $normalized;
     }
 
