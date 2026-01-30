@@ -8721,18 +8721,59 @@ class MCPAssistantService
 
     /**
      * 🔢 EXTRAER CANTIDAD
+     * 
+     * REGLA IMPORTANTE: Si hay contenedor mencionado, la cantidad es el número de contenedores,
+     * NO el contenido interno (cajas, bultos, etc.)
+     * 
+     * Ejemplo: "1 contenedor de 40 pies con 850 cajas" → cantidad = 1
+     * Ejemplo: "850 cajas de herramientas" (sin contenedor) → cantidad = 850
      */
     private static function extractCantidad($text)
     {
+        $lowerText = mb_strtolower($text);
+        
+        // 🆕 PASO 1: Detectar si hay contexto de CONTENEDOR
+        // Si menciona contenedor, la cantidad es el número de contenedores, NO el contenido interno
+        $hayContenedor = preg_match('/contenedor(?:es)?|container/ui', $text);
+        
+        if ($hayContenedor) {
+            Log::info('📦 Contexto de contenedor detectado - buscando número de contenedores', ['texto' => substr($text, 0, 200)]);
+            
+            // Patrón: "N contenedor(es) de X pies" - extrae el número de contenedores
+            // Ejemplo: "1 contenedor de 40 pies", "2 contenedores de 20 pies"
+            if (preg_match('/(\d+)\s*contenedor(?:es)?/ui', $text, $matches)) {
+                Log::info('📦 Cantidad de contenedores detectada', ['raw' => $matches[0], 'cantidad' => $matches[1]]);
+                return (int)$matches[1];
+            }
+            
+            // Patrón: Formato "NxTAMAÑO" como "2x40hc", "1x20'"
+            if (preg_match('/(\d+)\s*[×xX]\s*(?:20|40|45)\s*[\'"]?\s*(?:hc|gp|rf|hq)?/ui', $text, $matches)) {
+                Log::info('📦 Cantidad de contenedores detectada (formato NxTAMAÑO)', ['raw' => $matches[0], 'cantidad' => $matches[1]]);
+                return (int)$matches[1];
+            }
+            
+            // Si solo dice "contenedor" sin número explícito, asumir 1
+            if (preg_match('/(?:es|necesito|requiero|traigo|tengo)\s+(?:un\s+)?contenedor(?!\s*es)/ui', $text)) {
+                Log::info('📦 Contenedor singular detectado, asumiendo cantidad 1');
+                return 1;
+            }
+            
+            // Patrón: "un contenedor" sin número
+            if (preg_match('/\bun\s+contenedor\b/ui', $text)) {
+                Log::info('📦 "Un contenedor" detectado, cantidad = 1');
+                return 1;
+            }
+            
+            // Si hay contexto de contenedor pero no encontramos número específico, asumir 1
+            Log::info('📦 Contenedor mencionado sin cantidad específica, asumiendo 1');
+            return 1;
+        }
+        
+        // 🔽 PASO 2: Si NO hay contenedor, usar lógica normal de cantidad
+        
         // Patrón 0.5: "N PALLETS" (antes del formato contenedor)
         if (preg_match('/(\d+)\s*PALLETS?/ui', $text, $matches)) {
             Log::info('Cantidad detectada (pallets)', ['raw' => $matches[0], 'cantidad' => $matches[1]]);
-            return (int)$matches[1];
-        }
-        
-        // Patrón 0: Formato contenedor "2×40hc" o "2x40hc" o "2x40'"
-        if (preg_match('/(\d+)\s*[×x]\s*(?:\d+[\'"]?)?(?:hc|gp|rf)?/ui', $text, $matches)) {
-            Log::info('Cantidad detectada (formato contenedor)', ['raw' => $matches[0], 'cantidad' => $matches[1]]);
             return (int)$matches[1];
         }
         

@@ -27,14 +27,63 @@ class CatalogController extends Controller
                     ->get(['id', 'codigo', 'documento', 'cliente']);
     }
 
+    /**
+     * 🆕 Ciudades principales que deben tener prioridad cuando hay ambigüedad
+     */
+    private static $ciudadesPrincipales = [
+        'CARTAGENA' => 'BOLIVAR',
+        'ARMENIA' => 'QUINDIO',
+        'CALI' => 'VALLE',
+        'MEDELLIN' => 'ANTIOQUIA',
+        'BOGOTA' => 'CUNDINAMARCA',
+        'BARRANQUILLA' => 'ATLANTICO',
+        'BUCARAMANGA' => 'SANTANDER',
+        'PEREIRA' => 'RISARALDA',
+        'MANIZALES' => 'CALDAS',
+        'IBAGUE' => 'TOLIMA',
+        'CUCUTA' => 'NORTE DE SANTANDER',
+        'SANTA MARTA' => 'MAGDALENA',
+        'VILLAVICENCIO' => 'META',
+        'PASTO' => 'NARINO',
+        'NEIVA' => 'HUILA',
+        'MONTERIA' => 'CORDOBA',
+        'VALLEDUPAR' => 'CESAR',
+        'TUNJA' => 'BOYACA',
+        'POPAYAN' => 'CAUCA',
+        'SINCELEJO' => 'SUCRE',
+        'RIOHACHA' => 'GUAJIRA',
+        'QUIBDO' => 'CHOCO',
+        'FLORENCIA' => 'CAQUETA',
+        'YOPAL' => 'CASANARE',
+        'BUENAVENTURA' => 'VALLE',
+    ];
+
     public function ciudades(Request $r) {
         $q = $r->input('q', '');
+        $qUpper = mb_strtoupper(trim($q));
 
-        return City::where('ciudad_nombre', 'like', "%$q%")
-                // ->orWhere('ciudad_codigo', 'like', "%$q%")
+        $results = City::where('ciudad_nombre', 'like', "%$q%")
                 ->orWhere('ciudad_codigodane', 'like', "%$q%")
-                ->limit(15)
+                ->limit(30)
                 ->get(['ciudad_codigo', 'ciudad_nombre', 'ciudad_codigodane']);
+        
+        // 🆕 Si hay múltiples resultados, priorizar la ciudad principal
+        if ($results->count() > 1 && isset(self::$ciudadesPrincipales[$qUpper])) {
+            $deptoPrincipal = self::$ciudadesPrincipales[$qUpper];
+            
+            // Ordenar: primero la ciudad principal, luego las demás
+            $sorted = $results->sortBy(function($city) use ($deptoPrincipal) {
+                // La ciudad que contiene el departamento principal va primero
+                if (stripos($city->ciudad_nombre, $deptoPrincipal) !== false) {
+                    return 0;
+                }
+                return 1;
+            });
+            
+            return $sorted->values()->take(15);
+        }
+        
+        return $results->take(15);
     }
 
     public function vendedores(Request $r) {

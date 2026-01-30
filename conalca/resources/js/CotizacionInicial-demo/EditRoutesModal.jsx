@@ -134,17 +134,62 @@ const EditRoutesModal = ({
     loadProducts();
   }, []);
 
+  // 🆕 Ciudades principales que deben tener prioridad cuando hay ambigüedad
+  const CIUDADES_PRINCIPALES = {
+    'CARTAGENA': 'BOLIVAR',
+    'ARMENIA': 'QUINDIO',
+    'CALI': 'VALLE DEL CAUCA',
+    'MEDELLIN': 'ANTIOQUIA',
+    'BOGOTA': 'CUNDINAMARCA',
+    'BARRANQUILLA': 'ATLANTICO',
+    'BUCARAMANGA': 'SANTANDER',
+    'PEREIRA': 'RISARALDA',
+    'BUENAVENTURA': 'VALLE DEL CAUCA',
+  };
+
+  // Función para normalizar texto
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text.toString().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  };
+
   // Helpers to preselect if route has code or name
   const resolveCityCode = (routeValue) => {
     if (!routeValue) return '';
     const byCode = cities.find(c => String(c.ciudad_codigo) === String(routeValue));
     if (byCode) return byCode.ciudad_codigo;
 
-    const byName = cities.find(c => {
-      const name = c.ciudad_nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+    const normalizedRoute = normalizeText(routeValue);
+    const ciudadSinDepto = normalizedRoute.split('-')[0].trim();
+    
+    // 🆕 PRIMERO: Buscar ciudad principal si está definida
+    const deptoPrincipal = CIUDADES_PRINCIPALES[ciudadSinDepto];
+    if (deptoPrincipal) {
+      const principal = cities.find(c => {
+        const normalizedCity = normalizeText(c.ciudad_nombre || '');
+        const nombreCiudad = normalizedCity.split('-')[0].trim();
+        return nombreCiudad === ciudadSinDepto && normalizedCity.includes(normalizeText(deptoPrincipal));
+      });
+      if (principal) return principal.ciudad_codigo;
+    }
+    
+    // Búsqueda exacta
+    const byExactName = cities.find(c => {
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      return normalizedCity === normalizedRoute;
     });
-    return byName ? byName.ciudad_codigo : '';
+    if (byExactName) return byExactName.ciudad_codigo;
+    
+    // Búsqueda parcial
+    const candidatas = cities.filter(c => {
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      const nombreCiudad = normalizedCity.split('-')[0].trim();
+      return nombreCiudad === ciudadSinDepto || normalizedCity.startsWith(ciudadSinDepto + ' -');
+    });
+    
+    if (candidatas.length > 0) return candidatas[0].ciudad_codigo;
+    
+    return '';
   };
 
   const resolvePackingCode = (routeValue) => {

@@ -62,10 +62,14 @@ Extraer información de mensajes de usuarios para crear cotizaciones de transpor
 #### **CANTIDAD** (cantidad)
 - **Qué buscar**: "[NÚMERO] unidades", "[NÚMERO] bultos", "[NÚMERO] cajas"
 - **⚠️ CUIDADO**: NO confundir con el peso
+- **⚠️ REGLA CONTENEDORES**: Si hay contenedor, cuenta el NÚMERO DE CONTENEDORES, no el contenido interno
 - **Ejemplos**:
   - "8,500 kg" → NO es cantidad, es peso
   - "20 bultos de café" → `cantidad: 20`
   - "3 estibas" → `cantidad: 3`
+  - "1 contenedor de 40 pies con 850 cajas" → `cantidad: 1` (NO 850)
+  - "2 contenedores con 500 bultos" → `cantidad: 2` (NO 500)
+  - "850 cajas de herramientas" (sin contenedor) → `cantidad: 850`
 
 ---
 

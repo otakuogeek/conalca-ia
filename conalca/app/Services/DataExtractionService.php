@@ -274,7 +274,7 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 1. origen - Ciudad/lugar de recogida
 2. destino - Ciudad/lugar de entrega
 3. peso - Peso total en kg (convierte toneladas: 1 ton = 1000 kg)
-4. cantidad - Número de unidades/bultos/cajas
+4. cantidad - Número de unidades (VER REGLA DE CONTENEDORES ABAJO)
 5. empaque - Tipo de empaque (cajas, bultos, estibas, CONTENEDOR 20, CONTENEDOR 40)
 6. producto - Mercancía real a transportar
 7. valor - Valor declarado en COP
@@ -282,10 +282,16 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 9. contenedor - Tipo de contenedor o empaque especial
 10. incluye_tara - IMPORTANTE: true si dice "tara incluida", "con tara", "peso bruto"; false si dice "sin tara", "no incluye tara", "peso neto", o NO menciona nada de tara
 
+⚠️ REGLA CRÍTICA DE CANTIDAD CON CONTENEDORES:
+- Si se menciona CONTENEDOR, la cantidad es el NÚMERO DE CONTENEDORES, no el contenido interno
+- Ejemplo: "1 contenedor de 40 pies con 850 cajas" → cantidad: 1 (NO 850)
+- Ejemplo: "2 contenedores con 500 bultos cada uno" → cantidad: 2 (NO 500 ni 1000)
+- Si NO hay contenedor mencionado: "850 cajas de herramientas" → cantidad: 850
+
 ⚠️ FORMATO DE CONTENEDORES (MUY IMPORTANTE):
-- "1x40'HC" = 1 contenedor de 40 pies High Cube → empaque: "CONTENEDOR 40", contenedor: "1X40' HC"
-- "1x20'HC" = 1 contenedor de 20 pies High Cube → empaque: "CONTENEDOR 20", contenedor: "1X20' HC"
-- "2x40GP" = 2 contenedores de 40 pies estándar → empaque: "CONTENEDOR 40", contenedor: "2X40' GP"
+- "1x40'HC" = 1 contenedor de 40 pies High Cube → empaque: "CONTENEDOR 40", contenedor: "1X40' HC", cantidad: 1
+- "1x20'HC" = 1 contenedor de 20 pies High Cube → empaque: "CONTENEDOR 20", contenedor: "1X20' HC", cantidad: 1
+- "2x40GP" = 2 contenedores de 40 pies estándar → empaque: "CONTENEDOR 40", contenedor: "2X40' GP", cantidad: 2
 - "40HC", "40'HC" = contenedor de 40 pies → empaque: "CONTENEDOR 40"
 - "20GP", "20'GP" = contenedor de 20 pies → empaque: "CONTENEDOR 20"
 

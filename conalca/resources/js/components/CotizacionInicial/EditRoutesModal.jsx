@@ -258,24 +258,94 @@ const EditRoutesModal = ({
     return normalized;
   };
 
+  // 🆕 Ciudades principales que deben tener prioridad cuando hay ambigüedad
+  // (ej: CARTAGENA debe ser BOLIVAR, no NARIÑO)
+  const CIUDADES_PRINCIPALES = {
+    'CARTAGENA': 'BOLIVAR',
+    'ARMENIA': 'QUINDIO',
+    'CALI': 'VALLE DEL CAUCA',
+    'MEDELLIN': 'ANTIOQUIA',
+    'BOGOTA': 'CUNDINAMARCA',
+    'BARRANQUILLA': 'ATLANTICO',
+    'BUCARAMANGA': 'SANTANDER',
+    'PEREIRA': 'RISARALDA',
+    'MANIZALES': 'CALDAS',
+    'IBAGUE': 'TOLIMA',
+    'CUCUTA': 'NORTE DE SANTANDER',
+    'SANTA MARTA': 'MAGDALENA',
+    'VILLAVICENCIO': 'META',
+    'PASTO': 'NARINO',
+    'NEIVA': 'HUILA',
+    'MONTERIA': 'CORDOBA',
+    'VALLEDUPAR': 'CESAR',
+    'TUNJA': 'BOYACA',
+    'POPAYAN': 'CAUCA',
+    'SINCELEJO': 'SUCRE',
+    'RIOHACHA': 'LA GUAJIRA',
+    'QUIBDO': 'CHOCO',
+    'FLORENCIA': 'CAQUETA',
+    'YOPAL': 'CASANARE',
+    'BUENAVENTURA': 'VALLE DEL CAUCA',
+  };
+
   // Helpers to preselect if route has code or name
   const resolveCityCode = (routeValue) => {
     if (!routeValue) return '';
     
+    console.log('🔍 resolveCityCode INPUT:', routeValue);
+    
     // Buscar por código exacto
     const byCode = cities.find(c => String(c.ciudad_codigo) === String(routeValue));
-    if (byCode) return byCode.ciudad_codigo;
+    if (byCode) {
+      console.log(`✅ Ciudad encontrada por código: ${byCode.ciudad_codigo}`);
+      return byCode.ciudad_codigo;
+    }
 
     // Buscar por nombre normalizado (sin tildes, sin case-sensitive)
     const normalizedRoute = normalizeText(routeValue);
-    const byName = cities.find(c => {
+    
+    // 🆕 PRIMERO: Extraer solo el nombre de la ciudad (sin departamento)
+    // Para poder aplicar la lógica de prioridad incluso si viene "CARTAGENA - NARIÑO"
+    const ciudadSinDepto = normalizedRoute.split('-')[0].trim();
+    
+    // Verificar si esta ciudad tiene un departamento principal definido
+    const deptoPrincipal = CIUDADES_PRINCIPALES[ciudadSinDepto];
+    
+    if (deptoPrincipal) {
+      // Buscar la ciudad principal (ej: CARTAGENA - BOLIVAR)
+      const principal = cities.find(c => {
+        const normalizedCity = normalizeText(c.ciudad_nombre || '');
+        const nombreCiudad = normalizedCity.split('-')[0].trim();
+        return nombreCiudad === ciudadSinDepto && normalizedCity.includes(normalizeText(deptoPrincipal));
+      });
+      
+      if (principal) {
+        console.log(`✅ Ciudad PRINCIPAL encontrada: "${routeValue}" → ${principal.ciudad_nombre} (${principal.ciudad_codigo})`);
+        return principal.ciudad_codigo;
+      }
+    }
+    
+    // Si no tiene ciudad principal o no se encontró, búsqueda exacta
+    const byExactName = cities.find(c => {
       const normalizedCity = normalizeText(c.ciudad_nombre || '');
       return normalizedCity === normalizedRoute;
     });
     
-    if (byName) {
-      console.log(`✅ Ciudad encontrada: "${routeValue}" → código ${byName.ciudad_codigo} (${byName.ciudad_nombre})`);
-      return byName.ciudad_codigo;
+    if (byExactName) {
+      console.log(`✅ Ciudad encontrada (exacta): "${routeValue}" → código ${byExactName.ciudad_codigo} (${byExactName.ciudad_nombre})`);
+      return byExactName.ciudad_codigo;
+    }
+    
+    // Búsqueda parcial: buscar ciudades que comiencen con el nombre
+    const candidatas = cities.filter(c => {
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      const nombreCiudad = normalizedCity.split('-')[0].trim();
+      return nombreCiudad === ciudadSinDepto || normalizedCity.startsWith(ciudadSinDepto + ' -');
+    });
+    
+    if (candidatas.length > 0) {
+      console.log(`✅ Ciudad encontrada (parcial): "${routeValue}" → código ${candidatas[0].ciudad_codigo} (${candidatas[0].ciudad_nombre})`);
+      return candidatas[0].ciudad_codigo;
     }
     
     console.warn(`⚠️ Ciudad NO encontrada: "${routeValue}" (normalizado: "${normalizedRoute}")`);
