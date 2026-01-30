@@ -303,6 +303,17 @@ class DataExtractionController extends Controller
                     'rutas' => $result['rutas'] ?? []
                 ]);
                 
+                // 🔧 FIX: Detectar si el mensaje original tiene "+ tara" o "más tara"
+                // Si es así, FORZAR la suma de tara independientemente de lo que diga la IA
+                $mensajeOriginal = strtolower($validated['message'] ?? '');
+                $forzarSumaTara = preg_match('/\+\s*tara|m[aá]s\s+tara|sin\s+tara|no\s+incluye\s+tara/ui', $mensajeOriginal);
+                
+                if ($forzarSumaTara) {
+                    Log::info('⚡ Detectado comando de tara en mensaje original - forzando suma', [
+                        'mensaje' => substr($mensajeOriginal, 0, 100)
+                    ]);
+                }
+                
                 // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
                 // MCPAssistantService ya suma la tara y marca incluye_tara = true
                 $rutasConTara = [];
@@ -311,17 +322,23 @@ class DataExtractionController extends Controller
                     $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
                     $incluyeTara = $ruta['incluye_tara'] ?? false;
                     
-                    if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
-                        // Solo sumar si NO tiene tara y hay peso
+                    // 🔧 FIX: Si el mensaje original tiene "+ tara", verificar si el peso parece NO tener tara
+                    // Un peso sin tara típicamente es múltiplo de 1000 (ej: 20000, 15000)
+                    // Un peso con tara tiene el +3400 (ej: 23400, 18400)
+                    $pesoPareceSinTara = $forzarSumaTara && is_numeric($pesoBase) && $pesoBase > 0 && ($pesoBase % 1000 == 0);
+                    
+                    if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0) {
+                        // Sumar tara si: no tiene tara O (tiene flag pero el peso parece sin tara)
                         $ruta['peso'] = $pesoBase + 3400;
                         $ruta['peso_kg'] = $pesoBase + 3400;
                         $ruta['incluye_tara'] = true;
                         Log::info('🏋️ TARA aplicada para frontend en ruta ' . ($idx + 1), [
                             'peso_original' => $pesoBase,
-                            'peso_con_tara' => $ruta['peso']
+                            'peso_con_tara' => $ruta['peso'],
+                            'razon' => $pesoPareceSinTara ? 'Forzado por mensaje original' : 'Flag incluye_tara=false'
                         ]);
-                    } else if ($incluyeTara) {
-                        // Ya tiene tara, solo sincronizar campos
+                    } else if ($incluyeTara && !$pesoPareceSinTara) {
+                        // Ya tiene tara y el peso parece correcto, solo sincronizar campos
                         $ruta['peso'] = $pesoBase;
                         $ruta['peso_kg'] = $pesoBase;
                         Log::info('✅ TARA ya incluida en ruta ' . ($idx + 1) . ', peso: ' . $pesoBase . ' kg');
@@ -335,7 +352,7 @@ class DataExtractionController extends Controller
                 
                 // Guardar en grupo si hay group_id
                 if (isset($validated['group_id'])) {
-                    $this->saveMultiRutaToGroup($validated['group_id'], $result);
+                    $this->saveMultiRutaToGroup($validated['group_id'], $result, $validated['message'] ?? null);
                 }
                 
                 return response()->json([
@@ -613,14 +630,21 @@ class DataExtractionController extends Controller
     
     /**
      * Guarda multi-ruta en el grupo
+     * @param string|null $mensajeOriginal Mensaje original del usuario para detectar comandos de tara
      */
-    private function saveMultiRutaToGroup(int $groupId, array $result): void
+    private function saveMultiRutaToGroup(int $groupId, array $result, ?string $mensajeOriginal = null): void
     {
         try {
             $group = \App\Models\GroupCotization::find($groupId);
             if (!$group) {
                 Log::warning('⚠️ Grupo no encontrado para guardar multi-ruta', ['group_id' => $groupId]);
                 return;
+            }
+            
+            // 🔧 FIX: Detectar si el mensaje original tiene "+ tara" o "más tara"
+            $forzarSumaTara = false;
+            if ($mensajeOriginal) {
+                $forzarSumaTara = preg_match('/\+\s*tara|m[aá]s\s+tara|sin\s+tara|no\s+incluye\s+tara/ui', strtolower($mensajeOriginal));
             }
             
             // 🆔 Agregar ID único a cada ruta y CALCULAR TARA si no está incluida
@@ -638,14 +662,19 @@ class DataExtractionController extends Controller
                 $pesoBase = $ruta['peso'] ?? 0;
                 $incluyeTara = $ruta['incluye_tara'] ?? false;
                 
-                if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
+                // 🔧 FIX: Si hay comando de tara y el peso parece sin tara, forzar suma
+                $pesoPareceSinTara = $forzarSumaTara && is_numeric($pesoBase) && $pesoBase > 0 && ($pesoBase % 1000 == 0);
+                
+                if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0) {
                     $ruta['peso'] = $pesoBase + 3400; // Sumar tara
+                    $ruta['peso_kg'] = $pesoBase + 3400; // También actualizar peso_kg
                     $ruta['incluye_tara'] = true; // Marcar que ahora incluye tara
                     Log::info('🏋️ TARA agregada a ruta ' . ($idx + 1), [
                         'peso_original' => $pesoBase,
-                        'peso_con_tara' => $ruta['peso']
+                        'peso_con_tara' => $ruta['peso'],
+                        'razon' => $pesoPareceSinTara ? 'Forzado por mensaje original' : 'Flag incluye_tara=false'
                     ]);
-                } else if ($incluyeTara) {
+                } else if ($incluyeTara && !$pesoPareceSinTara) {
                     Log::info('✅ Ruta ' . ($idx + 1) . ' ya incluye tara, peso se mantiene: ' . $pesoBase);
                 }
                 

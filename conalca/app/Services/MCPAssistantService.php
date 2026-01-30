@@ -577,6 +577,7 @@ class MCPAssistantService
                     if ($peso) {
                         $datos['peso_mercancia'] = $peso;
                         $datos['pesoMercancia'] = $peso;
+                        $datos['peso_kg'] = $peso; // 🔧 FIX: Agregar peso_kg también
                     }
                     
                     $producto = self::extractProducto($segmento);
@@ -615,12 +616,15 @@ class MCPAssistantService
                     if ($peso) {
                         $mencionaTara = preg_match('/\btara\b/ui', $segmento);
                         $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $segmento);
-                        $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara/ui', $segmento);
+                        // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
+                        $noIncluyeTara = preg_match('/(?:no\s+incluye|sin|\+|m[aá]s)\s*(?:la\s+)?tara/ui', $segmento);
                         
                         if ($noIncluyeTara) {
                             $taraEstandar = 3400;
-                            $datos['peso_mercancia'] = $peso + $taraEstandar;
-                            $datos['pesoMercancia'] = $peso + $taraEstandar;
+                            $pesoConTara = $peso + $taraEstandar;
+                            $datos['peso_mercancia'] = $pesoConTara;
+                            $datos['pesoMercancia'] = $pesoConTara;
+                            $datos['peso_kg'] = $pesoConTara; // 🔧 FIX: Agregar peso_kg
                             $datos['peso_bruto'] = $peso;
                             $datos['tara'] = $taraEstandar;
                             $datos['incluye_tara'] = true;
@@ -628,8 +632,10 @@ class MCPAssistantService
                             $datos['incluye_tara'] = true;
                         } elseif (!$mencionaTara) {
                             $taraCalculada = max(round($peso * 0.10), 3400);
-                            $datos['peso_mercancia'] = $peso + $taraCalculada;
-                            $datos['pesoMercancia'] = $peso + $taraCalculada;
+                            $pesoConTara = $peso + $taraCalculada;
+                            $datos['peso_mercancia'] = $pesoConTara;
+                            $datos['pesoMercancia'] = $pesoConTara;
+                            $datos['peso_kg'] = $pesoConTara; // 🔧 FIX: Agregar peso_kg
                             $datos['peso_bruto'] = $peso;
                             $datos['tara'] = $taraCalculada;
                             $datos['incluye_tara'] = true;
@@ -677,6 +683,7 @@ class MCPAssistantService
             if ($peso) {
                 $datosComunes['peso_mercancia'] = $peso;
                 $datosComunes['pesoMercancia'] = $peso;
+                $datosComunes['peso_kg'] = $peso; // 🔧 FIX: Agregar peso_kg también
                 Log::info('📊 Peso común para todas las rutas', ['peso' => $peso]);
             }
             
@@ -727,9 +734,11 @@ class MCPAssistantService
             $esEdicionCampo = !empty($previousExtractedData) && count($previousExtractedData) > 0;
             $mencionaTara = preg_match('/\btara\b/ui', $fullText);
             $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $fullText);
-            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara/ui', $fullText);
+            // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
+            // Ejemplo: "20 toneladas + tara" = 20000 + 3400 = 23400 kg
+            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin|\+|m[aá]s)\s*(?:la\s+)?tara/ui', $fullText);
             
-            // 🆕 CASO 1: Usuario dice "sin tara" o "no incluye tara" → SUMAR TARA (3400 kg estándar)
+            // 🆕 CASO 1: Usuario dice "sin tara" o "no incluye tara" o "+ tara" → SUMAR TARA (3400 kg estándar)
             if ($peso && $noIncluyeTara && !$esEdicionCampo) {
                 $taraEstandar = 3400; // Tara estándar en kg
                 $pesoTotal = $peso + $taraEstandar;
@@ -737,11 +746,12 @@ class MCPAssistantService
                 // Actualizar el peso con la tara incluida
                 $datosComunes['peso_mercancia'] = $pesoTotal;
                 $datosComunes['pesoMercancia'] = $pesoTotal;
+                $datosComunes['peso_kg'] = $pesoTotal; // 🔧 FIX: Agregar peso_kg con tara
                 $datosComunes['peso_bruto'] = $peso; // Guardar el peso original
                 $datosComunes['tara'] = $taraEstandar;
                 $datosComunes['incluye_tara'] = true;
                 
-                Log::info('⚖️ Usuario indicó "sin tara" - Tara estándar sumada', [
+                Log::info('⚖️ Usuario indicó "sin tara" o "+ tara" - Tara estándar sumada', [
                     'peso_original_sin_tara' => $peso,
                     'tara_agregada' => $taraEstandar,
                     'peso_total_con_tara' => $pesoTotal
@@ -759,6 +769,7 @@ class MCPAssistantService
                 // Actualizar el peso con la tara incluida
                 $datosComunes['peso_mercancia'] = $pesoTotal;
                 $datosComunes['pesoMercancia'] = $pesoTotal;
+                $datosComunes['peso_kg'] = $pesoTotal; // 🔧 FIX: Agregar peso_kg con tara
                 $datosComunes['peso_bruto'] = $peso; // Guardar el peso original
                 $datosComunes['tara'] = $taraCalculada;
                 $datosComunes['incluye_tara'] = true;
@@ -2288,7 +2299,8 @@ class MCPAssistantService
         }
         
         // Detectar si el usuario pide agregar tara (PRIMERO verificar si NO la incluye)
-        $noIncluyeTara = preg_match('/no\s+incluye\s+tara|sin\s+tara|peso\s+neto|el\s+peso\s+no\s+incluye\s+tara/ui', $lastUserMessage);
+        // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
+        $noIncluyeTara = preg_match('/no\s+incluye\s+tara|sin\s+tara|peso\s+neto|el\s+peso\s+no\s+incluye\s+tara|\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
         $yaIncluyeTara = preg_match('/(?:ya\s+(?:incluye|tiene)|peso\s+(?:ya\s+)?(?:con|incluye)\s+tara|tara\s+(?:ya\s+)?incluida|(?:el\s+)?peso\s+es\s+con\s+tara)/ui', $lastUserMessage);
         $agregarTara = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar)\s+(?:la\s+)?tara/ui', $lastUserMessage);
         $quitarTara = preg_match('/(?:quita|elimina|remueve|resta|saca|sin)\s+(?:la\s+)?tara/ui', $lastUserMessage);
@@ -8384,11 +8396,20 @@ class MCPAssistantService
             return (float)$peso; // Usar float para mantener decimales
         }
         
-        // 🆕 Patrón: "Peso bruto: 9.900 kg" (formato formal)
+        // 🆕 Patrón PRIORITARIO: "Peso bruto: 9.900 kg" (formato formal)
         if (preg_match('/Peso\s+bruto\s*:\s*([\d.,]+)\s*(?:kg|kilos?)?/ui', $text, $matches)) {
             $peso = str_replace(['.', ','], '', $matches[1]);
             Log::info('📊 Peso detectado (patrón "Peso bruto: X")', ['peso' => $peso, 'raw' => $matches[1]]);
             return (int)$peso;
+        }
+        
+        // 🔧 FIX: Patrón para "Peso: X toneladas" PRIMERO (antes del patrón genérico "Peso: X kg")
+        // Ejemplo: "Peso: 20 toneladas + tara" → 20000 kg
+        if (preg_match('/Peso\s*:\s*(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton)/ui', $text, $matches)) {
+            $toneladas = (float)str_replace(',', '.', $matches[1]);
+            $peso = (int)($toneladas * 1000);
+            Log::info('📊 Peso detectado (patrón "Peso: X toneladas")', ['toneladas' => $toneladas, 'peso_kg' => $peso]);
+            return $peso;
         }
         
         // 🆕 Patrón PRIORITARIO: "Peso: 9.900 kg" (formato con puntos de miles)

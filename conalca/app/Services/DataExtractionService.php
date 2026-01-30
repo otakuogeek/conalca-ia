@@ -99,12 +99,16 @@ class DataExtractionService
             $agregarTaraExplicito = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar|sumar|ponga)\s+(?:la\s+)?tara/ui', $lastUserMessage);
             // 🆕 Nuevo patrón: "peso 25000 suma tara" o "peso 25000 kg suma tara"
             $pesoConSumaTara = preg_match('/peso\s+([\d.,]+)\s*(?:kg|kilos?)?\s+(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessage, $matchPesoTara);
-            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye/ui', $lastUserMessage);
+            // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
+            // Ejemplo: "Peso: 20 toneladas + tara" significa que el peso NO incluye tara y hay que sumarla
+            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye|\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
             $yaIncluyeTara = preg_match('/(?:tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye\s+tara|peso\s+ya\s+incluye)/ui', $lastUserMessage);
             
-            // 🔧 FIX CRÍTICO: Si el usuario EXPLÍCITAMENTE dice "suma tara" o "agrega tara", 
+            // 🔧 FIX CRÍTICO: Si el usuario EXPLÍCITAMENTE dice "suma tara" o "agrega tara" o "+ tara", 
             // SIEMPRE agregar la tara, incluso en modo edición
-            $comandoExplicitoTara = $agregarTaraExplicito || $pesoConSumaTara;
+            // Detectar "+ tara" como comando explícito también
+            $taraConSignoMas = preg_match('/\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
+            $comandoExplicitoTara = $agregarTaraExplicito || $pesoConSumaTara || $taraConSignoMas;
             
             // Determinar si se debe agregar tara
             // - Si hay comando explícito ("suma tara"), SIEMPRE agregar (incluso en edición)
@@ -288,6 +292,7 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 ⚠️ REGLA CRÍTICA DE TARA:
 - Si dice "X kg con tara incluida" o "peso incluye tara" → incluye_tara: true
 - Si dice "X kg sin tara" o "peso no incluye tara" o "peso neto" → incluye_tara: false
+- Si dice "X kg + tara" o "peso más tara" → incluye_tara: false (significa que hay que SUMAR la tara, el peso dado NO incluye tara)
 - Si NO menciona nada sobre tara → incluye_tara: false (default)
 
 REGLAS IMPORTANTES:
