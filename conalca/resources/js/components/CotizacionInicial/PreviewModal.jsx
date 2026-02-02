@@ -75,6 +75,16 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     return parameters;
   };
 
+  // 🆕 Helper para detectar si el embalaje es un contenedor
+  const isContainerPacking = (embalaje) => {
+    if (!embalaje) return false;
+    const normalized = String(embalaje).toUpperCase();
+    return normalized.includes('CONTENEDOR') || 
+           normalized.includes('CONTAINER') ||
+           /\d+X(20|40|45)/i.test(normalized) || // Formato 1X20, 4X40, etc.
+           /^(20|40|45)\s*['"]?\s*(HC|GP|OT|RF|FR)?$/i.test(normalized); // Formato 40 HC, 20', etc.
+  };
+
   const buildRouteFinancials = (route, index) => {
     const pricing = selectedPricings[index];
     if (!pricing) {
@@ -86,6 +96,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         acompanamiento: Number(route.itesoltra_acompanamientovalor) || 0,
         valueWithMargin: 0,
         finalValue: 0,
+        isContainer: false,
+        containerQuantity: 1,
       };
     }
 
@@ -100,7 +112,27 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     });
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+    let finalValue = valueWithMargin + acompanamiento + parametersTotal;
+    
+    // 🆕 Detectar si es contenedor y multiplicar por cantidad
+    const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+    const isContainer = isContainerPacking(embalaje);
+    const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
+    
+    // Si es contenedor, el valor por unidad es finalValue, el total es finalValue * cantidad
+    const valuePerUnit = finalValue;
+    const totalValue = isContainer ? finalValue * containerQuantity : finalValue;
+
+    console.log(`🚛 Ruta ${index + 1} - Cálculo financiero:`, {
+      embalaje,
+      isContainer,
+      cantidad: route.cantidad,
+      containerQuantity,
+      basePrice,
+      valueWithMargin,
+      valuePerUnit,
+      totalValue
+    });
 
     return {
       pricing,
@@ -109,7 +141,10 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       parametersTotal,
       acompanamiento,
       valueWithMargin,
-      finalValue,
+      finalValue: totalValue, // 🔥 Ahora incluye multiplicación por cantidad si es contenedor
+      valuePerUnit, // 🆕 Valor unitario (por contenedor)
+      isContainer,
+      containerQuantity,
     };
   };
 
@@ -142,7 +177,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       });
 
       const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-      const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+      let finalValue = valueWithMargin + acompanamiento + parametersTotal;
+      
+      // 🆕 Detectar si es contenedor y multiplicar por cantidad
+      const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+      const isContainer = isContainerPacking(embalaje);
+      const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
+      const totalValue = isContainer ? finalValue * containerQuantity : finalValue;
 
       return {
         id: route.id || null, // <-- send existing cotización id to update
@@ -156,9 +197,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         precio_base: basePrice,
         valor_parametros: parametersTotal,
         valor_acompanamiento: acompanamiento,
-        finalValue,
-        valor: finalValue,
-        valor_final: finalValue,
+        finalValue: totalValue, // 🔥 Incluye multiplicación por cantidad si es contenedor
+        valor: totalValue,
+        valor_final: totalValue,
+        valor_unitario: finalValue, // 🆕 Valor por unidad/contenedor
+        es_contenedor: isContainer,
+        cantidad_contenedores: containerQuantity,
         precio_pricing_id: pricing?.id ?? null, // <-- pricing id for upsert
         cantidad: String(route.cantidad || '1'),
         tipo_embajale: String(route.tipo_embajale || 'Bultos'),
@@ -438,6 +482,9 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           acompanamiento,
                           valueWithMargin,
                           finalValue,
+                          valuePerUnit,
+                          isContainer,
+                          containerQuantity,
                         } = buildRouteFinancials(route, index);
 
                         const automaticParameters = getAutomaticParameters(clientData);
@@ -456,6 +503,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_requerido || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
+                              {/* 🆕 Mostrar cantidad de contenedores si aplica */}
+                              {isContainer && containerQuantity > 1 && (
+                                <div className="text-purple-600 text-[10px] font-medium mb-1">
+                                  Candado Satelital<br />
+                                  ${Number(route.candado_satelital || 10500).toLocaleString()}
+                                </div>
+                              )}
                               {activeParameters.length > 0 ? (
                                 <div className="space-y-1">
                                   {activeParameters.map((param, paramIndex) => (
@@ -486,9 +540,21 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                                 <div className="font-bold text-green-700">
                                   ${Number(finalValue).toLocaleString()}
                                 </div>
-                                <div className="text-[10px] text-gray-500">
-                                  Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
-                                </div>
+                                {/* 🆕 Mostrar desglose si es contenedor con cantidad > 1 */}
+                                {isContainer && containerQuantity > 1 ? (
+                                  <>
+                                    <div className="text-[10px] text-purple-600 font-medium">
+                                      {containerQuantity} contenedores × ${valuePerUnit.toLocaleString()}
+                                    </div>
+                                    <div className="text-[10px] text-gray-500">
+                                      Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="text-[10px] text-gray-500">
+                                    Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
+                                  </div>
+                                )}
                                 {(parametersTotal + acompanamiento) > 0 && (
                                   <div className="text-[10px] text-gray-500">
                                     Parámetros/Acomp.: ${(parametersTotal + acompanamiento).toLocaleString()}
