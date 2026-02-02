@@ -594,6 +594,16 @@ class MCPAssistantService
                             $datos['empaque'] = $empaque['empaque'];
                             $datos['tipo_embalaje'] = $empaque['empaque'];
                             $datos['empaque_id'] = $empaque['empaque_id'];
+                            
+                            // 🆕 Si viene cantidad_contenedor del formato NxTAMAÑO, usarla como cantidad
+                            if (isset($empaque['cantidad_contenedor']) && $empaque['cantidad_contenedor'] > 0) {
+                                $datos['cantidad'] = $empaque['cantidad_contenedor'];
+                                $datos['cantidadMercancia'] = $empaque['cantidad_contenedor'];
+                                Log::info('📦 Cantidad extraída del formato contenedor', [
+                                    'cantidad' => $empaque['cantidad_contenedor'],
+                                    'empaque' => $empaque['empaque']
+                                ]);
+                            }
                         } else {
                             $datos['empaque'] = $empaque;
                             $datos['tipo_embalaje'] = $empaque;
@@ -668,6 +678,12 @@ class MCPAssistantService
                         $datosComunes['empaque'] = $empaque['empaque'];
                         $datosComunes['tipo_embalaje'] = $empaque['empaque'];
                         $datosComunes['empaque_id'] = $empaque['empaque_id'];
+                        
+                        // 🆕 Si viene cantidad_contenedor del formato NxTAMAÑO
+                        if (isset($empaque['cantidad_contenedor']) && $empaque['cantidad_contenedor'] > 0) {
+                            $datosComunes['cantidad'] = $empaque['cantidad_contenedor'];
+                            $datosComunes['cantidadMercancia'] = $empaque['cantidad_contenedor'];
+                        }
                     } else {
                         $datosComunes['empaque'] = $empaque;
                         $datosComunes['tipo_embalaje'] = $empaque;
@@ -716,11 +732,21 @@ class MCPAssistantService
             // Extraer empaque
             $empaque = self::extractEmpaque($fullText);
             if ($empaque) {
-                // extractEmpaque puede retornar array con ['empaque' => X, 'empaque_id' => Y] o solo string
+                // extractEmpaque puede retornar array con ['empaque' => X, 'empaque_id' => Y, 'cantidad_contenedor' => Z] o solo string
                 if (is_array($empaque)) {
                     $datosComunes['empaque'] = $empaque['empaque'];
                     $datosComunes['tipo_embalaje'] = $empaque['empaque'];
                     $datosComunes['empaque_id'] = $empaque['empaque_id'];
+                    
+                    // 🆕 Si viene cantidad_contenedor del formato NxTAMAÑO, usarla como cantidad
+                    if (isset($empaque['cantidad_contenedor']) && $empaque['cantidad_contenedor'] > 0) {
+                        $datosComunes['cantidad'] = $empaque['cantidad_contenedor'];
+                        $datosComunes['cantidadMercancia'] = $empaque['cantidad_contenedor'];
+                        Log::info('📦 Cantidad extraída del formato contenedor (común)', [
+                            'cantidad' => $empaque['cantidad_contenedor'],
+                            'empaque' => $empaque['empaque']
+                        ]);
+                    }
                 } else {
                     $datosComunes['empaque'] = $empaque;
                     $datosComunes['tipo_embalaje'] = $empaque;
@@ -6598,7 +6624,15 @@ class MCPAssistantService
         // 1️⃣ EMPAQUE COMÚN
         $empaque = self::extractEmpaque($lowerText);
         if ($empaque) {
-            $commonData = array_merge($commonData, $empaque);
+            if (is_array($empaque)) {
+                $commonData = array_merge($commonData, $empaque);
+                // 🆕 Si hay cantidad_contenedor, agregarla
+                if (isset($empaque['cantidad_contenedor'])) {
+                    $commonData['cantidad'] = $empaque['cantidad_contenedor'];
+                }
+            } else {
+                $commonData['empaque'] = $empaque;
+            }
         }
 
         // 2️⃣ TIPO DE MERCANCÍA
@@ -6713,7 +6747,15 @@ class MCPAssistantService
         // Empaque
         $empaque = self::extractEmpaque($lowerText);
         if ($empaque) {
-            $data = array_merge($data, $empaque);
+            if (is_array($empaque)) {
+                $data = array_merge($data, $empaque);
+                // 🆕 Si hay cantidad_contenedor pero no cantidad general, usarla
+                if (isset($empaque['cantidad_contenedor']) && !isset($data['cantidad'])) {
+                    $data['cantidad'] = $empaque['cantidad_contenedor'];
+                }
+            } else {
+                $data['empaque'] = $empaque;
+            }
         }
 
         // 🆕 Volumen (metros cúbicos)
@@ -9040,31 +9082,45 @@ class MCPAssistantService
         // 🆕 Patrón PRIORITARIO: Corrección de empaque
         // "el empaque es cajas" o "empaque: bultos" o "cambia el empaque a sacos" o "empaque son cajas"
         $empaqueKeyword = null;
+        $cantidadContenedor = null; // 🆕 Para guardar cantidad cuando viene en formato NxTAMAÑO
         
-        // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" PRIMERO (formato logístico estándar)
-        // Patrón: "1x40'HC", "1X40HC", "2x20'GP", etc.
+        // 🔧 FIX MEJORADO: Detectar formato "1x40'HC", "2x20GP", "6x20", "8x40", "1x20 OT" PRIMERO
+        // Patrón: "1x40'HC", "1X40HC", "2x20'GP", "6x20", "1x20 ot", etc.
+        // El tipo (HC, GP, OT, etc.) es OPCIONAL
         if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/ui', $lowerText, $formatoMatch)) {
+            $cantidadContenedor = intval($formatoMatch[1]); // 🆕 Extraer cantidad
             $tamaño = $formatoMatch[2];
-            $tipo = isset($formatoMatch[3]) && !empty($formatoMatch[3]) ? strtoupper($formatoMatch[3]) : 'GP';
+            $tipo = isset($formatoMatch[3]) && !empty($formatoMatch[3]) ? strtoupper($formatoMatch[3]) : '';
             if ($tipo === 'HQ') $tipo = 'HC';
+            
+            // Determinar el empaque según el tamaño
             if ($tamaño == '20') {
-                $empaqueKeyword = 'contenedor de 20';
-                Log::info('📦 Empaque detectado (formato NxTAMAÑO)', ['raw' => $formatoMatch[0], 'keyword' => $empaqueKeyword, 'tipo' => $tipo]);
+                // Si tiene tipo específico (OT, HC, RF, etc.), incluirlo en el nombre
+                $empaqueKeyword = $tipo ? 'contenedor 20 ' . strtolower($tipo) : 'contenedor de 20';
             } elseif ($tamaño == '40' || $tamaño == '45') {
-                $empaqueKeyword = 'contenedor de 40';
-                Log::info('📦 Empaque detectado (formato NxTAMAÑO)', ['raw' => $formatoMatch[0], 'keyword' => $empaqueKeyword, 'tipo' => $tipo]);
+                $empaqueKeyword = $tipo ? 'contenedor 40 ' . strtolower($tipo) : 'contenedor de 40';
             }
+            
+            Log::info('📦 Empaque detectado (formato NxTAMAÑO)', [
+                'raw' => $formatoMatch[0], 
+                'keyword' => $empaqueKeyword, 
+                'cantidad' => $cantidadContenedor,
+                'tipo' => $tipo ?: 'estándar'
+            ]);
         }
         // 🔧 FIX: Detectar contenedor con tamaño (contenedor de 20/40 pies)
         // Patrón: "contenedor de 20 pies", "1 contenedor de 40 pies", "contenedor 20'"
-        elseif (preg_match('/contenedor(?:es)?\s+(?:de\s+)?(\d+)\s*(?:pies|\'|")?/ui', $lowerText, $containerMatch)) {
-            $tamaño = $containerMatch[1];
+        elseif (preg_match('/(\d+)?\s*contenedor(?:es)?\s+(?:de\s+)?(\d+)\s*(?:pies|\'|")?/ui', $lowerText, $containerMatch)) {
+            if (!empty($containerMatch[1])) {
+                $cantidadContenedor = intval($containerMatch[1]); // Cantidad antes de "contenedor"
+            }
+            $tamaño = $containerMatch[2];
             if ($tamaño == '20') {
                 $empaqueKeyword = 'contenedor de 20';
-                Log::info('📦 Empaque detectado (contenedor de 20 pies)', ['keyword' => $empaqueKeyword]);
+                Log::info('📦 Empaque detectado (contenedor de 20 pies)', ['keyword' => $empaqueKeyword, 'cantidad' => $cantidadContenedor]);
             } elseif ($tamaño == '40') {
                 $empaqueKeyword = 'contenedor de 40';
-                Log::info('📦 Empaque detectado (contenedor de 40 pies)', ['keyword' => $empaqueKeyword]);
+                Log::info('📦 Empaque detectado (contenedor de 40 pies)', ['keyword' => $empaqueKeyword, 'cantidad' => $cantidadContenedor]);
             }
         }
         // También detectar "20 pies" o "40 pies" sin "contenedor" explícito
@@ -9144,6 +9200,15 @@ class MCPAssistantService
             '20 pies' => 'CONTENEDOR 20',
             '40 pies' => 'CONTENEDOR 40',
             'contenedor' => 'CONTENEDOR',  // Default sin tamaño (el usuario deberá especificar)
+            // 🆕 Contenedores con tipo específico (OT, HC, RF, etc.)
+            'contenedor 20 ot' => 'CONTENEDOR 20 OT',
+            'contenedor 20 hc' => 'CONTENEDOR 20 HC',
+            'contenedor 20 rf' => 'CONTENEDOR 20 RF',
+            'contenedor 20 gp' => 'CONTENEDOR 20',
+            'contenedor 40 ot' => 'CONTENEDOR 40 OT',
+            'contenedor 40 hc' => 'CONTENEDOR 40 HC',
+            'contenedor 40 rf' => 'CONTENEDOR 40 RF',
+            'contenedor 40 gp' => 'CONTENEDOR 40',
             // Otros
             'tonel' => 'TONEL',
             'toneles' => 'TONEL',
@@ -9206,9 +9271,11 @@ class MCPAssistantService
         if ($found) {
             // 🔧 FIX: Para contenedores con tamaño, retornar el formato corto directamente
             // sin buscar en BD (para mostrar "CONTENEDOR 20" en lugar de "CONTENEDOR (1) 20 PIES")
-            if (preg_match('/^CONTENEDOR\s*(\d+)$/i', $found, $containerMatch)) {
+            // Incluye soporte para tipos: OT, HC, RF, GP
+            if (preg_match('/^CONTENEDOR\s*(\d+)\s*(OT|HC|RF|GP)?$/i', $found, $containerMatch)) {
                 $tamaño = $containerMatch[1];
-                $empaqueCorto = 'CONTENEDOR ' . $tamaño;
+                $tipo = isset($containerMatch[2]) ? strtoupper($containerMatch[2]) : '';
+                $empaqueCorto = $tipo ? 'CONTENEDOR ' . $tamaño . ' ' . $tipo : 'CONTENEDOR ' . $tamaño;
                 
                 // Buscar ID en BD usando el nombre largo para compatibilidad
                 $nombreLargoBD = ($tamaño == '20') ? 'CONTENEDOR (1) 20 PIES' : 'CONTENEDOR 40 PIES';
@@ -9217,13 +9284,22 @@ class MCPAssistantService
                 Log::info('📦 Empaque contenedor detectado - formato corto', [
                     'keyword_encontrado' => $found,
                     'empaque_mostrar' => $empaqueCorto,
-                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null
+                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null,
+                    'tipo_contenedor' => $tipo ?: 'estándar',
+                    'cantidad_contenedor' => $cantidadContenedor
                 ]);
                 
-                return [
+                // 🆕 Retornar cantidad si viene del formato NxTAMAÑO
+                $resultado = [
                     'empaque' => $empaqueCorto,
                     'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null
                 ];
+                
+                if ($cantidadContenedor && $cantidadContenedor > 0) {
+                    $resultado['cantidad_contenedor'] = $cantidadContenedor;
+                }
+                
+                return $resultado;
             }
             
             // Para otros empaques, buscar normalmente en BD

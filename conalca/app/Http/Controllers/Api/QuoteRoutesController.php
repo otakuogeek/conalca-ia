@@ -67,12 +67,18 @@ class QuoteRoutesController extends Controller
             $savedRoutes = [];
 
             foreach ($request->routes as $index => $routeData) {
+                // 🆕 Normalizar ciudades para corregir departamentos incorrectos
+                $ciudadOrigen = $this->normalizeCityName($routeData['ciudad_origen'] ?? '');
+                $ciudadDestino = $this->normalizeCityName($routeData['ciudad_destino'] ?? '');
+
                 // 🔍 DEBUG: Log completo para diagnosticar problema de peso
                 Log::info('🔍 Procesando ruta - DETALLE COMPLETO', [
                     'index'   => $index,
                     'id'      => $routeData['id'] ?? null,
-                    'origen'  => $routeData['ciudad_origen'] ?? 'no definido',
-                    'destino' => $routeData['ciudad_destino'] ?? 'no definido',
+                    'origen_original' => $routeData['ciudad_origen'] ?? 'no definido',
+                    'origen_normalizado' => $ciudadOrigen,
+                    'destino_original' => $routeData['ciudad_destino'] ?? 'no definido',
+                    'destino_normalizado' => $ciudadDestino,
                     'peso_mercancia_recibido' => $routeData['peso_mercancia'] ?? 'NO ENVIADO',
                     'peso_mercancia_parseado' => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                     'vehiculo_recibido' => $routeData['vehiculo_requerido'] ?? 'NO ENVIADO',
@@ -99,8 +105,8 @@ class QuoteRoutesController extends Controller
                 if ($cotization) {
                     // UPDATE existing
                     $cotization->update([
-                        'ciudad_origen'    => $routeData['ciudad_origen'],
-                        'ciudad_destino'   => $routeData['ciudad_destino'],
+                        'ciudad_origen'    => $ciudadOrigen,
+                        'ciudad_destino'   => $ciudadDestino,
                         'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
@@ -118,8 +124,8 @@ class QuoteRoutesController extends Controller
                         'group_cotization_id' => $group->id,
                         'user_id'             => Auth::id(),
                         'client_id'           => $group->client_id,
-                        'ciudad_origen'       => $routeData['ciudad_origen'],
-                        'ciudad_destino'      => $routeData['ciudad_destino'],
+                        'ciudad_origen'       => $ciudadOrigen,
+                        'ciudad_destino'      => $ciudadDestino,
                         'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
@@ -365,5 +371,79 @@ class QuoteRoutesController extends Controller
         // Remover caracteres no numéricos excepto punto decimal
         $numeric = preg_replace('/[^0-9.]/', '', $value);
         return $numeric ? (float) $numeric : 0;
+    }
+
+    /**
+     * 🆕 Normaliza el nombre de una ciudad corrigiendo departamentos incorrectos
+     * Ejemplo: "SANTA MARTA - NARIÑO" → "SANTA MARTA"
+     * El sistema luego encontrará el departamento correcto (MAGDALENA)
+     */
+    private function normalizeCityName($cityName)
+    {
+        if (empty($cityName)) {
+            return $cityName;
+        }
+
+        // Mapa de ciudades principales con sus departamentos correctos
+        $ciudadesPrincipales = [
+            'CARTAGENA' => 'BOLIVAR',
+            'ARMENIA' => 'QUINDIO',
+            'CALI' => 'VALLE DEL CAUCA',
+            'MEDELLIN' => 'ANTIOQUIA',
+            'BOGOTA' => 'CUNDINAMARCA',
+            'BARRANQUILLA' => 'ATLANTICO',
+            'BUCARAMANGA' => 'SANTANDER',
+            'PEREIRA' => 'RISARALDA',
+            'MANIZALES' => 'CALDAS',
+            'IBAGUE' => 'TOLIMA',
+            'CUCUTA' => 'NORTE DE SANTANDER',
+            'SANTA MARTA' => 'MAGDALENA',
+            'VILLAVICENCIO' => 'META',
+            'PASTO' => 'NARINO',
+            'NEIVA' => 'HUILA',
+            'MONTERIA' => 'CORDOBA',
+            'VALLEDUPAR' => 'CESAR',
+            'TUNJA' => 'BOYACA',
+            'POPAYAN' => 'CAUCA',
+            'SINCELEJO' => 'SUCRE',
+            'RIOHACHA' => 'LA GUAJIRA',
+            'QUIBDO' => 'CHOCO',
+            'FLORENCIA' => 'CAQUETA',
+            'YOPAL' => 'CASANARE',
+            'BUENAVENTURA' => 'VALLE DEL CAUCA',
+        ];
+
+        // Normalizar: quitar tildes y convertir a mayúsculas
+        $normalized = mb_strtoupper($cityName, 'UTF-8');
+        $normalized = strtr($normalized, [
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'á' => 'A', 'é' => 'E', 'í' => 'I', 'ó' => 'O', 'ú' => 'U',
+            'Ñ' => 'N', 'ñ' => 'N'
+        ]);
+
+        // Extraer solo el nombre de la ciudad (sin departamento)
+        $partes = explode(' - ', $normalized);
+        $nombreCiudad = trim($partes[0]);
+        $departamentoActual = isset($partes[1]) ? trim($partes[1]) : null;
+
+        // Si la ciudad tiene un departamento principal definido
+        if (isset($ciudadesPrincipales[$nombreCiudad])) {
+            $departamentoCorrecto = $ciudadesPrincipales[$nombreCiudad];
+            
+            // Si el departamento actual es diferente al correcto, corregirlo
+            if ($departamentoActual && $departamentoActual !== $departamentoCorrecto) {
+                Log::warning('🔧 Corrigiendo departamento incorrecto', [
+                    'ciudad' => $nombreCiudad,
+                    'departamento_incorrecto' => $departamentoActual,
+                    'departamento_correcto' => $departamentoCorrecto
+                ]);
+            }
+            
+            // Retornar solo el nombre de la ciudad (el sistema encontrará el departamento correcto)
+            return $nombreCiudad;
+        }
+
+        // Si no es una ciudad principal conocida, retornar el valor original
+        return $cityName;
     }
 }

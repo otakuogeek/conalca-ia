@@ -231,7 +231,7 @@ const EditRoutesModal = ({
     loadRoutes();
   }, [catalogsLoaded, groupId]); // Depende de catalogsLoaded Y groupId
 
-  // Función auxiliar para normalizar texto (quitar tildes, mayúsculas, espacios)
+  // Función auxiliar para normalizar texto (quitar tildes, mayúsculas, espacios, puntos)
   const normalizeText = (text) => {
     if (!text) return '';
     return text
@@ -239,6 +239,7 @@ const EditRoutesModal = ({
       .toUpperCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '') // Quitar tildes/acentos
+      .replace(/[.,:;!?]/g, '') // 🆕 Quitar puntuación
       .trim();
   };
 
@@ -301,27 +302,60 @@ const EditRoutesModal = ({
       return byCode.ciudad_codigo;
     }
 
-    // Buscar por nombre normalizado (sin tildes, sin case-sensitive)
+    // Buscar por nombre normalizado (sin tildes, sin case-sensitive, sin puntuación)
     const normalizedRoute = normalizeText(routeValue);
     
     // 🆕 PRIMERO: Extraer solo el nombre de la ciudad (sin departamento)
-    // Para poder aplicar la lógica de prioridad incluso si viene "CARTAGENA - NARIÑO"
+    // Para poder aplicar la lógica de prioridad incluso si viene "CARTAGENA - NARIÑO" o "SANTA MARTA - NARIÑO"
     const ciudadSinDepto = normalizedRoute.split('-')[0].trim();
+    
+    console.log(`🔍 ciudadSinDepto: "${ciudadSinDepto}"`);
     
     // Verificar si esta ciudad tiene un departamento principal definido
     const deptoPrincipal = CIUDADES_PRINCIPALES[ciudadSinDepto];
     
     if (deptoPrincipal) {
-      // Buscar la ciudad principal (ej: CARTAGENA - BOLIVAR)
+      const normalizedDeptoPrincipal = normalizeText(deptoPrincipal);
+      console.log(`🔄 Ciudad principal detectada: "${ciudadSinDepto}" → debe ser "${deptoPrincipal}" (normalizado: "${normalizedDeptoPrincipal}")`);
+      
+      // Buscar la ciudad principal en el catálogo - BÚSQUEDA EXACTA del departamento
       const principal = cities.find(c => {
-        const normalizedCity = normalizeText(c.ciudad_nombre || '');
-        const nombreCiudad = normalizedCity.split('-')[0].trim();
-        return nombreCiudad === ciudadSinDepto && normalizedCity.includes(normalizeText(deptoPrincipal));
+        const normalizedCityName = normalizeText(c.ciudad_nombre || '');
+        const normalizedDeptName = normalizeText(c.departamento_nombre || '');
+        const nombreCiudad = normalizedCityName.split('-')[0].trim();
+        
+        // Match si: nombre ciudad coincide Y departamento coincide EXACTAMENTE
+        const matchesCiudad = nombreCiudad === ciudadSinDepto;
+        const matchesDepto = normalizedDeptName === normalizedDeptoPrincipal;
+        
+        if (matchesCiudad && nombreCiudad === 'SANTA MARTA') {
+          console.log(`  🔎 Evaluando: ${c.ciudad_nombre} | Depto: "${normalizedDeptName}" === "${normalizedDeptoPrincipal}"? ${matchesDepto}`);
+        }
+        
+        return matchesCiudad && matchesDepto;
       });
       
       if (principal) {
-        console.log(`✅ Ciudad PRINCIPAL encontrada: "${routeValue}" → ${principal.ciudad_nombre} (${principal.ciudad_codigo})`);
+        console.log(`✅ Ciudad PRINCIPAL encontrada: "${routeValue}" → ${principal.ciudad_nombre} - ${principal.departamento_nombre} (${principal.ciudad_codigo})`);
         return principal.ciudad_codigo;
+      } else {
+        console.warn(`⚠️ No se encontró ciudad principal para "${ciudadSinDepto}" con depto "${deptoPrincipal}"`);
+        // Listar todas las ciudades con ese nombre para debug
+        const allMatches = cities.filter(c => normalizeText(c.ciudad_nombre || '').split('-')[0].trim() === ciudadSinDepto);
+        console.log(`  Ciudades encontradas con nombre "${ciudadSinDepto}":`, allMatches.map(c => `${c.ciudad_nombre} - ${c.departamento_nombre} (${c.ciudad_codigo})`));
+        
+        // Si tenemos matches, elegir la primera que coincida por orden (ya vienen ordenadas del backend)
+        if (allMatches.length > 0) {
+          // Buscar específicamente la del departamento principal
+          const correcta = allMatches.find(c => normalizeText(c.departamento_nombre || '') === normalizeText(deptoPrincipal));
+          if (correcta) {
+            console.log(`✅ Ciudad encontrada por fallback depto: ${correcta.ciudad_nombre} (${correcta.ciudad_codigo})`);
+            return correcta.ciudad_codigo;
+          }
+          // Si aún no la encuentra, usar la primera (ordenadas del backend)
+          console.log(`⚠️ Usando primera coincidencia: ${allMatches[0].ciudad_nombre} (${allMatches[0].ciudad_codigo})`);
+          return allMatches[0].ciudad_codigo;
+        }
       }
     }
     
@@ -337,6 +371,7 @@ const EditRoutesModal = ({
     }
     
     // Búsqueda parcial: buscar ciudades que comiencen con el nombre
+    // 🔥 FIX: Priorizar ciudades principales si hay candidatas múltiples
     const candidatas = cities.filter(c => {
       const normalizedCity = normalizeText(c.ciudad_nombre || '');
       const nombreCiudad = normalizedCity.split('-')[0].trim();
@@ -344,6 +379,19 @@ const EditRoutesModal = ({
     });
     
     if (candidatas.length > 0) {
+      // Si hay múltiples candidatas, priorizar la que tenga el departamento principal
+      if (candidatas.length > 1 && CIUDADES_PRINCIPALES[ciudadSinDepto]) {
+        const deptoPref = normalizeText(CIUDADES_PRINCIPALES[ciudadSinDepto]);
+        const preferida = candidatas.find(c => {
+          const normalizedDept = normalizeText(c.departamento_nombre || '');
+          return normalizedDept === deptoPref || normalizedDept.includes(deptoPref);
+        });
+        if (preferida) {
+          console.log(`✅ Ciudad PREFERIDA encontrada entre candidatas: "${routeValue}" → ${preferida.ciudad_nombre} (${preferida.ciudad_codigo})`);
+          return preferida.ciudad_codigo;
+        }
+      }
+      
       console.log(`✅ Ciudad encontrada (parcial): "${routeValue}" → código ${candidatas[0].ciudad_codigo} (${candidatas[0].ciudad_nombre})`);
       return candidatas[0].ciudad_codigo;
     }
