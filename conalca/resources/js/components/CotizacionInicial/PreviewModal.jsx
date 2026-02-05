@@ -84,9 +84,47 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
            /\d+X(20|40|45)/i.test(normalized) || // Formato 1X20, 4X40, etc.
            /^(20|40|45)\s*['"]?\s*(HC|GP|OT|RF|FR)?$/i.test(normalized); // Formato 40 HC, 20', etc.
   };
+  // 🆕 Helper para obtener el tipo de contenedor (20, 40 o 45 pies)
+  const getContainerSize = (embalaje) => {
+    if (!embalaje) return null;
+    const normalized = String(embalaje).toUpperCase();
+    if (normalized.includes('20') || /\d+X20/i.test(normalized)) return 20;
+    if (normalized.includes('45') || /\d+X45/i.test(normalized)) return 45;
+    if (normalized.includes('40') || /\d+X40/i.test(normalized)) return 40;
+    return null;
+  };
 
+  // 🆕 Helper para obtener la tara según tipo de contenedor
+  const getContainerTara = (embalaje) => {
+    const size = getContainerSize(embalaje);
+    switch (size) {
+      case 20: return 2300; // kg
+      case 40: return 3400; // kg
+      case 45: return 3400; // kg (mismo que 40)
+      default: return 0;
+    }
+  };
+
+  // 🆕 Helper para detectar si es operación de exportación
+  const isExportOperation = () => {
+    const opType = (clientData.operationType || '').toLowerCase();
+    return opType.includes('export') || opType === 'exportacion' || opType === 'exportación';
+  };
+
+  // 🆕 Helper para verificar si hay contenedores en la cotización
+  const hasContainersInQuote = () => {
+    return quoteData.some(route => {
+      const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+      return isContainerPacking(embalaje);
+    });
+  };
   const buildRouteFinancials = (route, index) => {
     const pricing = selectedPricings[index];
+    const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+    const isContainer = isContainerPacking(embalaje);
+    const containerSize = getContainerSize(embalaje);
+    const containerTara = getContainerTara(embalaje);
+    
     if (!pricing) {
       return {
         pricing: null,
@@ -96,8 +134,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         acompanamiento: Number(route.itesoltra_acompanamientovalor) || 0,
         valueWithMargin: 0,
         finalValue: 0,
-        isContainer: false,
+        valuePerUnit: 0,
+        totalValueInternal: 0,
+        isContainer,
         containerQuantity: 1,
+        containerSize,
+        containerTara,
       };
     }
 
@@ -112,26 +154,30 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     });
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    let finalValue = valueWithMargin + acompanamiento + parametersTotal;
+    const valuePerUnit = valueWithMargin + acompanamiento + parametersTotal;
     
-    // 🆕 Detectar si es contenedor y multiplicar por cantidad
-    const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
-    const isContainer = isContainerPacking(embalaje);
+    // 🆕 Cantidad de contenedores (solo para sistema interno)
     const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
     
-    // Si es contenedor, el valor por unidad es finalValue, el total es finalValue * cantidad
-    const valuePerUnit = finalValue;
-    const totalValue = isContainer ? finalValue * containerQuantity : finalValue;
+    // 🔥 IMPORTANTE: 
+    // - valuePerUnit: valor por UNIDAD de contenedor (lo que ve el cliente)
+    // - totalValueInternal: valor total multiplicado por cantidad (para sistema interno)
+    // - finalValue: ahora es el valor POR UNIDAD (lo que se muestra al cliente)
+    const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
 
     console.log(`🚛 Ruta ${index + 1} - Cálculo financiero:`, {
       embalaje,
       isContainer,
+      containerSize,
+      containerTara,
       cantidad: route.cantidad,
       containerQuantity,
       basePrice,
       valueWithMargin,
       valuePerUnit,
-      totalValue
+      totalValueInternal,
+      '📋 AL CLIENTE': valuePerUnit,
+      '💾 SISTEMA INTERNO': totalValueInternal
     });
 
     return {
@@ -141,26 +187,43 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       parametersTotal,
       acompanamiento,
       valueWithMargin,
-      finalValue: totalValue, // 🔥 Ahora incluye multiplicación por cantidad si es contenedor
-      valuePerUnit, // 🆕 Valor unitario (por contenedor)
+      finalValue: valuePerUnit, // 🔥 Al cliente se muestra valor POR UNIDAD
+      valuePerUnit, // Valor unitario (por contenedor)
+      totalValueInternal, // 🆕 Valor total para sistema interno
       isContainer,
       containerQuantity,
+      containerSize,
+      containerTara,
     };
   };
 
+  // 🔥 Total para mostrar AL CLIENTE (suma de valores por unidad)
   const calculateRouteTotal = (route, index) => {
-    const { finalValue } = buildRouteFinancials(route, index);
-    return finalValue;
+    const { valuePerUnit } = buildRouteFinancials(route, index);
+    return valuePerUnit;
   };
 
+  // 🔥 Total para CLIENTE (suma de valores unitarios)
   const calculateTotal = () => {
     const total = quoteData.reduce((total, route, index) => {
       const routeTotal = calculateRouteTotal(route, index);
-      console.log(`Ruta ${index + 1} - Contribución al total:`, routeTotal);
+      console.log(`Ruta ${index + 1} - Valor unitario para cliente:`, routeTotal);
       return total + routeTotal;
     }, 0);
     
-    console.log('Total final calculado:', total);
+    console.log('Total final para cliente (suma unitarios):', total);
+    return total;
+  };
+
+  // 🆕 Total para SISTEMA INTERNO (incluye multiplicación por cantidad de contenedores)
+  const calculateTotalInternal = () => {
+    const total = quoteData.reduce((total, route, index) => {
+      const { totalValueInternal } = buildRouteFinancials(route, index);
+      console.log(`Ruta ${index + 1} - Valor total interno:`, totalValueInternal);
+      return total + totalValueInternal;
+    }, 0);
+    
+    console.log('Total final para sistema interno:', total);
     return total;
   };
 
@@ -177,13 +240,17 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       });
 
       const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-      let finalValue = valueWithMargin + acompanamiento + parametersTotal;
+      const valuePerUnit = valueWithMargin + acompanamiento + parametersTotal;
       
-      // 🆕 Detectar si es contenedor y multiplicar por cantidad
+      // 🆕 Detectar si es contenedor y calcular valores
       const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
       const isContainer = isContainerPacking(embalaje);
       const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
-      const totalValue = isContainer ? finalValue * containerQuantity : finalValue;
+      const containerSize = getContainerSize(embalaje);
+      const containerTara = getContainerTara(embalaje);
+      
+      // 🔥 totalValueInternal: para sistema interno (cantidad * valor unitario)
+      const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
 
       return {
         id: route.id || null, // <-- send existing cotización id to update
@@ -197,12 +264,17 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         precio_base: basePrice,
         valor_parametros: parametersTotal,
         valor_acompanamiento: acompanamiento,
-        finalValue: totalValue, // 🔥 Incluye multiplicación por cantidad si es contenedor
-        valor: totalValue,
-        valor_final: totalValue,
-        valor_unitario: finalValue, // 🆕 Valor por unidad/contenedor
+        // 🔥 Sistema interno recibe el TOTAL (cantidad * valor unitario)
+        finalValue: totalValueInternal,
+        valor: totalValueInternal,
+        valor_final: totalValueInternal,
+        // 🆕 Valor por unidad/contenedor (lo que ve el cliente)
+        valor_unitario: valuePerUnit,
+        valor_cliente: valuePerUnit, // 🆕 Explícito para el cliente
         es_contenedor: isContainer,
         cantidad_contenedores: containerQuantity,
+        tamano_contenedor: containerSize, // 🆕 20, 40 o 45 pies
+        tara_contenedor: containerTara, // 🆕 Tara según tipo (2300kg o 3400kg)
         precio_pricing_id: pricing?.id ?? null, // <-- pricing id for upsert
         cantidad: String(route.cantidad || '1'),
         tipo_embajale: String(route.tipo_embajale || 'Bultos'),
@@ -470,7 +542,9 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                         <th className="border border-gray-200 px-2 py-2 text-center">Destino</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Vehículo</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Parámetros</th>
-                        <th className="border border-gray-200 px-2 py-2 text-center">Valor</th>
+                        <th className="border border-gray-200 px-2 py-2 text-center">
+                          {hasContainersInQuote() ? 'Valor x Unidad' : 'Valor'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -483,8 +557,11 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           valueWithMargin,
                           finalValue,
                           valuePerUnit,
+                          totalValueInternal,
                           isContainer,
                           containerQuantity,
+                          containerSize,
+                          containerTara,
                         } = buildRouteFinancials(route, index);
 
                         const automaticParameters = getAutomaticParameters(clientData);
@@ -537,24 +614,31 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                             </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
                               <div className="space-y-1">
+                                {/* 🔥 Mostrar siempre el valor POR UNIDAD al cliente */}
                                 <div className="font-bold text-green-700">
-                                  ${Number(finalValue).toLocaleString()}
+                                  ${Number(valuePerUnit).toLocaleString()}
                                 </div>
-                                {/* 🆕 Mostrar desglose si es contenedor con cantidad > 1 */}
-                                {isContainer && containerQuantity > 1 ? (
-                                  <>
-                                    <div className="text-[10px] text-purple-600 font-medium">
-                                      {containerQuantity} contenedores × ${valuePerUnit.toLocaleString()}
-                                    </div>
-                                    <div className="text-[10px] text-gray-500">
-                                      Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
-                                    </div>
-                                  </>
-                                ) : (
-                                  <div className="text-[10px] text-gray-500">
-                                    Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
+                                {/* 🆕 Si es contenedor, indicar claramente que es por unidad */}
+                                {isContainer && (
+                                  <div className="text-[10px] text-purple-600 font-medium">
+                                    por contenedor {containerSize ? `${containerSize}'` : ''}
                                   </div>
                                 )}
+                                {/* Informar cantidad solicitada si es > 1 */}
+                                {isContainer && containerQuantity > 1 && (
+                                  <div className="text-[10px] text-gray-500 italic">
+                                    (Ud. solicitó {containerQuantity} unidades)
+                                  </div>
+                                )}
+                                {/* Mostrar tara si es contenedor */}
+                                {isContainer && containerTara > 0 && (
+                                  <div className="text-[10px] text-blue-500">
+                                    Tara: {containerTara.toLocaleString()} kg
+                                  </div>
+                                )}
+                                <div className="text-[10px] text-gray-500">
+                                  Base (${basePrice.toLocaleString()}) + {porcentaje}%
+                                </div>
                                 {(parametersTotal + acompanamiento) > 0 && (
                                   <div className="text-[10px] text-gray-500">
                                     Parámetros/Acomp.: ${(parametersTotal + acompanamiento).toLocaleString()}
@@ -611,11 +695,51 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                   }
                   return null;
                 })()}
+
+                {/* 🆕 Notas aclaratorias para CONTENEDORES */}
+                {hasContainersInQuote() && (
+                  <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <h4 className="text-xs font-semibold text-purple-800 mb-2 flex items-center">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                      </svg>
+                      Información importante sobre contenedores
+                    </h4>
+                    <div className="text-xs text-purple-700 space-y-1">
+                      <div>• <strong>Cotización por unidad:</strong> Los valores mostrados corresponden al costo <strong>por cada contenedor</strong>.</div>
+                      <div>• <strong>Tara de contenedores:</strong></div>
+                      <div className="ml-4">- Contenedor 20': <strong>2,300 kg</strong></div>
+                      <div className="ml-4">- Contenedor 40'/45': <strong>3,400 kg</strong></div>
+                      <div>• <strong>Pesos diferentes:</strong> Si los contenedores tienen pesos distintos, cada uno se cotiza como ruta separada.</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 🆕 Notas aclaratorias para EXPORTACIÓN */}
+                {isExportOperation() && hasContainersInQuote() && (
+                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="text-xs font-semibold text-amber-800 mb-2 flex items-center">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
+                      </svg>
+                      Nota importante - Operación de Exportación
+                    </h4>
+                    <div className="text-xs text-amber-700 space-y-1">
+                      <div>• <strong>Lugar de retiro:</strong> Esta tarifa aplica <strong>únicamente</strong> si el contenedor se retira en patios de <strong>Bogotá, Medellín o Cali</strong>.</div>
+                      <div>• <strong>Retiro en Tocancipá:</strong> Si el retiro se realiza en Tocancipá u otras ubicaciones, se aplicará un <strong>costo adicional de transporte</strong>.</div>
+                      <div>• <strong>Llenado del contenedor:</strong> Es importante especificar el lugar exacto de llenado para aplicar correctamente las tarifas.</div>
+                      <div className="mt-2 p-2 bg-amber-100 rounded text-amber-800 font-medium">
+                        ⚠️ Por favor confirme el lugar de retiro y llenado del contenedor para validar la tarifa.
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="mt-3 flex justify-end">
                   <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                     <span className="text-sm font-bold text-green-700">
-                      Total: ${Number(calculateTotal()).toLocaleString()}
+                      {hasContainersInQuote() ? 'Total (suma de valores unitarios): ' : 'Total: '}
+                      ${Number(calculateTotal()).toLocaleString()}
                     </span>
                   </div>
                 </div>
