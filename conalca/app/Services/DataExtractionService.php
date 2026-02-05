@@ -102,7 +102,25 @@ class DataExtractionService
             // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
             // Ejemplo: "Peso: 20 toneladas + tara" significa que el peso NO incluye tara y hay que sumarla
             $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye|\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
-            $yaIncluyeTara = preg_match('/(?:tara\s+incluida|con\s+tara|peso\s+bruto|ya\s+incluye\s+tara|peso\s+ya\s+incluye)/ui', $lastUserMessage);
+            
+            // 🆕 FIX CRÍTICO: Mejorar detección de "tara incluida" / "con tara incluida"
+            // Patrones que indican que el peso YA INCLUYE la tara (NO agregar):
+            // - "con tara incluida" / "con la tara incluida"
+            // - "tara incluida" 
+            // - "con tara" (pero NO "sin tara")
+            // - "peso bruto"
+            // - "ya incluye tara" / "ya tiene tara"
+            // - "kilogramos con tara" / "kg con tara"
+            $yaIncluyeTara = preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|ya\s+(?:incluye|tiene)\s+(?:la\s+)?tara|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $lastUserMessage);
+            
+            Log::info('🔍 Análisis de tara en mensaje', [
+                'mensaje_original' => substr($lastUserMessage, 0, 150),
+                'agrega_tara_explicito' => (bool)$agregarTaraExplicito,
+                'peso_con_suma_tara' => (bool)$pesoConSumaTara,
+                'no_incluye_tara' => (bool)$noIncluyeTara,
+                'ya_incluye_tara' => (bool)$yaIncluyeTara,
+                'es_edicion' => $esEdicionCampo
+            ]);
             
             // 🔧 FIX CRÍTICO: Si el usuario EXPLÍCITAMENTE dice "suma tara" o "agrega tara" o "+ tara", 
             // SIEMPRE agregar la tara, incluso en modo edición
@@ -110,10 +128,33 @@ class DataExtractionService
             $taraConSignoMas = preg_match('/\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
             $comandoExplicitoTara = $agregarTaraExplicito || $pesoConSumaTara || $taraConSignoMas;
             
-            // Determinar si se debe agregar tara
-            // - Si hay comando explícito ("suma tara"), SIEMPRE agregar (incluso en edición)
-            // - Si NO está editando Y (no incluye tara O no dice que ya incluye), agregar por defecto
-            $debeAgregarTara = $comandoExplicitoTara || (!$esEdicionCampo && ($noIncluyeTara || (!$yaIncluyeTara)));
+            // 🆕 FIX CRÍTICO: Si el usuario dice "con tara incluida", NO agregar tara
+            // La tara solo se agrega si:
+            // 1. Hay comando explícito ("suma tara") Y NO dice "ya incluye tara"
+            // 2. NO está editando Y dice explícitamente "sin tara" Y NO dice "ya incluye tara"
+            // 3. NO está editando Y NO dice "ya incluye tara" Y NO dice "con tara incluida"
+            $debeAgregarTara = false;
+            
+            if ($yaIncluyeTara) {
+                // Usuario dice "con tara incluida" - NO agregar tara
+                Log::info('✅ Usuario indicó que peso YA INCLUYE TARA - NO se agregará', [
+                    'ya_incluye_tara' => true
+                ]);
+                $debeAgregarTara = false;
+            } else if ($comandoExplicitoTara) {
+                // Comando explícito "suma tara" - agregar tara
+                Log::info('⚡ Comando explícito para agregar tara detectado');
+                $debeAgregarTara = true;
+            } else if (!$esEdicionCampo && $noIncluyeTara) {
+                // Mensaje dice "sin tara" o "+ tara" (sin que sea "con tara")
+                Log::info('🔧 Usuario indica que peso NO incluye tara - se agregará');
+                $debeAgregarTara = true;
+            } else if (!$esEdicionCampo) {
+                // Por defecto para nuevas rutas, agregar tara (comportamiento legacy)
+                // SOLO si NO dijo explícitamente "con tara"
+                Log::info('📦 Nueva ruta sin indicación de tara - se agregará por defecto');
+                $debeAgregarTara = true;
+            }
             
             if ($debeAgregarTara && !$yaIncluyeTara) {
                 // 🆕 FIX: Si se detectó patrón "peso X suma tara", usar ese peso específico
@@ -250,7 +291,7 @@ SI DETECTAS MÚLTIPLES RUTAS:
       "empaque": "cajas",
       "producto": "alimentos",
       "valor": 1000000,
-      "vehiculo": "turbo",
+      "vehiculo": "TURBO",
       "contenedor": "carga suelta",
       "incluye_tara": false
     },
@@ -262,7 +303,7 @@ SI DETECTAS MÚLTIPLES RUTAS:
       "empaque": "bultos",
       "producto": "textiles",
       "valor": 2000000,
-      "vehiculo": "tractocamión",
+      "vehiculo": "TRACTOCAMION",
       "contenedor": "contenedor 20 pies",
       "incluye_tara": true
     }
@@ -278,7 +319,7 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 5. empaque - Tipo de empaque (cajas, bultos, estibas, CONTENEDOR 20, CONTENEDOR 40)
 6. producto - Mercancía real a transportar
 7. valor - Valor declarado en COP
-8. vehiculo - Tipo de vehículo requerido (turbo, tractocamión, sencillo, etc.)
+8. vehiculo - Tipo de vehículo (NORMALIZADO: TURBO, SENCILLO, TRACTOCAMION, PATINETA, CAMIONETA, DOBLETROQUE). IMPORTANTE: "camión sencillo" = SENCILLO, "camión turbo" = TURBO
 9. contenedor - Tipo de contenedor o empaque especial
 10. incluye_tara - IMPORTANTE: true si dice "tara incluida", "con tara", "peso bruto"; false si dice "sin tara", "no incluye tara", "peso neto", o NO menciona nada de tara
 
@@ -607,10 +648,20 @@ EOT;
                     break;
                 
                 case 'empaque':
-                case 'vehiculo':
                     // Convertir a mayúsculas para estos campos críticos
                     $val = trim($value);
                     $normalized[$key] = mb_strtoupper($val, 'UTF-8');
+                    break;
+                
+                case 'vehiculo':
+                    // 🔧 FIX: Normalizar vehículo - "camión sencillo" → "SENCILLO"
+                    $val = mb_strtolower(trim($value), 'UTF-8');
+                    $vehiculoNormalizado = self::normalizeVehiculo($val);
+                    $normalized[$key] = $vehiculoNormalizado;
+                    Log::info('🚛 Vehículo normalizado en DataExtractionService', [
+                        'original' => $value,
+                        'normalizado' => $vehiculoNormalizado
+                    ]);
                     break;
                 
                 case 'incoterm':
@@ -823,5 +874,76 @@ EOT;
         ];
 
         return $prompts[$field] ?? "Información faltante: $field";
+    }
+
+    /**
+     * 🚛 Normalizar tipo de vehículo
+     * "camión sencillo" → "SENCILLO", "camión turbo" → "TURBO"
+     */
+    private static function normalizeVehiculo(string $vehiculo): string
+    {
+        $vehiculoLower = mb_strtolower(trim($vehiculo), 'UTF-8');
+        
+        // 🔧 Mapeo de combinaciones específicas (prioridad sobre simples)
+        $mapeoEspecifico = [
+            'camión sencillo' => 'SENCILLO',
+            'camion sencillo' => 'SENCILLO',
+            'carro sencillo' => 'SENCILLO',
+            'vehiculo sencillo' => 'SENCILLO',
+            'vehículo sencillo' => 'SENCILLO',
+            'camión turbo' => 'TURBO',
+            'camion turbo' => 'TURBO',
+            'carro turbo' => 'TURBO',
+            'vehiculo turbo' => 'TURBO',
+            'vehículo turbo' => 'TURBO',
+            'tracto camión' => 'TRACTOCAMION',
+            'tracto camion' => 'TRACTOCAMION',
+            'tractocamión' => 'TRACTOCAMION',
+            'tractocamion' => 'TRACTOCAMION',
+            'camión dobletroque' => 'DOBLETROQUE',
+            'camion dobletroque' => 'DOBLETROQUE',
+            'doble troque' => 'DOBLETROQUE',
+        ];
+        
+        // Verificar mapeo específico primero
+        foreach ($mapeoEspecifico as $patron => $resultado) {
+            if (strpos($vehiculoLower, $patron) !== false) {
+                return $resultado;
+            }
+        }
+        
+        // 🔧 Mapeo simple
+        $mapeoSimple = [
+            'sencillo' => 'SENCILLO',
+            'turbo' => 'TURBO',
+            'patineta' => 'PATINETA',
+            'camioneta' => 'CAMIONETA',
+            'dobletroque' => 'DOBLETROQUE',
+            'minimula' => 'MINIMULA',
+            'mini mula' => 'MINIMULA',
+            'tractomula' => 'TRACTOMULA',
+            'tracto mula' => 'TRACTOMULA',
+            'trailer' => 'TRACTOMULA',
+            'cuatro manos' => 'CUATRO MANOS',
+            'cuatromanos' => 'CUATRO MANOS',
+        ];
+        
+        // Verificar mapeo simple
+        foreach ($mapeoSimple as $patron => $resultado) {
+            if (strpos($vehiculoLower, $patron) !== false) {
+                return $resultado;
+            }
+        }
+        
+        // Si no matcheó nada, devolver en mayúsculas
+        // Pero quitar "camión" si está presente
+        $sinCamion = preg_replace('/cami[oó]n\s*/ui', '', $vehiculoLower);
+        $sinCamion = trim($sinCamion);
+        
+        if (!empty($sinCamion)) {
+            return mb_strtoupper($sinCamion, 'UTF-8');
+        }
+        
+        return mb_strtoupper($vehiculoLower, 'UTF-8');
     }
 }

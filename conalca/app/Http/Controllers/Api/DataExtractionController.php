@@ -303,45 +303,34 @@ class DataExtractionController extends Controller
                     'rutas' => $result['rutas'] ?? []
                 ]);
                 
-                // 🔧 FIX: Detectar si el mensaje original tiene "+ tara" o "más tara"
-                // Si es así, FORZAR la suma de tara independientemente de lo que diga la IA
-                $mensajeOriginal = strtolower($validated['message'] ?? '');
-                $forzarSumaTara = preg_match('/\+\s*tara|m[aá]s\s+tara|sin\s+tara|no\s+incluye\s+tara/ui', $mensajeOriginal);
+                // 🔧 FIX CRÍTICO: Cada ruta tiene su propio flag incluye_tara
+                // NO usar detección global - usar el flag de cada ruta individual
+                // La IA (DataExtractionService) ya analizó cada segmento y estableció el flag correctamente
                 
-                if ($forzarSumaTara) {
-                    Log::info('⚡ Detectado comando de tara en mensaje original - forzando suma', [
-                        'mensaje' => substr($mensajeOriginal, 0, 100)
-                    ]);
-                }
-                
-                // 🔧 FIX: Solo aplicar tara si NO está marcada como incluida
-                // MCPAssistantService ya suma la tara y marca incluye_tara = true
                 $rutasConTara = [];
                 foreach ($result['rutas'] ?? [] as $idx => $ruta) {
-                    // 🔧 FIX: Buscar peso en ambos campos posibles
                     $pesoBase = $ruta['peso'] ?? $ruta['peso_kg'] ?? 0;
-                    $incluyeTara = $ruta['incluye_tara'] ?? false;
+                    $incluyeTaraFlag = $ruta['incluye_tara'] ?? false;
                     
-                    // 🔧 FIX: Si el mensaje original tiene "+ tara", verificar si el peso parece NO tener tara
-                    // Un peso sin tara típicamente es múltiplo de 1000 (ej: 20000, 15000)
-                    // Un peso con tara tiene el +3400 (ej: 23400, 18400)
-                    $pesoPareceSinTara = $forzarSumaTara && is_numeric($pesoBase) && $pesoBase > 0 && ($pesoBase % 1000 == 0);
+                    // 🔴 LÓGICA SIMPLE Y CORRECTA:
+                    // - Si incluye_tara = true → el peso YA tiene tara, NO sumar
+                    // - Si incluye_tara = false → el peso NO tiene tara, SUMAR 3400
                     
-                    if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0) {
-                        // Sumar tara si: no tiene tara O (tiene flag pero el peso parece sin tara)
+                    if ($incluyeTaraFlag) {
+                        // El peso YA incluye tara - NO sumar nada
+                        $ruta['peso'] = $pesoBase;
+                        $ruta['peso_kg'] = $pesoBase;
+                        Log::info('✅ TARA YA INCLUIDA en ruta ' . ($idx + 1) . ', peso se mantiene: ' . $pesoBase . ' kg');
+                    } elseif (is_numeric($pesoBase) && $pesoBase > 0) {
+                        // El peso NO incluye tara - SUMAR 3400
                         $ruta['peso'] = $pesoBase + 3400;
                         $ruta['peso_kg'] = $pesoBase + 3400;
                         $ruta['incluye_tara'] = true;
-                        Log::info('🏋️ TARA aplicada para frontend en ruta ' . ($idx + 1), [
+                        Log::info('🏋️ TARA SUMADA en ruta ' . ($idx + 1), [
                             'peso_original' => $pesoBase,
                             'peso_con_tara' => $ruta['peso'],
-                            'razon' => $pesoPareceSinTara ? 'Forzado por mensaje original' : 'Flag incluye_tara=false'
+                            'razon' => 'Flag incluye_tara=false (usuario dijo "sin tara")'
                         ]);
-                    } else if ($incluyeTara && !$pesoPareceSinTara) {
-                        // Ya tiene tara y el peso parece correcto, solo sincronizar campos
-                        $ruta['peso'] = $pesoBase;
-                        $ruta['peso_kg'] = $pesoBase;
-                        Log::info('✅ TARA ya incluida en ruta ' . ($idx + 1) . ', peso: ' . $pesoBase . ' kg');
                     }
                     $rutasConTara[] = $ruta;
                 }

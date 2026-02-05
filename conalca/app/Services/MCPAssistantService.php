@@ -625,11 +625,39 @@ class MCPAssistantService
                     // Procesar tara si está mencionada
                     if ($peso) {
                         $mencionaTara = preg_match('/\btara\b/ui', $segmento);
-                        $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $segmento);
-                        // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
-                        $noIncluyeTara = preg_match('/(?:no\s+incluye|sin|\+|m[aá]s)\s*(?:la\s+)?tara/ui', $segmento);
                         
-                        if ($noIncluyeTara) {
+                        // 🆕 FIX CRÍTICO: Mejorar detección de "tara incluida" / "con tara incluida"
+                        // Patrones que indican que el peso YA INCLUYE la tara (NO agregar):
+                        // - "con tara incluida" / "con la tara incluida"
+                        // - "tara incluida" / "tara ya incluida"
+                        // - "con tara" (pero NO "sin tara")
+                        // - "peso bruto"
+                        // - "ya incluye tara" / "ya tiene tara"
+                        // - "kilogramos con tara" / "kg con tara"
+                        $incluyeTara = preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $segmento);
+                        
+                        // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
+                        // También "sin tara" y "no incluye tara"
+                        $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $segmento);
+                        
+                        Log::info('🔍 MCPAssistantService - Análisis de tara', [
+                            'segmento' => substr($segmento, 0, 100),
+                            'peso_extraido' => $peso,
+                            'menciona_tara' => (bool)$mencionaTara,
+                            'incluye_tara' => (bool)$incluyeTara,
+                            'no_incluye_tara' => (bool)$noIncluyeTara
+                        ]);
+                        
+                        if ($incluyeTara) {
+                            // El peso YA incluye la tara, NO sumar nada
+                            $datos['peso_mercancia'] = $peso;
+                            $datos['pesoMercancia'] = $peso;
+                            $datos['peso_kg'] = $peso;
+                            $datos['incluye_tara'] = true;
+                            Log::info('✅ MCPAssistantService - Tara YA incluida, peso se mantiene', [
+                                'peso' => $peso
+                            ]);
+                        } elseif ($noIncluyeTara) {
                             $taraEstandar = 3400;
                             $pesoConTara = $peso + $taraEstandar;
                             $datos['peso_mercancia'] = $pesoConTara;
@@ -638,9 +666,12 @@ class MCPAssistantService
                             $datos['peso_bruto'] = $peso;
                             $datos['tara'] = $taraEstandar;
                             $datos['incluye_tara'] = true;
-                        } elseif ($incluyeTara) {
-                            $datos['incluye_tara'] = true;
+                            Log::info('🏋️ MCPAssistantService - Tara agregada (sin tara)', [
+                                'peso_original' => $peso,
+                                'peso_con_tara' => $pesoConTara
+                            ]);
                         } elseif (!$mencionaTara) {
+                            // 🆕 FIX: Si NO menciona tara en absoluto, agregar tara por defecto
                             $taraCalculada = max(round($peso * 0.10), 3400);
                             $pesoConTara = $peso + $taraCalculada;
                             $datos['peso_mercancia'] = $pesoConTara;
@@ -649,6 +680,11 @@ class MCPAssistantService
                             $datos['peso_bruto'] = $peso;
                             $datos['tara'] = $taraCalculada;
                             $datos['incluye_tara'] = true;
+                            Log::info('📦 MCPAssistantService - Tara agregada por defecto', [
+                                'peso_original' => $peso,
+                                'tara_calculada' => $taraCalculada,
+                                'peso_con_tara' => $pesoConTara
+                            ]);
                         }
                     }
                     
@@ -759,13 +795,34 @@ class MCPAssistantService
             // 🔧 FIX: NO recalcular tara si estamos editando campos de una ruta existente
             $esEdicionCampo = !empty($previousExtractedData) && count($previousExtractedData) > 0;
             $mencionaTara = preg_match('/\btara\b/ui', $fullText);
-            $incluyeTara = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara/ui', $fullText);
+            
+            // 🆕 FIX CRÍTICO: Mejorar detección de "tara incluida" / "con tara incluida"
+            $incluyeTara = preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $fullText);
+            
             // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
             // Ejemplo: "20 toneladas + tara" = 20000 + 3400 = 23400 kg
-            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin|\+|m[aá]s)\s*(?:la\s+)?tara/ui', $fullText);
+            $noIncluyeTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $fullText);
             
-            // 🆕 CASO 1: Usuario dice "sin tara" o "no incluye tara" o "+ tara" → SUMAR TARA (3400 kg estándar)
-            if ($peso && $noIncluyeTara && !$esEdicionCampo) {
+            Log::info('🔍 MCPAssistantService - Análisis de tara global', [
+                'full_text_preview' => substr($fullText, 0, 150),
+                'peso_extraido' => $peso ?? null,
+                'menciona_tara' => (bool)$mencionaTara,
+                'incluye_tara' => (bool)$incluyeTara,
+                'no_incluye_tara' => (bool)$noIncluyeTara,
+                'es_edicion' => $esEdicionCampo
+            ]);
+            
+            // 🆕 CASO 1: Usuario dice que YA INCLUYE tara → NO SUMAR NADA
+            if ($peso && $incluyeTara && !$esEdicionCampo) {
+                $datosComunes['peso_mercancia'] = $peso;
+                $datosComunes['pesoMercancia'] = $peso;
+                $datosComunes['peso_kg'] = $peso;
+                $datosComunes['incluye_tara'] = true;
+                Log::info('✅ MCPAssistantService - Tara YA incluida en texto global - peso se mantiene', [
+                    'peso' => $peso
+                ]);
+            } elseif ($peso && $noIncluyeTara && !$esEdicionCampo) {
+                // CASO 2: Usuario dice "sin tara" o "no incluye tara" o "+ tara" → SUMAR TARA (3400 kg estándar)
                 $taraEstandar = 3400; // Tara estándar en kg
                 $pesoTotal = $peso + $taraEstandar;
                 
@@ -777,15 +834,11 @@ class MCPAssistantService
                 $datosComunes['tara'] = $taraEstandar;
                 $datosComunes['incluye_tara'] = true;
                 
-                Log::info('⚖️ Usuario indicó "sin tara" o "+ tara" - Tara estándar sumada', [
+                Log::info('🏋️ MCPAssistantService - Usuario indicó "sin tara" - Tara estándar sumada', [
                     'peso_original_sin_tara' => $peso,
                     'tara_agregada' => $taraEstandar,
                     'peso_total_con_tara' => $pesoTotal
                 ]);
-            } elseif ($peso && $incluyeTara && !$esEdicionCampo) {
-                // CASO 2: Usuario dice "incluye tara" → NO sumar nada
-                $datosComunes['incluye_tara'] = true;
-                Log::info('✅ Usuario indicó "incluye tara" - no se agregará tara adicional');
             } elseif ($peso && !$mencionaTara && !$esEdicionCampo) {
                 // CASO 3: NO menciona tara → Calcular tara automática (10% del peso, mínimo 3400 kg)
                 // 🔧 SOLO si NO es edición de campo
@@ -800,7 +853,7 @@ class MCPAssistantService
                 $datosComunes['tara'] = $taraCalculada;
                 $datosComunes['incluye_tara'] = true;
                 
-                Log::info('⚖️ Tara calculada automáticamente (no mencionó tara)', [
+                Log::info('📦 MCPAssistantService - Tara calculada automáticamente (no mencionó tara)', [
                     'peso_original' => $peso,
                     'tara_calculada' => $taraCalculada,
                     'peso_total_con_tara' => $pesoTotal
@@ -2452,9 +2505,8 @@ class MCPAssistantService
                 if (isset($extractedData['peso_kg']) && !$yaConTara) {
                     $pesoAnterior = floatval(str_replace(',', '', (string)$extractedData['peso_kg']));
                     
-                    // 🔧 FIX: Verificar si el peso ya tiene tara sumada (heurística: peso > 3400)
-                    // Si peso < 3400, definitivamente no tiene tara. Si peso >= 3400, verificar si ya parece tener tara
-                    $pareceYaTenerTara = ($pesoAnterior >= 3400 && preg_match('/incluye|con\s+tara|ya.*tara/ui', $lastUserMessage));
+                    // 🔧 REGEX MEJORADO: Detectar si el peso ya tiene tara incluida
+                    $pareceYaTenerTara = ($pesoAnterior >= 3400 && preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $lastUserMessage));
                     
                     if (!$pareceYaTenerTara) {
                         $extractedData['peso_kg'] = $pesoAnterior + 3400;
@@ -3521,10 +3573,21 @@ class MCPAssistantService
                     // Los campos planos son solo para ruta única
                     $isMultiRoute = count($newRoutes) >= 2 || count($existingRoutes) >= 2;
                     
-                    // Merge: nuevas rutas SOBRESCRIBEN rutas existentes con mismo índice
+                    // 🔧 Merge inteligente: PRESERVAR campos importantes como incluye_tara
                     $mergedRoutes = $existingRoutes; // Empezar con rutas existentes
                     foreach ($newRoutes as $idx => $routeData) {
-                        $mergedRoutes[$idx] = $routeData; // Sobrescribir/agregar
+                        if (isset($mergedRoutes[$idx]) && is_array($mergedRoutes[$idx])) {
+                            // 🔴 CRÍTICO: Preservar incluye_tara si ya existe y es true
+                            $existingRoute = $mergedRoutes[$idx];
+                            if (isset($existingRoute['incluye_tara']) && $existingRoute['incluye_tara'] === true) {
+                                $routeData['incluye_tara'] = true;
+                                Log::info('✅ Preservando incluye_tara=true en merge de rutas', ['ruta' => $idx]);
+                            }
+                            // Merge: existente + nuevo (nuevo tiene prioridad excepto incluye_tara)
+                            $mergedRoutes[$idx] = array_merge($existingRoute, $routeData);
+                        } else {
+                            $mergedRoutes[$idx] = $routeData; // Nueva ruta
+                        }
                     }
                     
                     // Merge: campos planos SOLO si es ruta única
@@ -3803,61 +3866,125 @@ class MCPAssistantService
             // OpenAI extrae el peso del mensaje del usuario sin aplicar tara
             // Debemos interceptar y aplicar la tara aquí
             if ($functionName === 'create_cotizacion' && isset($arguments['peso_mercancia'])) {
-                // Obtener el mensaje original del usuario para:
-                // 1. Re-extraer el peso correctamente (OpenAI convierte "12.400" a "12.4" incorrectamente)
-                // 2. Detectar si menciona tara
-                $lastUserMsg = '';
-                if (isset($session)) {
-                    $lastMsg = ConversationMessage::where('session_id', $session->id)
-                        ->where('role', 'user')
-                        ->orderBy('timestamp', 'desc')
-                        ->first();
-                    $lastUserMsg = $lastMsg->content ?? '';
+                // 🔧 FIX CRÍTICO: Verificar PRIMERO si ya tenemos datos extraídos con peso_kg
+                // El peso_kg en extractedData YA tiene la tara calculada correctamente
+                $taraYaDecidida = false;
+                $taraYaIncluidaEnDatos = false;
+                $pesoConTaraYaCalculado = null;
+                
+                // Verificar en extractedData si ya se decidió sobre la tara
+                if (!empty($extractedData)) {
+                    $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
+                    if ($isMultiRoute) {
+                        // Para múltiples rutas, verificar la ruta correspondiente
+                        foreach ($extractedData as $idx => $ruta) {
+                            if (isset($ruta['incluye_tara'])) {
+                                $taraYaDecidida = true;
+                                $taraYaIncluidaEnDatos = $ruta['incluye_tara'] === true;
+                                // 🆕 FIX: Obtener el peso_kg que ya tiene la tara calculada
+                                $pesoConTaraYaCalculado = $ruta['peso_kg'] ?? $ruta['peso'] ?? null;
+                                Log::info('✅ Tara YA DECIDIDA en extractedData (multi-ruta)', [
+                                    'ruta' => $idx,
+                                    'incluye_tara' => $taraYaIncluidaEnDatos,
+                                    'peso_kg_con_tara' => $pesoConTaraYaCalculado
+                                ]);
+                                break;
+                            }
+                        }
+                    } else {
+                        if (isset($extractedData['incluye_tara'])) {
+                            $taraYaDecidida = true;
+                            $taraYaIncluidaEnDatos = $extractedData['incluye_tara'] === true;
+                            // 🆕 FIX: Obtener el peso_kg que ya tiene la tara calculada
+                            $pesoConTaraYaCalculado = $extractedData['peso_kg'] ?? $extractedData['peso'] ?? null;
+                            Log::info('✅ Tara YA DECIDIDA en extractedData (ruta única)', [
+                                'incluye_tara' => $taraYaIncluidaEnDatos,
+                                'peso_kg_con_tara' => $pesoConTaraYaCalculado
+                            ]);
+                        }
+                    }
                 }
                 
-                // 🆕 FIX CRÍTICO: Re-extraer peso del mensaje original del usuario
-                // Porque OpenAI convierte "12.400" (español: 12400) a "12.4" (decimal) incorrectamente
-                $pesoExtraidoDelMensaje = self::extractPeso($lastUserMsg);
-                $pesoDeOpenAI = self::normalizeWeight($arguments['peso_mercancia']);
-                
-                // Usar el peso extraído del mensaje si es mayor que el de OpenAI
-                // Esto detecta cuando OpenAI interpretó mal un número con punto de miles
-                if ($pesoExtraidoDelMensaje !== null && $pesoExtraidoDelMensaje > $pesoDeOpenAI * 100) {
-                    $pesoOriginal = $pesoExtraidoDelMensaje;
-                    Log::info('🔧 Peso re-extraído del mensaje original (OpenAI interpretó mal formato español)', [
-                        'peso_openai_mal' => $pesoDeOpenAI,
-                        'peso_extraido_correcto' => $pesoExtraidoDelMensaje,
-                        'mensaje' => substr($lastUserMsg, 0, 200)
+                // Si ya se decidió sobre la tara, usar el peso que YA tiene la tara calculada
+                if ($taraYaDecidida && $taraYaIncluidaEnDatos && $pesoConTaraYaCalculado) {
+                    // 🆕 FIX CRÍTICO: Usar el peso_kg de extractedData que YA tiene la tara sumada
+                    // NO usar el peso de OpenAI porque OpenAI envía el peso sin tara
+                    $arguments['peso_mercancia'] = (string) intval($pesoConTaraYaCalculado);
+                    Log::info('✅ TARA ya incluida según extractedData - usando peso_kg calculado', [
+                        'peso_openai_sin_tara' => $arguments['peso_mercancia'] ?? 'N/A',
+                        'peso_extractedData_con_tara' => $pesoConTaraYaCalculado
                     ]);
                 } else {
-                    $pesoOriginal = $pesoDeOpenAI;
-                }
-                
-                // Detectar si el usuario indicó que la tara YA está incluida
-                $lastUserMsgLower = strtolower($lastUserMsg);
-                $taraYaIncluida = preg_match('/(?:ya\s+)?(?:incluye|tiene|con)\s+(?:la\s+)?tara|tara\s+incluida|peso\s+bruto/ui', $lastUserMsgLower);
-                
-                // Detectar si el usuario dice "sin tara" - significa que debemos AGREGAR la tara
-                $sinTara = preg_match('/sin\s+tara/ui', $lastUserMsgLower);
-                
-                // Si dice "sin tara" O no menciona tara en absoluto, agregar 3400 kg
-                if (($sinTara || !$taraYaIncluida) && $pesoOriginal > 0) {
-                    $pesoConTara = $pesoOriginal + 3400;
-                    $arguments['peso_mercancia'] = (string) $pesoConTara;
-                    Log::info('🏋️ TARA aplicada en create_cotizacion', [
-                        'peso_original' => $pesoOriginal,
-                        'tara' => 3400,
-                        'peso_con_tara' => $pesoConTara,
+                    // Buscar en TODOS los mensajes del usuario para detectar "con tara incluida"
+                    $allUserMsgs = '';
+                    if (isset($session)) {
+                        $allUserMessages = ConversationMessage::where('session_id', $session->id)
+                            ->where('role', 'user')
+                            ->orderBy('timestamp', 'asc')
+                            ->get();
+                        foreach ($allUserMessages as $msg) {
+                            $allUserMsgs .= ' ' . ($msg->content ?? '');
+                        }
+                    }
+                    
+                    // 🆕 FIX CRÍTICO: Re-extraer peso del mensaje original del usuario
+                    // Porque OpenAI convierte "12.400" (español: 12400) a "12.4" (decimal) incorrectamente
+                    $pesoExtraidoDelMensaje = self::extractPeso($allUserMsgs);
+                    $pesoDeOpenAI = self::normalizeWeight($arguments['peso_mercancia']);
+                    
+                    // Usar el peso extraído del mensaje si es mayor que el de OpenAI
+                    if ($pesoExtraidoDelMensaje !== null && $pesoExtraidoDelMensaje > $pesoDeOpenAI * 100) {
+                        $pesoOriginal = $pesoExtraidoDelMensaje;
+                        Log::info('🔧 Peso re-extraído del mensaje original (OpenAI interpretó mal formato español)', [
+                            'peso_openai_mal' => $pesoDeOpenAI,
+                            'peso_extraido_correcto' => $pesoExtraidoDelMensaje
+                        ]);
+                    } else {
+                        $pesoOriginal = $pesoDeOpenAI;
+                    }
+                    
+                    // 🔧 FIX CRÍTICO: Detectar "sin tara" PRIMERO (tiene MAYOR prioridad)
+                    // Si dice "sin tara", SIEMPRE sumar tara, no importa otros patrones
+                    $sinTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $allUserMsgs);
+                    
+                    // 🔧 REGEX para detectar "con tara incluida" (SOLO si NO dice "sin tara")
+                    $taraYaIncluida = !$sinTara && preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $allUserMsgs);
+                    
+                    Log::info('🔍 Análisis de tara en create_cotizacion', [
                         'sin_tara_detectado' => (bool) $sinTara,
-                        'razon' => $sinTara ? 'usuario dijo "sin tara"' : 'no mencionó tara incluida'
+                        'tara_ya_incluida_detectado' => (bool) $taraYaIncluida,
+                        'peso_original' => $pesoOriginal,
+                        'mensaje_preview' => substr($allUserMsgs, 0, 150)
                     ]);
-                } else {
-                    // Asegurar que el peso se actualiza con el valor correcto
-                    $arguments['peso_mercancia'] = (string) $pesoOriginal;
-                    Log::info('✅ TARA ya incluida, peso se mantiene', [
-                        'peso' => $pesoOriginal,
-                        'tara_ya_incluida' => (bool) $taraYaIncluida
-                    ]);
+                    
+                    // 🔧 PRIORIDAD CORREGIDA: "sin tara" tiene prioridad sobre "con tara incluida"
+                    if ($sinTara) {
+                        // Si dice "sin tara", SUMAR tara (3400 kg)
+                        $pesoConTara = $pesoOriginal + 3400;
+                        $arguments['peso_mercancia'] = (string) $pesoConTara;
+                        Log::info('🏋️ TARA aplicada en create_cotizacion (detectado "sin tara")', [
+                            'peso_original' => $pesoOriginal,
+                            'tara' => 3400,
+                            'peso_con_tara' => $pesoConTara
+                        ]);
+                    } elseif ($taraYaIncluida) {
+                        // Si dice "con tara incluida", NO agregar
+                        $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                        Log::info('✅ TARA ya incluida (detectada "con tara incluida"), peso se mantiene', [
+                            'peso' => $pesoOriginal
+                        ]);
+                    } elseif (!preg_match('/\btara\b/ui', $allUserMsgs)) {
+                        // Si NO menciona tara en absoluto, agregar 3400 kg por defecto
+                        $pesoConTara = $pesoOriginal + 3400;
+                        $arguments['peso_mercancia'] = (string) $pesoConTara;
+                        Log::info('🏋️ TARA aplicada en create_cotizacion (no mencionó tara)', [
+                            'peso_original' => $pesoOriginal,
+                            'tara' => 3400,
+                            'peso_con_tara' => $pesoConTara
+                        ]);
+                    } else {
+                        $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                    }
                 }
             }
 
@@ -4104,23 +4231,49 @@ class MCPAssistantService
                 $isExistingMultiRoute = isset($existingGroupData[0]) && is_array($existingGroupData[0]);
                 
                 if ($isNewMultiRoute) {
-                    // Las nuevas rutas REEMPLAZAN las existentes
-                    // Pero conservamos campos no-rutas del existente (producto_codigo, etc.)
+                    // Las nuevas rutas ACTUALIZAN las existentes (merge por ruta)
+                    // Pero conservamos campos importantes como incluye_tara
                     $mergedGroupData = [];
                     
-                    // Primero, copiar las NUEVAS rutas
-                    foreach ($dataToSave as $key => $value) {
-                        $mergedGroupData[$key] = $value;
+                    // Primero, copiar las rutas EXISTENTES como base
+                    foreach ($existingGroupData as $key => $value) {
+                        if (is_numeric($key)) {
+                            $mergedGroupData[$key] = $value;
+                        }
                     }
                     
-                    // Luego, copiar campos NO numéricos del existente que no estén en el nuevo
+                    // Luego, MERGEAR las nuevas rutas sobre las existentes
+                    // Esto preserva campos como incluye_tara si no vienen en la nueva
+                    foreach ($dataToSave as $key => $value) {
+                        if (is_numeric($key) && is_array($value)) {
+                            if (isset($mergedGroupData[$key]) && is_array($mergedGroupData[$key])) {
+                                // 🔧 MERGE: campos existentes + nuevos (nuevos tienen prioridad EXCEPTO incluye_tara)
+                                $existingRoute = $mergedGroupData[$key];
+                                $newRoute = $value;
+                                
+                                // 🔴 CRÍTICO: Preservar incluye_tara si ya existe y es true
+                                if (isset($existingRoute['incluye_tara']) && $existingRoute['incluye_tara'] === true) {
+                                    $newRoute['incluye_tara'] = true;
+                                    Log::info('✅ Preservando incluye_tara=true de ruta existente', ['ruta' => $key]);
+                                }
+                                
+                                $mergedGroupData[$key] = array_merge($existingRoute, $newRoute);
+                            } else {
+                                $mergedGroupData[$key] = $value;
+                            }
+                        } else {
+                            $mergedGroupData[$key] = $value;
+                        }
+                    }
+                    
+                    // Copiar campos NO numéricos del existente que no estén en el nuevo
                     foreach ($existingGroupData as $key => $value) {
                         if (!is_numeric($key) && !isset($mergedGroupData[$key])) {
                             $mergedGroupData[$key] = $value;
                         }
                     }
                     
-                    Log::info('🔄 Multi-ruta: REEMPLAZANDO rutas existentes', [
+                    Log::info('🔄 Multi-ruta: MERGEANDO rutas (preservando incluye_tara)', [
                         'rutas_nuevas' => count(array_filter(array_keys($dataToSave), 'is_numeric')),
                         'rutas_finales' => count(array_filter(array_keys($mergedGroupData), 'is_numeric'))
                     ]);
@@ -4413,19 +4566,19 @@ class MCPAssistantService
                         }
                         
                         // 🔧 FIX CRÍTICO: Usar normalizeWeight() y aplicar TARA si corresponde
+                        // 🆕 PERO verificar si el usuario ya indicó que incluye tara
                         if (isset($extractedFields['peso_kg'])) {
                             $pesoOriginal = self::normalizeWeight($extractedFields['peso_kg']);
                             
-                            // Solo aplicar si el peso es razonable y no parece ya tener tara
-                            if ($pesoOriginal > 0 && $pesoOriginal < 100000) {
-                                $pesoConTara = $pesoOriginal + 3400;
-                                $extractedFields['peso_kg'] = $pesoConTara;
-                                $extractedFields['incluye_tara'] = true;
-                                Log::info('🏋️ TARA aplicada en extractQuoteData (fallback)', [
-                                    'peso_original' => $pesoOriginal,
-                                    'peso_con_tara' => $pesoConTara
-                                ]);
-                            }
+                            // 🔧 Verificar si ya incluye tara en el contexto (mensaje original)
+                            // Necesitamos acceso al mensaje original - usar variable estática o buscar en contexto
+                            // Por ahora, NO aplicar tara automática aquí ya que se aplica en otros lugares
+                            // Solo normalizar el peso
+                            $extractedFields['peso_kg'] = $pesoOriginal;
+                            Log::info('📊 Peso normalizado en extractQuoteData (fallback) - SIN tara automática', [
+                                'peso' => $pesoOriginal,
+                                'nota' => 'La tara se aplica en processToolCalls si corresponde'
+                            ]);
                         }
                         
                         Log::info('📊 Datos extraídos de argumentos de create_cotizacion (fallback)', [
@@ -5241,14 +5394,27 @@ class MCPAssistantService
         // 🔧 FIX CRÍTICO: Usar extractPeso() para manejar formato español (12.400 = 12400)
         $pesoExtraido = self::extractPeso($texto);
         if ($pesoExtraido) {
-            // Detectar si dice "sin tara" y aplicar
-            if (preg_match('/sin\s+tara/ui', $texto)) {
+            // 🔧 REGEX MEJORADO: Detectar si ya incluye tara
+            $taraYaIncluida = preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $texto);
+            $sinTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $texto);
+            
+            // 🔧 PRIORIDAD: "con tara incluida" > "sin tara" > sin mención
+            if ($taraYaIncluida) {
+                // El peso YA INCLUYE tara, NO sumar nada
+                $modificaciones['peso_kg'] = $pesoExtraido;
+                Log::info('✅ TARA YA INCLUIDA en modificación - peso se mantiene', [
+                    'peso' => $pesoExtraido
+                ]);
+            } elseif ($sinTara) {
+                // El peso NO incluye tara, SUMAR 3400
                 $modificaciones['peso_kg'] = $pesoExtraido + 3400;
-                Log::info('⚖️ TARA aplicada en modificación', [
+                Log::info('⚖️ TARA APLICADA en modificación (sin tara detectado)', [
                     'peso_original' => $pesoExtraido,
                     'peso_con_tara' => $modificaciones['peso_kg']
                 ]);
             } else {
+                // No menciona tara - mantener el peso sin modificar aquí
+                // (la tara se aplica en otros lugares si es necesario)
                 $modificaciones['peso_kg'] = $pesoExtraido;
             }
         }
@@ -7542,11 +7708,14 @@ class MCPAssistantService
         $noIncluyeTaraPatterns = [
             'no incluye tara', 'no incluye la tara', 'sin tara', 'peso neto',
             'el peso no incluye tara', 'el peso no incluye la tara', 
-            'peso no incluye tara', 'peso no incluye la tara'
+            'peso no incluye tara', 'peso no incluye la tara',
+            'más tara', 'mas tara', '+ tara'
         ];
-        // Detectar "ya incluye tara", "con tara", "peso bruto", etc.
+        // 🔧 MEJORADO: Detectar "ya incluye tara", "con tara incluida", "kilogramos con tara", etc.
         $yaIncluyeTaraPatterns = [
             'ya incluye tara', 'ya incluye la tara', 'incluye la tara',
+            'con tara incluida', 'con la tara incluida', 'tara ya incluida',
+            'kilogramos con tara', 'kilos con tara', 'kg con tara',
             'con tara', 'peso con tara', 'peso bruto', 'tara incluida',
             'el peso ya incluye la tara', 'el peso ya incluye tara',
             'peso ya incluye la tara', 'peso ya incluye tara'
@@ -9357,18 +9526,94 @@ class MCPAssistantService
             return 'TRACTOMULA';
         }
     }
+
+    /**
+     * 🚛 NORMALIZAR TIPO DE VEHÍCULO
+     * "camión sencillo" → "SENCILLO", "camión turbo" → "TURBO"
+     */
+    private static function normalizeVehiculo($vehiculo)
+    {
+        if (empty($vehiculo)) return null;
+        
+        $vehiculoLower = mb_strtolower(trim($vehiculo), 'UTF-8');
+        
+        // Mapeo de combinaciones específicas (prioridad)
+        $mapeoEspecifico = [
+            'camión sencillo' => 'SENCILLO',
+            'camion sencillo' => 'SENCILLO',
+            'carro sencillo' => 'SENCILLO',
+            'vehiculo sencillo' => 'SENCILLO',
+            'vehículo sencillo' => 'SENCILLO',
+            'camión turbo' => 'TURBO',
+            'camion turbo' => 'TURBO',
+            'carro turbo' => 'TURBO',
+            'vehiculo turbo' => 'TURBO',
+            'vehículo turbo' => 'TURBO',
+            'tracto camión' => 'TRACTOCAMION',
+            'tracto camion' => 'TRACTOCAMION',
+            'tractocamión' => 'TRACTOCAMION',
+            'tractocamion' => 'TRACTOCAMION',
+            'camión dobletroque' => 'DOBLETROQUE',
+            'camion dobletroque' => 'DOBLETROQUE',
+            'doble troque' => 'DOBLETROQUE',
+        ];
+        
+        foreach ($mapeoEspecifico as $patron => $resultado) {
+            if (strpos($vehiculoLower, $patron) !== false) {
+                return $resultado;
+            }
+        }
+        
+        // Mapeo simple
+        $mapeoSimple = [
+            'sencillo' => 'SENCILLO',
+            'turbo' => 'TURBO',
+            'patineta' => 'PATINETA',
+            'camioneta' => 'CAMIONETA',
+            'dobletroque' => 'DOBLETROQUE',
+            'minimula' => 'MINIMULA',
+            'tractomula' => 'TRACTOMULA',
+            'trailer' => 'TRACTOMULA',
+            'cuatro manos' => 'CUATRO MANOS',
+        ];
+        
+        foreach ($mapeoSimple as $patron => $resultado) {
+            if (strpos($vehiculoLower, $patron) !== false) {
+                return $resultado;
+            }
+        }
+        
+        // Si no matcheó, quitar "camión" y devolver en mayúsculas
+        $sinCamion = preg_replace('/cami[oó]n\s*/ui', '', $vehiculoLower);
+        $sinCamion = trim($sinCamion);
+        
+        return !empty($sinCamion) ? mb_strtoupper($sinCamion, 'UTF-8') : mb_strtoupper($vehiculoLower, 'UTF-8');
+    }
     
     /**
      * 🚛 EXTRAER VEHÍCULO EXPLÍCITO DEL TEXTO
      */
     private static function extractVehiculo($text)
     {
-        // Lista de vehículos válidos
+        // 🔧 FIX: Lista de vehículos válidos - ORDEN IMPORTANTE
+        // Las combinaciones más específicas PRIMERO para que tengan prioridad
         $vehiculos = [
+            // 🆕 Combinaciones específicas PRIMERO (tienen prioridad)
+            'camión sencillo' => 'SENCILLO',
+            'camion sencillo' => 'SENCILLO',
+            'carro sencillo' => 'SENCILLO',
+            'vehiculo sencillo' => 'SENCILLO',
+            'camión turbo' => 'TURBO',
+            'camion turbo' => 'TURBO',
+            'carro turbo' => 'TURBO',
+            'vehiculo turbo' => 'TURBO',
+            'tracto camión' => 'TRACTOCAMION',
+            'tracto camion' => 'TRACTOCAMION',
+            'tractocamión' => 'TRACTOCAMION',
+            'tractocamion' => 'TRACTOCAMION',
+            // Vehículos simples
             'patineta' => 'PATINETA',
             'camioneta' => 'CAMIONETA',
-            'camión' => 'CAMION',
-            'camion' => 'CAMION',
             'sencillo' => 'SENCILLO',
             'turbo' => 'TURBO',
             'dobletroque' => 'DOBLETROQUE',
@@ -9380,6 +9625,9 @@ class MCPAssistantService
             'trailer' => 'TRACTOMULA',
             'cuatro manos' => 'CUATRO MANOS',
             'cuatromanos' => 'CUATRO MANOS',
+            // 🔧 "camión" solo al FINAL - si ningún otro matcheó, usar CAMION genérico
+            'camión' => 'CAMION',
+            'camion' => 'CAMION',
         ];
         
         $lowerText = mb_strtolower($text);

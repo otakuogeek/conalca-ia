@@ -9,6 +9,7 @@
  * 3. Taras de contenedores (20'=2300kg, 40'/45'=3400kg)
  * 4. Detección de operación de exportación
  * 5. Contenedores con pesos diferentes = rutas separadas
+ * 6. Detección de "con tara incluida" vs "sin tara"
  */
 
 // =====================================
@@ -50,6 +51,31 @@ const getContainerTara = (embalaje) => {
 const isExportOperation = (operationType) => {
   const opType = (operationType || '').toLowerCase();
   return opType.includes('export') || opType === 'exportacion' || opType === 'exportación';
+};
+
+// 🆕 Helper para detectar si el peso ya incluye tara (desde el mensaje del usuario)
+const detectTaraInMessage = (message) => {
+  const msg = (message || '').toLowerCase();
+  
+  // Patrones que indican que YA INCLUYE tara (NO agregar)
+  const yaIncluyeTaraRegex = /(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|ya\s+(?:incluye|tiene)\s+(?:la\s+)?tara|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/i;
+  const yaIncluyeTara = yaIncluyeTaraRegex.test(msg);
+  
+  // Patrones que indican que NO incluye tara (agregar)
+  const noIncluyeTaraRegex = /(?:no\s+incluye|sin)\s+(?:la\s+)?tara|peso\s+neto|el\s+peso\s+no\s+incluye|\+\s*tara|m[aá]s\s+tara/i;
+  const noIncluyeTara = noIncluyeTaraRegex.test(msg);
+  
+  // Comando explícito para agregar tara
+  const agregarTaraExplicitoRegex = /(?:agrega|añade|suma|pon|incluye|incluir|agregar|sumar|ponga)\s+(?:la\s+)?tara/i;
+  const agregarTaraExplicito = agregarTaraExplicitoRegex.test(msg);
+  
+  return {
+    yaIncluyeTara,
+    noIncluyeTara,
+    agregarTaraExplicito,
+    // Decisión: agregar tara solo si NO ya incluye Y (no incluye O es comando explícito)
+    debeAgregarTara: !yaIncluyeTara && (noIncluyeTara || agregarTaraExplicito)
+  };
 };
 
 // Simulación de buildRouteFinancials
@@ -378,6 +404,84 @@ log.info(`💾 TOTAL SISTEMA INTERNO: $${totalInterno.toLocaleString()}`);
 // El cliente ve la suma de valores unitarios
 // El sistema guarda el total real (cantidad × valor)
 
+// --------------------------------------
+// TEST 10: Detección de "con tara incluida" en mensaje
+// --------------------------------------
+log.header();
+log.title('TEST 10: Detección de "con tara incluida" vs "sin tara"');
+
+const testCasesTara = [
+  // Casos donde YA INCLUYE tara (NO agregar)
+  { msg: '21.000 kilogramos con tara incluida', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  { msg: 'son 15000 kg con tara', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  { msg: 'el peso es con tara incluida', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  { msg: 'peso bruto de 20 toneladas', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  { msg: 'ya incluye la tara', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  { msg: 'tara incluida en el peso', esperado: { yaIncluyeTara: true, debeAgregarTara: false } },
+  
+  // Casos donde NO incluye tara (agregar)
+  { msg: '3.800 kilogramos sin tara', esperado: { noIncluyeTara: true, debeAgregarTara: true } },
+  { msg: 'peso neto 5000 kg', esperado: { noIncluyeTara: true, debeAgregarTara: true } },
+  { msg: 'el peso no incluye tara', esperado: { noIncluyeTara: true, debeAgregarTara: true } },
+  { msg: '20000 kg + tara', esperado: { noIncluyeTara: true, debeAgregarTara: true } },
+  { msg: 'más tara por favor', esperado: { noIncluyeTara: true, debeAgregarTara: true } },
+  
+  // Casos con comando explícito para agregar tara
+  { msg: 'agrega la tara al peso', esperado: { agregarTaraExplicito: true, debeAgregarTara: true } },
+  { msg: 'suma tara al peso de 15000', esperado: { agregarTaraExplicito: true, debeAgregarTara: true } },
+  { msg: 'incluye tara por favor', esperado: { agregarTaraExplicito: true, debeAgregarTara: true } },
+];
+
+testCasesTara.forEach((testCase, index) => {
+  const result = detectTaraInMessage(testCase.msg);
+  
+  if (testCase.esperado.yaIncluyeTara !== undefined) {
+    assertEqual(
+      result.yaIncluyeTara, 
+      testCase.esperado.yaIncluyeTara, 
+      `"${testCase.msg}" -> yaIncluyeTara=${testCase.esperado.yaIncluyeTara}`
+    );
+  }
+  
+  if (testCase.esperado.noIncluyeTara !== undefined) {
+    assertEqual(
+      result.noIncluyeTara, 
+      testCase.esperado.noIncluyeTara, 
+      `"${testCase.msg}" -> noIncluyeTara=${testCase.esperado.noIncluyeTara}`
+    );
+  }
+  
+  if (testCase.esperado.agregarTaraExplicito !== undefined) {
+    assertEqual(
+      result.agregarTaraExplicito, 
+      testCase.esperado.agregarTaraExplicito, 
+      `"${testCase.msg}" -> agregarTaraExplicito=${testCase.esperado.agregarTaraExplicito}`
+    );
+  }
+  
+  assertEqual(
+    result.debeAgregarTara, 
+    testCase.esperado.debeAgregarTara, 
+    `"${testCase.msg}" -> debeAgregarTara=${testCase.esperado.debeAgregarTara}`
+  );
+});
+
+// --------------------------------------
+// TEST 11: Caso específico del usuario
+// --------------------------------------
+log.header();
+log.title('TEST 11: Caso específico del usuario');
+
+log.info('Prompt: "21.000 kilogramos con tara incluida"');
+log.info('Esperado: El peso debe ser 21.000 kg (NO agregar 3.400 kg)');
+
+const resultCasoUsuario = detectTaraInMessage('21.000 kilogramos con tara incluida');
+assertEqual(resultCasoUsuario.yaIncluyeTara, true, 'Detecta "con tara incluida"');
+assertEqual(resultCasoUsuario.debeAgregarTara, false, 'NO debe agregar tara');
+
+log.info('✅ El sistema ahora respeta cuando el usuario dice "con tara incluida"');
+log.info('   El peso de 21.000 kg se mantendrá sin agregar los 3.400 kg de tara');
+
 // =====================================
 // RESUMEN
 // =====================================
@@ -403,6 +507,8 @@ ${colors.cyan}${colors.bold}REGLAS DE NEGOCIO VALIDADAS:${colors.reset}
   5. ✓ Tara contenedor 40'/45': 3,400 kg
   6. ✓ Detección de operación de exportación
   7. ✓ Notas aclaratorias para retiro en Bogotá/Medellín/Cali
+  8. ✓ Detección de "con tara incluida" (NO agregar tara)
+  9. ✓ Detección de "sin tara" (agregar tara)
 
 `);
 
