@@ -314,7 +314,8 @@ class DataExtractionController extends Controller
                     
                     // 🔴 LÓGICA SIMPLE Y CORRECTA:
                     // - Si incluye_tara = true → el peso YA tiene tara, NO sumar
-                    // - Si incluye_tara = false → el peso NO tiene tara, SUMAR 3400
+                    // - Si incluye_tara = false → el peso NO tiene tara, SUMAR tara según contenedor
+                    // 🔧 FIX: Contenedor 20 pies = 2300 kg, otros = 3400 kg
                     
                     if ($incluyeTaraFlag) {
                         // El peso YA incluye tara - NO sumar nada
@@ -322,13 +323,33 @@ class DataExtractionController extends Controller
                         $ruta['peso_kg'] = $pesoBase;
                         Log::info('✅ TARA YA INCLUIDA en ruta ' . ($idx + 1) . ', peso se mantiene: ' . $pesoBase . ' kg');
                     } elseif (is_numeric($pesoBase) && $pesoBase > 0) {
-                        // El peso NO incluye tara - SUMAR 3400
-                        $ruta['peso'] = $pesoBase + 3400;
-                        $ruta['peso_kg'] = $pesoBase + 3400;
+                        // 🔧 FIX CRÍTICO: Determinar tara según tamaño de contenedor
+                        // Contenedor de 20 pies = 2300 kg, otros = 3400 kg
+                        $taraRuta = 3400; // Default
+                        
+                        // Verificar tamano_contenedor en los datos
+                        if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
+                            $taraRuta = 2300;
+                        }
+                        // Si no hay tamano_contenedor, buscar en empaque o contenedor
+                        elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
+                            $taraRuta = 2300;
+                        }
+                        elseif (isset($ruta['contenedor']) && preg_match('/\d+[xX]20/i', $ruta['contenedor'])) {
+                            $taraRuta = 2300;
+                        }
+                        
+                        // El peso NO incluye tara - SUMAR tara calculada
+                        $ruta['peso'] = $pesoBase + $taraRuta;
+                        $ruta['peso_kg'] = $pesoBase + $taraRuta;
+                        $ruta['tara'] = $taraRuta;
                         $ruta['incluye_tara'] = true;
                         Log::info('🏋️ TARA SUMADA en ruta ' . ($idx + 1), [
                             'peso_original' => $pesoBase,
+                            'tara_aplicada' => $taraRuta,
                             'peso_con_tara' => $ruta['peso'],
+                            'empaque' => $ruta['empaque'] ?? 'N/A',
+                            'contenedor' => $ruta['contenedor'] ?? 'N/A',
                             'razon' => 'Flag incluye_tara=false (usuario dijo "sin tara")'
                         ]);
                     }

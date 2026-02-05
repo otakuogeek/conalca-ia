@@ -186,28 +186,51 @@ class DataExtractionService
                         'comando' => $pesoConSumaTara ? 'peso X suma tara' : 'agrega/suma tara'
                     ]);
                 } else {
-                    // Si (peso - 3400) es múltiplo exacto de 1000, probablemente ya tiene tara
-                    $pesoSinPosibleTara = $pesoActual - 3400;
-                    $esProbablementeDuplicado = ($pesoSinPosibleTara > 0 && $pesoSinPosibleTara % 1000 == 0);
+                    // 🔧 FIX: Verificar para ambas taras posibles (2300 y 3400)
+                    // Si (peso - tara) es múltiplo exacto de 1000, probablemente ya tiene tara
+                    $pesoSinPosibleTara3400 = $pesoActual - 3400;
+                    $pesoSinPosibleTara2300 = $pesoActual - 2300;
+                    $esProbablementeDuplicado = (
+                        ($pesoSinPosibleTara3400 > 0 && $pesoSinPosibleTara3400 % 1000 == 0) ||
+                        ($pesoSinPosibleTara2300 > 0 && $pesoSinPosibleTara2300 % 1000 == 0)
+                    );
                     
                     // También verificar si el mensaje menciona "con tara" o "ya tara"
                     $mensionaTara = preg_match('/(?<!no\s)(?:con\s+tara|ya.*tara|tara\s+incluida|peso\s+bruto)/ui', $lastUserMessage);
                     
-                    $pareceYaTenerTara = ($pesoActual >= 3400 && ($esProbablementeDuplicado || $mensionaTara));
+                    $pareceYaTenerTara = ($pesoActual >= 2300 && ($esProbablementeDuplicado || $mensionaTara));
                 }
                 
                 // Solo sumar si hay un peso base y NO parece tener tara ya incluida
                 if ($pesoActual > 0 && !$pareceYaTenerTara) {
-                     $nuevoPeso = $pesoActual + 3400;
+                     // 🔧 FIX CRÍTICO: Determinar tara según tamaño de contenedor
+                     // Contenedor de 20 pies = 2300 kg, otros (40, 45) = 3400 kg
+                     $taraAplicar = 3400; // Default
+                     
+                     // Verificar si hay información de contenedor en los datos extraídos
+                     $empaque = $extractedData['extracted']['empaque'] ?? '';
+                     $contenedor = $extractedData['extracted']['contenedor'] ?? '';
+                     
+                     if (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $empaque) || 
+                         preg_match('/\d+[xX]20/i', $contenedor) ||
+                         preg_match('/contenedor\s+de\s+20/i', $lastUserMessage)) {
+                         $taraAplicar = 2300;
+                     }
+                     
+                     $nuevoPeso = $pesoActual + $taraAplicar;
                      $extractedData['extracted']['peso'] = $nuevoPeso;
-                     // � FIX: peso_kg debe estar en KG, no en toneladas
+                     // 🔧 FIX: peso_kg debe estar en KG, no en toneladas
                      $extractedData['extracted']['peso_kg'] = $nuevoPeso;
+                     $extractedData['extracted']['tara'] = $taraAplicar;
                      // Asegurar que se incluya en la respuesta
                      $extractedData['extracted']['incluye_tara'] = true;
                      
                      Log::info('📦 TARA agregada en Quick Extraction', [
                          'peso_anterior' => $pesoActual,
+                         'tara_aplicada' => $taraAplicar,
                          'nuevo_peso' => $nuevoPeso,
+                         'empaque' => $empaque,
+                         'contenedor' => $contenedor,
                          'comando_explicito' => $comandoExplicitoTara,
                          'es_edicion' => $esEdicionCampo,
                          'selected_route_index' => $selectedRouteIndex
