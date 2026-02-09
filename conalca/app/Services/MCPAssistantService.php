@@ -102,6 +102,17 @@ class MCPAssistantService
     }
 
     /**
+     * Wrapper público de getTaraByContenedor para uso desde el Controller
+     * 
+     * @param string|null $texto Texto donde buscar el tipo de contenedor
+     * @return int Tara en kg (2300 o 3400)
+     */
+    public static function getTaraByContenedorPublic($texto = null)
+    {
+        return self::getTaraByContenedor($texto);
+    }
+
+    /**
      * Obtener o crear thread (conversación) para el cliente
      * En este caso, usamos la tabla conversation_sessions
      */
@@ -710,9 +721,10 @@ class MCPAssistantService
                             ]);
                         } elseif (!$mencionaTara) {
                             // 🆕 FIX: Si NO menciona tara en absoluto, agregar tara por defecto
-                            // 🔧 FIX: Usar tara según tipo de contenedor (20 pies = 2300, otros = 3400)
+                            // 🔧 FIX: Usar tara estándar según tipo de contenedor (20 pies = 2300, otros = 3400)
+                            // 🔧 FIX v2: Siempre usar tara estándar, NO fórmula del 10%
                             $taraBase = self::getTaraByContenedor($segmento);
-                            $taraCalculada = max(round($peso * 0.10), $taraBase);
+                            $taraCalculada = $taraBase;
                             $pesoConTara = $peso + $taraCalculada;
                             $datos['peso_mercancia'] = $pesoConTara;
                             $datos['pesoMercancia'] = $pesoConTara;
@@ -882,11 +894,12 @@ class MCPAssistantService
                     'peso_total_con_tara' => $pesoTotal
                 ]);
             } elseif ($peso && !$mencionaTara && !$esEdicionCampo) {
-                // CASO 3: NO menciona tara → Calcular tara automática (10% del peso, mínimo según contenedor)
+                // CASO 3: NO menciona tara → Agregar tara estándar según contenedor
                 // 🔧 SOLO si NO es edición de campo
-                // 🔧 FIX: Usar tara según tipo de contenedor (20 pies = 2300, otros = 3400)
+                // 🔧 FIX: Usar tara estándar según tipo de contenedor (20 pies = 2300, otros = 3400)
+                // 🔧 FIX v2: Siempre usar tara estándar, NO fórmula del 10%
                 $taraBase = self::getTaraByContenedor($fullText);
-                $taraCalculada = max(round($peso * 0.10), $taraBase);
+                $taraCalculada = $taraBase;
                 $pesoTotal = $peso + $taraCalculada;
                 
                 // Actualizar el peso con la tara incluida
@@ -1915,7 +1928,8 @@ class MCPAssistantService
                             }
                          }
                          unset($ruta);
-                         $taraPromedio = count($tarasAplicadas) > 0 ? round(array_sum($tarasAplicadas) / count($tarasAplicadas)) : 3400;
+                         // 🔧 FIX: Fallback usa getTaraByContenedor en vez de hardcoded 3400
+                         $taraPromedio = count($tarasAplicadas) > 0 ? round(array_sum($tarasAplicadas) / count($tarasAplicadas)) : self::getTaraByContenedor($lastUserMessageForEdit);
                          $valorEditadoTemprano = $comandoExplicitoSumar ? "Sumado (tara aplicada)" : "Sí (tara aplicada)";
                     } else {
                         // 🔧 FIX: Mapear campos duplicados también en múltiples rutas
@@ -2458,11 +2472,15 @@ class MCPAssistantService
                     $route = $extractedData[$selectedRouteIndex];
                     if (isset($route['peso_kg']) && isset($route['incluye_tara']) && $route['incluye_tara']) {
                         $pesoAnterior = $route['peso_kg'];
-                        $extractedData[$selectedRouteIndex]['peso_kg'] = max(0, $pesoAnterior - 3400);
+                        // 🔧 FIX: Usar tara almacenada o calcular según contenedor (no hardcoded 3400)
+                        $taraTexto = $route['empaque'] ?? $route['contenedor'] ?? $route['tamano_contenedor'] ?? '';
+                        $taraQuitar = isset($route['tara']) ? $route['tara'] : self::getTaraByContenedor($taraTexto);
+                        $extractedData[$selectedRouteIndex]['peso_kg'] = max(0, $pesoAnterior - $taraQuitar);
                         $extractedData[$selectedRouteIndex]['incluye_tara'] = false;
                         Log::info('📦 TARA removida de ruta ESPECÍFICA', [
                             'ruta_seleccionada' => $selectedRouteIndex,
                             'peso_anterior' => $pesoAnterior,
+                            'tara_quitada' => $taraQuitar,
                             'peso_sin_tara' => $extractedData[$selectedRouteIndex]['peso_kg']
                         ]);
                     }
@@ -2471,11 +2489,15 @@ class MCPAssistantService
                     foreach ($extractedData as $idx => $route) {
                         if (isset($route['peso_kg']) && isset($route['incluye_tara']) && $route['incluye_tara']) {
                             $pesoAnterior = $route['peso_kg'];
-                            $extractedData[$idx]['peso_kg'] = max(0, $pesoAnterior - 3400);
+                            // 🔧 FIX: Usar tara almacenada o calcular según contenedor (no hardcoded 3400)
+                            $taraTexto = $route['empaque'] ?? $route['contenedor'] ?? $route['tamano_contenedor'] ?? '';
+                            $taraQuitar = isset($route['tara']) ? $route['tara'] : self::getTaraByContenedor($taraTexto);
+                            $extractedData[$idx]['peso_kg'] = max(0, $pesoAnterior - $taraQuitar);
                             $extractedData[$idx]['incluye_tara'] = false;
                             Log::info('📦 TARA removida de ruta (multi)', [
                                 'ruta' => $idx,
                                 'peso_anterior' => $pesoAnterior,
+                                'tara_quitada' => $taraQuitar,
                                 'peso_sin_tara' => $extractedData[$idx]['peso_kg']
                             ]);
                         }
@@ -2484,11 +2506,14 @@ class MCPAssistantService
             } else {
                 if (isset($extractedData['peso_kg']) && isset($extractedData['incluye_tara']) && $extractedData['incluye_tara']) {
                     $pesoAnterior = $extractedData['peso_kg'];
-                    $extractedData['peso_kg'] = max(0, $pesoAnterior - 3400);
+                    // 🔧 FIX: Usar tara almacenada o calcular según contenedor (no hardcoded 3400)
+                    $taraTexto = $extractedData['empaque'] ?? $extractedData['contenedor'] ?? $extractedData['tamano_contenedor'] ?? '';
+                    $taraQuitar = isset($extractedData['tara']) ? $extractedData['tara'] : self::getTaraByContenedor($taraTexto);
+                    $extractedData['peso_kg'] = max(0, $pesoAnterior - $taraQuitar);
                     $extractedData['incluye_tara'] = false;
                     Log::info('📦 TARA removida del peso', [
                         'peso_anterior' => $pesoAnterior,
-                        'tara' => 3400,
+                        'tara' => $taraQuitar,
                         'peso_sin_tara' => $extractedData['peso_kg']
                     ]);
                 }

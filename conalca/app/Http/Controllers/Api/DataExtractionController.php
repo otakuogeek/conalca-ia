@@ -624,11 +624,14 @@ class DataExtractionController extends Controller
             $destino = $ruta['destino'] ?? '?';
             
             // 🔧 FIX: Calcular peso CON TARA si no está incluida
+            // 🔧 FIX v2: Usar tara según contenedor (20 pies = 2300, otros = 3400)
             $pesoBase = $ruta['peso'] ?? 0;
             $incluyeTara = $ruta['incluye_tara'] ?? false;
             $peso = $pesoBase;
             if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
-                $peso = $pesoBase + 3400; // Sumar tara
+                $textoContenedor = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                $taraAplicar = \App\Services\MCPAssistantService::getTaraByContenedorPublic($textoContenedor);
+                $peso = $pesoBase + $taraAplicar; // Sumar tara según contenedor
             }
             
             $producto = $ruta['producto'] ?? '?';
@@ -695,11 +698,16 @@ class DataExtractionController extends Controller
                 $pesoPareceSinTara = $forzarSumaTara && is_numeric($pesoBase) && $pesoBase > 0 && ($pesoBase % 1000 == 0);
                 
                 if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0) {
-                    $ruta['peso'] = $pesoBase + 3400; // Sumar tara
-                    $ruta['peso_kg'] = $pesoBase + 3400; // También actualizar peso_kg
+                    // 🔧 FIX v2: Usar tara según contenedor (20 pies = 2300, otros = 3400)
+                    $textoContenedor = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                    $taraAplicar = \App\Services\MCPAssistantService::getTaraByContenedorPublic($textoContenedor);
+                    $ruta['peso'] = $pesoBase + $taraAplicar; // Sumar tara según contenedor
+                    $ruta['peso_kg'] = $pesoBase + $taraAplicar; // También actualizar peso_kg
+                    $ruta['tara'] = $taraAplicar; // Guardar tara aplicada
                     $ruta['incluye_tara'] = true; // Marcar que ahora incluye tara
                     Log::info('🏋️ TARA agregada a ruta ' . ($idx + 1), [
                         'peso_original' => $pesoBase,
+                        'tara_aplicada' => $taraAplicar,
                         'peso_con_tara' => $ruta['peso'],
                         'razon' => $pesoPareceSinTara ? 'Forzado por mensaje original' : 'Flag incluye_tara=false'
                     ]);
