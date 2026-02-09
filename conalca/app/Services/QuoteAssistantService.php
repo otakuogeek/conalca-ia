@@ -954,7 +954,7 @@ CAMPOS DISPONIBLES:
 1. ciudad_origen: Ciudad de origen del envío
 2. ciudad_destino: Ciudad de destino del envío  
 3. peso_mercancia: Peso en kilogramos
-4. cantidad: Cantidad de unidades/bultos
+4. cantidad: Cantidad de unidades/bultos (IMPORTANTE: si el usuario dice "18 pallets", la cantidad es 18; si dice "210 cajas", la cantidad es 210. NUNCA poner 1 cuando el usuario especifica un número de unidades)
 5. tipo_embajale: Tipo de embalaje (caja, pallet, etc.)
 6. tipo_producto: Tipo de producto/mercancía
 7. vehiculo_requerido: Tipo de vehículo necesario
@@ -1033,9 +1033,10 @@ USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques informac
                     'functions' => $functions,
                     'function_call' => 'auto',
                     'max_tokens' => 800,
-                    'temperature' => 0.1, // Más determinista para respuestas propositivas
-                    'presence_penalty' => 0.1,
-                    'frequency_penalty' => 0.1
+                    'temperature' => 0, // Determinista para extracción precisa de datos
+                    'seed' => 42, // Seed fijo para mayor consistencia entre llamadas
+                    'presence_penalty' => 0,
+                    'frequency_penalty' => 0
                 ]);
 
             if ($response->successful()) {

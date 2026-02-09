@@ -52,6 +52,7 @@ class DataExtractionService
                 ->post($this->baseUrl . '/chat/completions', [
                     'model' => 'gpt-4o-mini',
                     'temperature' => 0,
+                    'seed' => 42, // Seed fijo para mayor consistencia
                     'max_tokens' => 2000,
                     'messages' => [
                         [
@@ -185,6 +186,12 @@ class DataExtractionService
                     Log::info('⚡ Comando explícito de tara detectado - ignorando heurísticos', [
                         'comando' => $pesoConSumaTara ? 'peso X suma tara' : 'agrega/suma tara'
                     ]);
+                } else if ($noIncluyeTara) {
+                    // 🔧 FIX CRÍTICO: Si el usuario dice EXPLÍCITAMENTE "sin tara", "peso neto", etc.
+                    // CONFIAR en el usuario y NO aplicar heurísticos que puedan dar falsos positivos
+                    // Ejemplo: 6400 kg sin tara → (6400-3400=3000, 3000%1000=0) daba falso positivo
+                    $pareceYaTenerTara = false;
+                    Log::info('⚡ Usuario dijo explícitamente "sin tara" / "peso neto" - ignorando heurísticos, se sumará tara');
                 } else {
                     // 🔧 FIX: Verificar para ambas taras posibles (2300 y 3400)
                     // Si (peso - tara) es múltiplo exacto de 1000, probablemente ya tiene tara
@@ -368,6 +375,14 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 - Ejemplo: "2 contenedores con 500 bultos cada uno" → cantidad: 2 (NO 500 ni 1000)
 - Si NO hay contenedor mencionado: "850 cajas de herramientas" → cantidad: 850
 
+⚠️ REGLA CRÍTICA DE CANTIDAD SIN CONTENEDORES (PALLETS, CAJAS, BULTOS, ESTIBAS):
+- Cuando NO hay contenedor y se mencionan unidades como pallets, cajas, bultos, estibas, paquetes, etc., la CANTIDAD es el NÚMERO de esas unidades
+- "18 pallets en carga estibada" → cantidad: 18, empaque: "estibas"
+- "210 cajas de productos farmacéuticos" → cantidad: 210, empaque: "cajas"
+- "5 bultos de ropa" → cantidad: 5, empaque: "bultos"
+- "carga estibada" o "carga suelta" describe el TIPO de carga, NO la cantidad. La cantidad es el número explícito de unidades
+- NUNCA pongas cantidad: 1 si el usuario especifica un número de pallets/cajas/bultos/estibas
+
 ⚠️ REGLA CRÍTICA DE CANTIDAD CUANDO CONTENEDORES SE SEPARAN EN RUTAS:
 - Si N contenedores del mismo tipo tienen PESOS DIFERENTES o CARACTERÍSTICAS DIFERENTES y se crean N rutas separadas, 
   CADA RUTA tiene cantidad: 1, porque cada ruta representa UN SOLO contenedor.
@@ -430,6 +445,17 @@ Output: {
     {"origen":"CALI","destino":"BUENAVENTURA","peso":2900,"cantidad":75,"empaque":"cajas","producto":null,"vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":false}
   ],
   "confidence":0.9
+}
+
+Input: "envíos desde Bogotá hacia Barranquilla, son 5.200 kg sin tara, distribuidos en 210 cajas de productos farmacéuticos, con un valor declarado de $54.000.000, en camión turbo para carga suelta. También desde Medellín hacia Cartagena se requieren 18 pallets en carga estibada con 8.600 kg sin tara de insumos industriales, con un valor declarado de $72.000.000, en camión sencillo."
+Output: {
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {"origen":"BOGOTA","destino":"BARRANQUILLA","peso":5200,"cantidad":210,"empaque":"cajas","producto":"productos farmacéuticos","vehiculo":"TURBO","contenedor":"carga suelta","valor":54000000,"incluye_tara":false},
+    {"origen":"MEDELLIN","destino":"CARTAGENA","peso":8600,"cantidad":18,"empaque":"estibas","producto":"insumos industriales","vehiculo":"SENCILLO","contenedor":"carga estibada","valor":72000000,"incluye_tara":false}
+  ],
+  "confidence":0.95
 }
 
 Input: "2x40 // 1x20 Retiro: Medellín Destino: Cartagena Peso: 15 toneladas sin tara c/u"
