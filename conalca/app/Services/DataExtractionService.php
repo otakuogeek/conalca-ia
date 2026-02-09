@@ -211,10 +211,26 @@ class DataExtractionService
                      $empaque = $extractedData['extracted']['empaque'] ?? '';
                      $contenedor = $extractedData['extracted']['contenedor'] ?? '';
                      
-                     if (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $empaque) || 
+                     // 🔧 FIX CRÍTICO v2: PRIMERO verificar el mensaje ORIGINAL del usuario
+                     // Esto es más confiable que la extracción del AI que puede equivocarse
+                     // Prioridad: Mensaje original > datos extraídos por IA
+                     $esContenedor40EnMensaje = preg_match('/(?:contenedor|cont).*?\b40\b|\b40\s*(?:pies|\')|\b\d+[xX]40\b/ui', $userMessage);
+                     $esContenedor20EnMensaje = preg_match('/(?:contenedor|cont).*?\b20\b|(?<![04])\b20\s*(?:pies|\')|\b\d+[xX]20\b/ui', $userMessage);
+                     
+                     if ($esContenedor40EnMensaje && !$esContenedor20EnMensaje) {
+                         // Mensaje original dice contenedor 40 → tara 3400
+                         $taraAplicar = 3400;
+                         Log::info('📦 Contenedor 40 detectado en mensaje ORIGINAL → tara 3400');
+                     } elseif ($esContenedor20EnMensaje && !$esContenedor40EnMensaje) {
+                         // Mensaje original dice contenedor 20 → tara 2300
+                         $taraAplicar = 2300;
+                         Log::info('📦 Contenedor 20 detectado en mensaje ORIGINAL → tara 2300');
+                     } elseif (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $empaque) || 
                          preg_match('/\d+[xX]20/i', $contenedor) ||
                          preg_match('/contenedor\s+de\s+20/i', $lastUserMessage)) {
+                         // Fallback: usar datos extraídos por IA
                          $taraAplicar = 2300;
+                         Log::info('📦 Contenedor 20 detectado en datos extraídos por IA → tara 2300');
                      }
                      
                      $nuevoPeso = $pesoActual + $taraAplicar;
@@ -352,6 +368,16 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 - Ejemplo: "2 contenedores con 500 bultos cada uno" → cantidad: 2 (NO 500 ni 1000)
 - Si NO hay contenedor mencionado: "850 cajas de herramientas" → cantidad: 850
 
+⚠️ REGLA CRÍTICA DE CANTIDAD CUANDO CONTENEDORES SE SEPARAN EN RUTAS:
+- Si N contenedores del mismo tipo tienen PESOS DIFERENTES o CARACTERÍSTICAS DIFERENTES y se crean N rutas separadas, 
+  CADA RUTA tiene cantidad: 1, porque cada ruta representa UN SOLO contenedor.
+- Ejemplo: "2 contenedores de 20 pies: uno con 8.000 kg sin tara y el otro con 20.000 kg con tara incluida"
+  → multi_ruta: true, total_rutas: 2
+  → Ruta 1: peso: 8000, cantidad: 1, incluye_tara: false
+  → Ruta 2: peso: 20000, cantidad: 1, incluye_tara: true
+  ❌ INCORRECTO: Ruta 1: cantidad: 2, Ruta 2: cantidad: 2
+- Clave: si "uno con X... el otro con Y" separa los contenedores, es 1 por ruta
+
 ⚠️ FORMATO DE CONTENEDORES (MUY IMPORTANTE):
 - "1x40'HC" = 1 contenedor de 40 pies High Cube → empaque: "CONTENEDOR 40", contenedor: "1X40' HC", cantidad: 1
 - "1x20'HC" = 1 contenedor de 20 pies High Cube → empaque: "CONTENEDOR 20", contenedor: "1X20' HC", cantidad: 1
@@ -388,6 +414,12 @@ FORMATO DE RESPUESTA RUTA ÚNICA:
   "confidence": 0.9
 }
 
+⚠️ REGLA CRÍTICA DE PESO "C/U" o "CADA UNO":
+- Si dice "Peso: X toneladas c/u" o "X kg cada uno" o "X toneladas por cada contenedor" → APLICA EL MISMO PESO A TODAS LAS RUTAS
+- Ejemplo: "2x40 // 1x20 ... Peso: 15 toneladas sin tara c/u" → Ruta 1: peso=15000, Ruta 2: peso=15000 (AMBAS 15 toneladas)
+- El peso "c/u" (cada uno) significa que CADA ruta tiene ESE peso individualmente
+- NO dividas el peso entre las rutas, cada una tiene el peso completo
+
 EJEMPLOS MULTI-RUTA:
 Input: "Cotiza dos rutas: Bogotá a Cartagena, 10500 kg con tara incluida, 520 cajas. La segunda Cali a Buenaventura, 2900 kg sin tara, 75 cajas"
 Output: {
@@ -396,6 +428,17 @@ Output: {
   "rutas": [
     {"origen":"BOGOTA","destino":"CARTAGENA","peso":10500,"cantidad":520,"empaque":"cajas","producto":null,"vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":true},
     {"origen":"CALI","destino":"BUENAVENTURA","peso":2900,"cantidad":75,"empaque":"cajas","producto":null,"vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":false}
+  ],
+  "confidence":0.9
+}
+
+Input: "2x40 // 1x20 Retiro: Medellín Destino: Cartagena Peso: 15 toneladas sin tara c/u"
+Output: {
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {"origen":"MEDELLIN","destino":"CARTAGENA","peso":15000,"cantidad":2,"empaque":"CONTENEDOR 40","producto":null,"vehiculo":"TRACTOCAMION","contenedor":"2X40' GP","valor":null,"incluye_tara":false},
+    {"origen":"MEDELLIN","destino":"CARTAGENA","peso":15000,"cantidad":1,"empaque":"CONTENEDOR 20","producto":null,"vehiculo":"TRACTOCAMION","contenedor":"1X20' GP","valor":null,"incluye_tara":false}
   ],
   "confidence":0.9
 }

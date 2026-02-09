@@ -6899,12 +6899,49 @@ class MCPAssistantService
      * 📦 PROCESAR MÚLTIPLES RUTAS CON DATOS COMUNES
      * Aplica datos comunes (producto, empaque) a rutas que no los tengan explícitos
      * 🆕 RESPETA valores explícitos por ruta (cantidad, valor_declarado)
+     * 🆕 FIX: Detectar "c/u" o "cada uno" para propagar peso a todas las rutas
      */
     private static function processMultipleRoutes($routes, $fullText, $lowerText)
     {
         Log::info('🔄 Procesando múltiples rutas (respetando datos explícitos)', [
             'total_rutas' => count($routes)
         ]);
+
+        // 🆕 FIX CRÍTICO: Detectar si hay "c/u" o "cada uno" que indica peso igual para todas las rutas
+        // Patrón: "15 toneladas sin tara c/u" o "20 kg cada uno" o "X toneladas por contenedor"
+        $pesoGlobalCadaUno = null;
+        $sinTaraCadaUno = false;
+        
+        // Patrones para detectar "cada uno" / "c/u" / "por contenedor"
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:toneladas?|ton|kg|kilos?)\s+(?:sin\s+tara\s+)?(?:c\/u|c\/U|cada\s+un[oa]?|por\s+(?:cada\s+)?(?:contenedor|ruta))/ui', $fullText, $matchCadaUno)) {
+            $pesoRaw = str_replace(['.', ','], ['', '.'], $matchCadaUno[1]);
+            $pesoGlobalCadaUno = (float)$pesoRaw;
+            // Convertir toneladas a kg si aplica
+            if (preg_match('/toneladas?|ton/ui', $matchCadaUno[0])) {
+                $pesoGlobalCadaUno *= 1000;
+            }
+            $sinTaraCadaUno = preg_match('/sin\s+tara/ui', $fullText);
+            
+            Log::info('🔔 PESO "C/U" DETECTADO - Se aplicará a TODAS las rutas', [
+                'peso_kg' => $pesoGlobalCadaUno,
+                'sin_tara' => $sinTaraCadaUno,
+                'match' => $matchCadaUno[0]
+            ]);
+        }
+        
+        // Si hay peso "c/u", aplicarlo a todas las rutas que no tengan peso explícito
+        if ($pesoGlobalCadaUno !== null && count($routes) > 0) {
+            foreach ($routes as &$route) {
+                // Aplicar peso "c/u" si la ruta no tiene peso o tiene peso 0
+                if (!isset($route['peso_kg']) || $route['peso_kg'] <= 0) {
+                    $route['peso_kg'] = $pesoGlobalCadaUno;
+                    Log::info("📦 Peso c/u aplicado a ruta #{$route['ruta_numero']}", [
+                        'peso_kg' => $pesoGlobalCadaUno
+                    ]);
+                }
+            }
+            unset($route); // Romper referencia
+        }
 
         // Extraer datos comunes que aplican SOLO a rutas sin datos explícitos
         $commonData = [];
@@ -6916,7 +6953,17 @@ class MCPAssistantService
                 $commonData = array_merge($commonData, $empaque);
                 // 🆕 Si hay cantidad_contenedor, agregarla
                 if (isset($empaque['cantidad_contenedor'])) {
-                    $commonData['cantidad'] = $empaque['cantidad_contenedor'];
+                    $cantidadContenedores = $empaque['cantidad_contenedor'];
+                    $numRutas = count($routes);
+                    
+                    // 🔧 FIX: Si los N contenedores se dividieron en N rutas separadas
+                    // (por tener pesos/características diferentes), cada ruta = 1 contenedor
+                    if ($numRutas > 1 && $cantidadContenedores == $numRutas) {
+                        $commonData['cantidad'] = 1;
+                        Log::info('📦 FIX cantidad: ' . $cantidadContenedores . ' contenedores divididos en ' . $numRutas . ' rutas → cantidad=1 por ruta');
+                    } else {
+                        $commonData['cantidad'] = $cantidadContenedores;
+                    }
                 }
             } else {
                 $commonData['empaque'] = $empaque;
@@ -7115,14 +7162,20 @@ class MCPAssistantService
             $data['incluye_tara'] = false;
             if (isset($data['peso_kg']) && $data['peso_kg'] > 0) {
                 $pesoOriginal = $data['peso_kg'];
-                // 🔧 FIX: Usar tara según tamaño de contenedor (20'=2300, otros=3400)
-                $taraAplicar = isset($data['tamano_contenedor']) && $data['tamano_contenedor'] == 20 ? 2300 : self::getTaraByContenedor($fullText);
+                // 🔧 FIX v2: Usar tara según tamaño de contenedor detectado
+                // 20 pies = 2300 kg, 40/45 pies = 3400 kg
+                if (isset($data['tamano_contenedor'])) {
+                    $taraAplicar = ($data['tamano_contenedor'] == 20) ? 2300 : 3400;
+                } else {
+                    $taraAplicar = self::getTaraByContenedor($fullText);
+                }
                 $data['peso_kg'] = $pesoOriginal + $taraAplicar;
                 $data['tara'] = $taraAplicar;
                 Log::info('📦 TARA SUMADA (no incluye tara)', [
                     'peso_original' => $pesoOriginal,
                     'tara' => $taraAplicar,
-                    'peso_con_tara' => $data['peso_kg']
+                    'peso_con_tara' => $data['peso_kg'],
+                    'tamano_contenedor' => $data['tamano_contenedor'] ?? 'no detectado'
                 ]);
             }
         } elseif ($detectoYaIncluyeTara) {
@@ -7133,14 +7186,19 @@ class MCPAssistantService
             $data['incluye_tara'] = false;
             if (isset($data['peso_kg']) && $data['peso_kg'] > 0) {
                 $pesoOriginal = $data['peso_kg'];
-                // 🔧 FIX: Usar tara según tamaño de contenedor (20'=2300, otros=3400)
-                $taraAplicar = isset($data['tamano_contenedor']) && $data['tamano_contenedor'] == 20 ? 2300 : self::getTaraByContenedor($fullText);
+                // 🔧 FIX v2: Usar tara según tamaño de contenedor detectado
+                if (isset($data['tamano_contenedor'])) {
+                    $taraAplicar = ($data['tamano_contenedor'] == 20) ? 2300 : 3400;
+                } else {
+                    $taraAplicar = self::getTaraByContenedor($fullText);
+                }
                 $data['peso_kg'] = $pesoOriginal + $taraAplicar;
                 $data['tara'] = $taraAplicar;
                 Log::info('📦 TARA SUMADA (default - no especificado)', [
                     'peso_original' => $pesoOriginal,
                     'tara' => $taraAplicar,
-                    'peso_con_tara' => $data['peso_kg']
+                    'peso_con_tara' => $data['peso_kg'],
+                    'tamano_contenedor' => $data['tamano_contenedor'] ?? 'no detectado'
                 ]);
             }
         }
@@ -7833,6 +7891,29 @@ class MCPAssistantService
             }
         }
         
+        // 🔧 FIX CRÍTICO v4: PRE-DETECTAR tamaño de contenedor ANTES de la tara
+        // Esto asegura que $route['tamano_contenedor'] esté disponible para el cálculo de tara
+        if (!isset($route['tamano_contenedor'])) {
+            if (preg_match_all('/(\d+)\s*[×xX]\s*(20|40|45)\s*[\'"]?\s*(?:hc|gp|rf|hq|ot)?/ui', $text, $preContMatches, PREG_SET_ORDER)) {
+                $preMatchIndex = min($rutaNumero - 1, count($preContMatches) - 1);
+                $route['tamano_contenedor'] = intval($preContMatches[$preMatchIndex][2]);
+                Log::info('📦 PRE-DETECCIÓN contenedor (formato NxTAMAÑO)', [
+                    'tamano' => $route['tamano_contenedor'],
+                    'ruta' => $rutaNumero
+                ]);
+            } elseif (preg_match('/contenedor(?:es)?\s+(?:de\s+)?(20|40|45)\s*(?:pies|\'|")?/ui', $text, $preContMatch2)) {
+                $route['tamano_contenedor'] = intval($preContMatch2[1]);
+                Log::info('📦 PRE-DETECCIÓN contenedor (formato "contenedor de X pies")', [
+                    'tamano' => $route['tamano_contenedor']
+                ]);
+            } elseif (preg_match('/\(\d+\)\s*(20|40|45)\s*pies/ui', $text, $preContMatch3)) {
+                $route['tamano_contenedor'] = intval($preContMatch3[1]);
+                Log::info('📦 PRE-DETECCIÓN contenedor (formato BD "(1) X PIES")', [
+                    'tamano' => $route['tamano_contenedor']
+                ]);
+            }
+        }
+        
         // 🆕 TARA - Mejorado para detectar más patrones
         // Detectar "no incluye tara", "sin tara", "peso neto", etc.
         $noIncluyeTaraPatterns = [
@@ -8015,8 +8096,7 @@ class MCPAssistantService
         }
         
         // 🆕 EMPAQUE Y CONTENEDOR: Detectar tipo específico para calcular tara correcta
-        // 🔧 FIX CRÍTICO v2: Usar preg_match_all para encontrar TODOS los contenedores
-        // y seleccionar el correcto según $rutaNumero (para "2x40 // 1x20" funcione bien)
+        // 🔧 FIX CRÍTICO v3: MOVER ANTES de la lógica de TARA para que tamano_contenedor esté disponible
         $tamanioContenedor = null; // 20 o 40
         
         // Patrón prioritario: "NxTAMAÑO" (ej: "2x40", "1x20", "1x40HC")
@@ -9666,7 +9746,8 @@ class MCPAssistantService
                 // 🆕 Retornar cantidad si viene del formato NxTAMAÑO
                 $resultado = [
                     'empaque' => $empaqueCorto,
-                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null
+                    'empaque_id' => $empaqueFromDB ? $empaqueFromDB['id'] : null,
+                    'tamano_contenedor' => intval($tamaño), // 🔧 FIX: Propagar tamaño para cálculo de tara
                 ];
                 
                 if ($cantidadContenedor && $cantidadContenedor > 0) {
