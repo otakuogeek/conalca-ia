@@ -64,12 +64,65 @@ const normalizeWeight = (rawWeight) => {
 // 🆕 Función para normalizar ciudades a MAYÚSCULAS sin acentos
 const normalizeCiudad = (ciudad) => {
   if (!ciudad || typeof ciudad !== 'string') return null;
+  
+  // 🔧 FIX: Limpiar sufijos que no son parte de la ciudad
+  // Ejemplo: "BUCARAMANGA SE LLEVA" → "BUCARAMANGA"
+  let cleaned = ciudad.replace(/\s+(?:se\s+lleva|se\s+env[ií]a|se\s+recoge|se\s+entrega|se\s+despacha|se\s+transporta|se\s+manda|se\s+necesita|para\s+enviar|para\s+recoger|para\s+entregar|hay\s+que|donde\s+se|con\s+destino|hacia|desde)\b.*/i, '').trim();
+  
   // Eliminar acentos y convertir a mayúsculas
-  const sinAcentos = ciudad
+  const sinAcentos = cleaned
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
     .trim();
+  
+  // 🆕 Expandir abreviaturas de ciudades
+  const abbreviations = {
+    'BOG': 'BOGOTA', 'MED': 'MEDELLIN', 'CLO': 'CALI',
+    'BAQ': 'BARRANQUILLA', 'CTG': 'CARTAGENA', 'BGA': 'BUCARAMANGA',
+    'BUN': 'BUENAVENTURA', 'BUENAV': 'BUENAVENTURA', 'BVTURA': 'BUENAVENTURA', 'BTURA': 'BUENAVENTURA',
+    'CUC': 'CUCUTA', 'PEI': 'PEREIRA', 'MZL': 'MANIZALES',
+    'AXM': 'ARMENIA', 'IBE': 'IBAGUE', 'NVA': 'NEIVA',
+    'VVC': 'VILLAVICENCIO', 'PSO': 'PASTO', 'PPN': 'POPAYAN',
+    'SMR': 'SANTA MARTA', 'MTR': 'MONTERIA', 'VUP': 'VALLEDUPAR',
+    'BQUILLA': 'BARRANQUILLA', 'BQLLA': 'BARRANQUILLA',
+    'BMANGA': 'BUCARAMANGA', 'BGT': 'BUCARAMANGA',
+    'CART': 'CARTAGENA', 'CGEN': 'CARTAGENA',
+    'BARRANCA': 'BARRANCABERMEJA', 'BMEJA': 'BARRANCABERMEJA',
+    'STA MARTA': 'SANTA MARTA', 'S MARTA': 'SANTA MARTA',
+    'VVICENCIO': 'VILLAVICENCIO', 'DOSQ': 'DOSQUEBRADAS',
+  };
+  if (abbreviations[sinAcentos]) {
+    console.log(`📍 Abreviatura ciudad expandida: '${sinAcentos}' → '${abbreviations[sinAcentos]}'`);
+    return abbreviations[sinAcentos];
+  }
+  
+  // 🔧 FIX: Validar contra ciudades conocidas - si hay texto extra, limpiar
+  const knownCities = [
+    'BOGOTA', 'MEDELLIN', 'CALI', 'BARRANQUILLA', 'CARTAGENA', 'BUCARAMANGA',
+    'CUCUTA', 'PEREIRA', 'MANIZALES', 'ARMENIA', 'IBAGUE', 'NEIVA',
+    'VILLAVICENCIO', 'PASTO', 'POPAYAN', 'SANTA MARTA', 'SINCELEJO',
+    'MONTERIA', 'VALLEDUPAR', 'RIOHACHA', 'QUIBDO', 'LETICIA', 'SAN ANDRES',
+    'YOPAL', 'ARAUCA', 'FLORENCIA', 'MOCOA', 'TUNJA', 'DUITAMA', 'SOGAMOSO',
+    'GIRARDOT', 'ZIPAQUIRA', 'FACATATIVA', 'SOACHA', 'BUENAVENTURA',
+    'BARRANCABERMEJA', 'PALMIRA', 'TULUA', 'BUGA', 'CARTAGO', 'DOSQUEBRADAS',
+    'IPIALES', 'TUMACO', 'FUNDACION', 'CIENAGA', 'SOLEDAD', 'MAICAO',
+    'CAUCASIA', 'LA DORADA', 'HONDA', 'ESPINAL', 'FUSAGASUGA', 'CHIA',
+    'MOSQUERA', 'FUNZA', 'CARTAGENA DE INDIAS'
+  ];
+  
+  if (sinAcentos && !knownCities.includes(sinAcentos)) {
+    for (const city of knownCities) {
+      if (sinAcentos.startsWith(city + ' ')) {
+        const remaining = sinAcentos.slice(city.length).trim();
+        if (!/^(DE\s+INDIAS|DE\s+CABAL|DE\s+CAUCA)$/i.test(remaining)) {
+          console.log(`🔧 Ciudad limpiada: '${sinAcentos}' → '${city}'`);
+          return city;
+        }
+      }
+    }
+  }
+  
   return sinAcentos || null;
 };
 
@@ -1634,6 +1687,7 @@ const ChatModal = ({
       }
 
       onSendMessage(messageText);
+      setInputMessage(''); // Limpiar input inmediatamente al enviar
 
       const thinkingMessage = {
         role: 'assistant',
@@ -1673,7 +1727,6 @@ const ChatModal = ({
       if (response.ok || response.status === 409 || response.status === 503) {
         data = await response.json();
       } else if (response.status === 500) {
-        setInputMessage(messageText);
         setProcessingMessage(null);
         if (onUpdateMessages) {
           onUpdateMessages(prev => [
@@ -1692,8 +1745,6 @@ const ChatModal = ({
       }
 
       if (data.success) {
-        setInputMessage('');
-
         if (data.data.thread_id && !activeThreadId) {
           setThreadId(data.data.thread_id);
         }
@@ -2885,7 +2936,6 @@ const ChatModal = ({
           startPollingRun(data.data.thread_id, data.data.active_run_id);
         }
       } else if (data.error === 'openai_unavailable' || response.status === 503) {
-        setInputMessage(messageText);
         setProcessingMessage(null);
         if (onUpdateMessages) {
           onUpdateMessages(prev => [
@@ -2904,7 +2954,6 @@ const ChatModal = ({
           await checkForOrphanMessages(data.data.thread_id);
         }
       } else {
-        setInputMessage(messageText);
         setProcessingMessage(null);
         const errorText = data.error?.includes('timeout') || data.error?.includes('cURL')
           ? '⚠️ El servicio está con demoras. Intenta nuevamente en unos momentos.'
@@ -2923,7 +2972,6 @@ const ChatModal = ({
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      setInputMessage(messageText);
       setProcessingMessage(null);
       let errorText = '⚠️ ';
       if (error.message?.includes('NetworkError')) {
