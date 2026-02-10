@@ -97,7 +97,8 @@ class DataExtractionService
             // 2. "peso X suma tara" o "peso X kg suma tara" (nuevo patrón)
             // 3. "el peso no incluye tara" o "sin tara" o "peso neto" (explícito negativo)
             // 4. Default: si NO dice "tara incluida/con tara/peso bruto", agregar tara (solo para nuevas rutas)
-            $agregarTaraExplicito = preg_match('/(?:agrega|añade|suma|pon|incluye|incluir|agregar|sumar|ponga)\s+(?:la\s+)?tara/ui', $lastUserMessage);
+            $agregarTaraExplicito = preg_match('/(?:agrega|añade|suma|pon|incluir|agregar|sumar|ponga)\s+(?:la\s+)?tara/ui', $lastUserMessage)
+                && !preg_match('/(?:ya|no)\s+incluye?\s+(?:la\s+)?tara/ui', $lastUserMessage);
             // 🆕 Nuevo patrón: "peso 25000 suma tara" o "peso 25000 kg suma tara"
             $pesoConSumaTara = preg_match('/peso\s+([\d.,]+)\s*(?:kg|kilos?)?\s+(?:suma|agrega|añade|pon(?:ga|er)?|incluye|agregar|sumar)\s+(?:la\s+)?tara/ui', $lastUserMessage, $matchPesoTara);
             // 🔧 FIX: Agregar detección de "+ tara" y "más tara" (significa que hay que SUMAR la tara)
@@ -129,35 +130,149 @@ class DataExtractionService
             $taraConSignoMas = preg_match('/\+\s*tara|m[aá]s\s+tara/ui', $lastUserMessage);
             $comandoExplicitoTara = $agregarTaraExplicito || $pesoConSumaTara || $taraConSignoMas;
             
-            // 🆕 FIX CRÍTICO: Si el usuario dice "con tara incluida", NO agregar tara
-            // La tara solo se agrega si:
-            // 1. Hay comando explícito ("suma tara") Y NO dice "ya incluye tara"
-            // 2. NO está editando Y dice explícitamente "sin tara" Y NO dice "ya incluye tara"
-            // 3. NO está editando Y NO dice "ya incluye tara" Y NO dice "con tara incluida"
+            // 🆕 REGLA: Tara SOLO se aplica cuando hay CONTENEDORES en la cotización
+            // Si NO hay contenedor mencionado → el peso se queda tal cual (carga suelta)
+            $esContenedor40EnMsg = preg_match('/(?:contenedor|cont).*?\b40\b|\b40\s*(?:pies|\')|\b\d+[xX]40\b/ui', $userMessage);
+            $esContenedor20EnMsg = preg_match('/(?:contenedor|cont).*?\b20\b|(?<![04])\b20\s*(?:pies|\')|\b\d+[xX]20\b/ui', $userMessage);
+            $hayContenedorEnMensaje = $esContenedor20EnMsg || $esContenedor40EnMsg;
+            
+            // También verificar en datos extraídos por IA (single route)
+            if (!$hayContenedorEnMensaje && isset($extractedData['extracted'])) {
+                $empaqueExt = $extractedData['extracted']['empaque'] ?? '';
+                $contenedorExt = $extractedData['extracted']['contenedor'] ?? '';
+                if (preg_match('/CONTENEDOR/i', $empaqueExt) || preg_match('/\d+[xX](20|40)/i', $contenedorExt)) {
+                    $hayContenedorEnMensaje = true;
+                }
+            }
+            
+            // Para multi-ruta, verificar si ALGUNA ruta tiene contenedor
+            if (!$hayContenedorEnMensaje && isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+                foreach ($extractedData['rutas'] as $rutaCheck) {
+                    $empaqueR = $rutaCheck['empaque'] ?? '';
+                    $contenedorR = $rutaCheck['contenedor'] ?? '';
+                    if (preg_match('/CONTENEDOR/i', $empaqueR) || preg_match('/\d+[xX](20|40)/i', $contenedorR)) {
+                        $hayContenedorEnMensaje = true;
+                        break;
+                    }
+                }
+            }
+            
+            Log::info('🔍 Detección de contenedor para tara', [
+                'hay_contenedor' => $hayContenedorEnMensaje,
+                'es_contenedor_20' => (bool)$esContenedor20EnMsg,
+                'es_contenedor_40' => (bool)$esContenedor40EnMsg,
+            ]);
+            
+            // 🆕 LÓGICA DE TARA: Solo aplica si hay contenedores
+            // Sin contenedor → NO aplicar tara nunca (carga suelta)
+            // Con contenedor → aplicar reglas existentes
             $debeAgregarTara = false;
             
-            if ($yaIncluyeTara) {
+            if (!$hayContenedorEnMensaje) {
+                // 🆕 Sin contenedor → NO aplicar tara (carga suelta, cajas, pallets, bultos, etc.)
+                Log::info('📦 Sin contenedor detectado → NO se aplica tara (carga suelta)');
+                $debeAgregarTara = false;
+            } else if ($yaIncluyeTara) {
                 // Usuario dice "con tara incluida" - NO agregar tara
                 Log::info('✅ Usuario indicó que peso YA INCLUYE TARA - NO se agregará', [
                     'ya_incluye_tara' => true
                 ]);
                 $debeAgregarTara = false;
             } else if ($comandoExplicitoTara) {
-                // Comando explícito "suma tara" - agregar tara
-                Log::info('⚡ Comando explícito para agregar tara detectado');
+                // Comando explícito "suma tara" con contenedor - agregar tara
+                Log::info('⚡ Comando explícito para agregar tara detectado (con contenedor)');
                 $debeAgregarTara = true;
             } else if (!$esEdicionCampo && $noIncluyeTara) {
-                // Mensaje dice "sin tara" o "+ tara" (sin que sea "con tara")
-                Log::info('🔧 Usuario indica que peso NO incluye tara - se agregará');
+                // Mensaje dice "sin tara" o "+ tara" con contenedor presente
+                Log::info('🔧 Usuario indica que peso NO incluye tara (con contenedor) - se agregará');
                 $debeAgregarTara = true;
             } else if (!$esEdicionCampo) {
-                // Por defecto para nuevas rutas, agregar tara (comportamiento legacy)
-                // SOLO si NO dijo explícitamente "con tara"
-                Log::info('📦 Nueva ruta sin indicación de tara - se agregará por defecto');
+                // Por defecto para nuevas rutas CON CONTENEDOR, agregar tara
+                Log::info('📦 Nueva ruta con contenedor sin indicación de tara - se agregará por defecto');
                 $debeAgregarTara = true;
             }
             
             if ($debeAgregarTara && !$yaIncluyeTara) {
+                // 🚛 MULTI-RUTA: Aplicar tara a CADA ruta individualmente
+                if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+                    Log::info('🚛 Aplicando tara a multi-ruta', ['total_rutas' => count($extractedData['rutas'])]);
+                    
+                    foreach ($extractedData['rutas'] as $idx => &$ruta) {
+                        $pesoRuta = $ruta['peso'] ?? 0;
+                        if (is_string($pesoRuta)) {
+                            $pesoRuta = (float) preg_replace('/[^0-9.]/', '', $pesoRuta);
+                        }
+                        
+                        if ($pesoRuta <= 0) {
+                            Log::info("⚠️ Ruta {$idx}: peso es 0, no se aplica tara");
+                            continue;
+                        }
+                        
+                        // Determinar tara según contenedor de esta ruta
+                        $empaqueRuta = $ruta['empaque'] ?? '';
+                        $contenedorRuta = $ruta['contenedor'] ?? '';
+                        
+                        // 🆕 REGLA: Tara SOLO para rutas con contenedor
+                        $rutaTieneContenedor = preg_match('/CONTENEDOR/i', $empaqueRuta) || preg_match('/\d+[xX](20|40)/i', $contenedorRuta);
+                        if (!$rutaTieneContenedor) {
+                            Log::info("📦 Ruta {$idx}: sin contenedor → NO se aplica tara (carga suelta)", [
+                                'empaque' => $empaqueRuta,
+                                'contenedor' => $contenedorRuta
+                            ]);
+                            continue;
+                        }
+                        
+                        $taraRuta = 3400; // Default
+                        
+                        if (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $empaqueRuta) ||
+                            preg_match('/\d+[xX]20/i', $contenedorRuta)) {
+                            $taraRuta = 2300;
+                        } elseif (preg_match('/CONTENEDOR\s*40|40\s*pies/i', $empaqueRuta) ||
+                            preg_match('/\d+[xX]40/i', $contenedorRuta)) {
+                            $taraRuta = 3400;
+                        } else {
+                            // Fallback: verificar mensaje original
+                            $esContenedor20EnMsg = preg_match('/(?:contenedor|cont).*?\b20\b|(?<![04])\b20\s*(?:pies|\')|\b\d+[xX]20\b/ui', $userMessage);
+                            $esContenedor40EnMsg = preg_match('/(?:contenedor|cont).*?\b40\b|\b40\s*(?:pies|\')|\b\d+[xX]40\b/ui', $userMessage);
+                            if ($esContenedor20EnMsg && !$esContenedor40EnMsg) {
+                                $taraRuta = 2300;
+                            }
+                        }
+                        
+                        // Aplicar heurístico solo si NO hay comando explícito ni "sin tara"/"+tara"
+                        $aplicarTaraRuta = true;
+                        if (!$comandoExplicitoTara && !$noIncluyeTara) {
+                            $pesoSinTara3400 = $pesoRuta - 3400;
+                            $pesoSinTara2300 = $pesoRuta - 2300;
+                            $esDuplicado = (
+                                ($pesoSinTara3400 > 0 && $pesoSinTara3400 % 1000 == 0) ||
+                                ($pesoSinTara2300 > 0 && $pesoSinTara2300 % 1000 == 0)
+                            );
+                            if ($pesoRuta >= 2300 && $esDuplicado) {
+                                $aplicarTaraRuta = false;
+                                Log::info("⚠️ Ruta {$idx}: heurístico detectó que peso {$pesoRuta} ya podría incluir tara");
+                            }
+                        }
+                        
+                        if ($aplicarTaraRuta) {
+                            $nuevoPesoRuta = $pesoRuta + $taraRuta;
+                            $ruta['peso'] = $nuevoPesoRuta;
+                            $ruta['peso_kg'] = $nuevoPesoRuta;
+                            $ruta['tara'] = $taraRuta;
+                            $ruta['incluye_tara'] = true;
+                            
+                            Log::info("📦 TARA aplicada a Ruta {$idx}", [
+                                'peso_anterior' => $pesoRuta,
+                                'tara' => $taraRuta,
+                                'nuevo_peso' => $nuevoPesoRuta,
+                                'empaque' => $empaqueRuta
+                            ]);
+                        }
+                    }
+                    unset($ruta); // romper referencia
+                    
+                } else {
+                // RUTA ÚNICA: Lógica existente
                 // 🆕 FIX: Si se detectó patrón "peso X suma tara", usar ese peso específico
                 if ($pesoConSumaTara && isset($matchPesoTara[1])) {
                     $pesoDelMensaje = $matchPesoTara[1];
@@ -268,6 +383,7 @@ class DataExtractionService
                         'peso_actual' => $pesoActual
                     ]);
                 }
+                } // fin else (ruta única)
             } else if ($esEdicionCampo) {
                 // 🔧 FIX #2: Si estamos editando, NO recalcular tara
                 Log::info('🔧 DataExtractionService - Modo edición detectado: NO recalcular tara', [
@@ -321,6 +437,15 @@ ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
 - Frases clave: "dos rutas", "tres rutas", "varias rutas", "múltiples rutas"
 - Patrones: "Una es... La otra es...", "La primera... La segunda...", "Ruta 1... Ruta 2..."
 - Ejemplos: "necesito dos rutas, una de Bogotá a Cali... y otra de Medellín a Cartagena"
+- Diferentes orígenes y/o destinos
+- Contenedores de TIPOS DIFERENTES: "2x40 // 1x20" → 2 rutas
+- Contenedores con PESOS DIFERENTES: "uno con 8.000 kg y otro con 20.000 kg" → 2 rutas
+
+⚠️ CUÁNDO NO ES MULTI-RUTA (IMPORTANTE):
+- "2 contenedores de 20" con UN solo peso → ES RUTA ÚNICA con cantidad: 2
+- "3 contenedores de 40 con 15.000 kg" → ES RUTA ÚNICA con cantidad: 3
+- Varios contenedores del MISMO tipo, MISMO peso, MISMO origen/destino → RUTA ÚNICA
+- La cantidad de contenedores NO significa cantidad de rutas
 
 SI DETECTAS MÚLTIPLES RUTAS:
 1. Extrae CADA ruta por separado
@@ -366,6 +491,8 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 6. producto - Mercancía real a transportar
 7. valor - Valor declarado en COP
 8. vehiculo - Tipo de vehículo (NORMALIZADO: TURBO, SENCILLO, TRACTOCAMION, PATINETA, CAMIONETA, DOBLETROQUE). IMPORTANTE: "camión sencillo" = SENCILLO, "camión turbo" = TURBO
+   ⚠️ REGLA DE VEHÍCULO CON CONTENEDORES: Si hay CONTENEDORES (de 20, de 40, 20', 40', etc.), vehiculo es SIEMPRE "TRACTOCAMION" aunque el usuario no lo mencione. Los contenedores SOLO se transportan en tractocamión.
+   ⚠️ Si NO hay contenedores y el usuario NO menciona vehículo → vehiculo: null (no inventar)
 9. contenedor - Tipo de contenedor o empaque especial
 10. incluye_tara - IMPORTANTE: true si dice "tara incluida", "con tara", "peso bruto"; false si dice "sin tara", "no incluye tara", "peso neto", o NO menciona nada de tara
 
@@ -393,6 +520,18 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
   ❌ INCORRECTO: Ruta 1: cantidad: 2, Ruta 2: cantidad: 2
 - Clave: si "uno con X... el otro con Y" separa los contenedores, es 1 por ruta
 
+⚠️ REGLA CRÍTICA: CUÁNDO CREAR MULTI-RUTA vs RUTA ÚNICA CON CONTENEDORES:
+- RUTA ÚNICA (multi_ruta: false): Cuando TODOS los contenedores son del MISMO tipo, tienen el MISMO peso, y van al MISMO destino
+  - "2 contenedores de 20 con 5600 kg sin tara" → multi_ruta: false, cantidad: 2, peso: 5600
+  - "3 contenedores de 40 con 15.000 kg" → multi_ruta: false, cantidad: 3, peso: 15000
+  - NO crear 2 o 3 rutas idénticas, eso es INCORRECTO
+- MULTI-RUTA (multi_ruta: true): SOLO cuando hay DIFERENCIAS entre los contenedores:
+  - Tipos diferentes: "1 contenedor de 20 y 1 contenedor de 40" → 2 rutas
+  - Pesos diferentes: "uno con 8.000 kg y otro con 20.000 kg" → 2 rutas
+  - Tara diferente: "uno sin tara y otro con tara incluida" → 2 rutas
+  - Destinos diferentes: "uno a Cali y otro a Medellín" → 2 rutas
+  - Formato "2x40 // 1x20" → 2 rutas (tipos diferentes)
+
 ⚠️ FORMATO DE CONTENEDORES (MUY IMPORTANTE):
 - "1x40'HC" = 1 contenedor de 40 pies High Cube → empaque: "CONTENEDOR 40", contenedor: "1X40' HC", cantidad: 1
 - "1x20'HC" = 1 contenedor de 20 pies High Cube → empaque: "CONTENEDOR 20", contenedor: "1X20' HC", cantidad: 1
@@ -400,19 +539,29 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 - "40HC", "40'HC" = contenedor de 40 pies → empaque: "CONTENEDOR 40"
 - "20GP", "20'GP" = contenedor de 20 pies → empaque: "CONTENEDOR 20"
 
-⚠️ REGLA CRÍTICA DE TARA:
-- Si dice "X kg con tara incluida" o "peso incluye tara" → incluye_tara: true
-- Si dice "X kg sin tara" o "peso no incluye tara" o "peso neto" → incluye_tara: false
-- Si dice "X kg + tara" o "peso más tara" → incluye_tara: false (significa que hay que SUMAR la tara, el peso dado NO incluye tara)
-- Si NO menciona nada sobre tara → incluye_tara: false (default)
+⚠️ REGLA CRÍTICA DE TARA (SOLO PARA CONTENEDORES):
+- La tara SOLO aplica cuando hay CONTENEDORES (de 20, 40, 45 pies). Para carga suelta (cajas, pallets, bultos, estibas), NO hay tara.
+- Si hay contenedor y dice "X kg con tara incluida" o "peso incluye tara" → incluye_tara: true
+- Si hay contenedor y dice "X kg sin tara" o "peso no incluye tara" o "peso neto" → incluye_tara: false
+- Si hay contenedor y dice "X kg + tara" o "peso más tara" → incluye_tara: false (significa que hay que SUMAR la tara)
+- Si hay contenedor y NO menciona nada sobre tara → incluye_tara: false (default)
+- Si NO hay contenedor (carga suelta, cajas, pallets, bultos) → incluye_tara: false SIEMPRE, el peso se deja tal cual
 
 REGLAS IMPORTANTES:
 ✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg, 2.5 toneladas = 2500 kg
 ✓ Para valores: 45 millones = 45000000, 20 millones = 20000000
 ✓ Normaliza ciudades: BOGOTA, MEDELLIN, CARTAGENA, BUENAVENTURA, CALI
+✓ IMPORTANTE: Si el usuario usa ABREVIATURAS de ciudades, expándelas al nombre completo:
+  - BOG = BOGOTA, MED = MEDELLIN, CLO = CALI, BAQ = BARRANQUILLA
+  - CTG = CARTAGENA, BGA = BUCARAMANGA, BUN = BUENAVENTURA
+  - SMR = SANTA MARTA, CUC = CUCUTA, BQUILLA = BARRANQUILLA
+  - Ejemplo: "ORIGEN BUN DESTINO BOG" → origen: "BUENAVENTURA", destino: "BOGOTA"
 ✓ Separa vehículo de producto: "turbo" es vehículo, "alimentos" es producto
 ✓ NUNCA inventes datos, solo extrae lo visible
 ✓ Responde SOLO en JSON puro, sin markdown ```json```
+✓ Origen y destino deben ser SOLO el nombre de la ciudad, sin verbos ni frases extra
+  - "cartagena a bucaramanga se lleva 2 contenedores" → origen: "CARTAGENA", destino: "BUCARAMANGA" (NO "BUCARAMANGA SE LLEVA")
+  - "bogotá hasta cali se envían 10 cajas" → origen: "BOGOTA", destino: "CALI" (NO "CALI SE ENVIAN")
 
 FORMATO DE RESPUESTA RUTA ÚNICA:
 {
@@ -471,7 +620,14 @@ Output: {
 
 EJEMPLO RUTA ÚNICA:
 Input: "Necesito enviar 8 toneladas de alimentos de Bogotá a Buenaventura, son 120 cajas, valor 45 millones, en tracto para contenedor de 20 pies"
-Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"BUENAVENTURA","peso":8000,"cantidad":120,"empaque":"cajas","producto":"alimentos","valor":45000000,"vehiculo":"tractocamión","contenedor":"contenedor de 20 pies","incluye_tara":false,"confidence":0.95}
+Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"BUENAVENTURA","peso":8000,"cantidad":120,"empaque":"cajas","producto":"alimentos","valor":45000000,"vehiculo":"TRACTOCAMION","contenedor":"contenedor de 20 pies","incluye_tara":false,"confidence":0.95}
+
+EJEMPLO RUTA ÚNICA CON MÚLTIPLES CONTENEDORES (MISMO TIPO, MISMO PESO):
+Input: "cartagena a bucaramanga se lleva 2 contenedores de 20, con 5600 kilos sin tara"
+Output: {"multi_ruta":false,"origen":"CARTAGENA","destino":"BUCARAMANGA","peso":5600,"cantidad":2,"empaque":"CONTENEDOR 20","producto":null,"vehiculo":"TRACTOCAMION","contenedor":"2X20' GP","valor":null,"incluye_tara":false,"confidence":0.9}
+
+Input: "3 contenedores de 40 pies con 18.000 kg sin tara de Bogotá a Cartagena, maquinaria, valor $120.000.000"
+Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"CARTAGENA","peso":18000,"cantidad":3,"empaque":"CONTENEDOR 40","producto":"maquinaria","vehiculo":"TRACTOCAMION","contenedor":"3X40' GP","valor":120000000,"incluye_tara":false,"confidence":0.95}
 EOT;
     }
 
@@ -697,6 +853,62 @@ EOT;
                     // Usar la misma lógica de MCPAssistantService si es posible, o replicarla
                     $val = trim($value);
                     
+                    // 🔧 FIX: Limpiar sufijos que no son parte de la ciudad
+                    // Ejemplo: "BUCARAMANGA SE LLEVA" → "BUCARAMANGA"
+                    // Ejemplo: "CARTAGENA DE INDIAS" → mantener (es nombre real)
+                    $val = preg_replace('/\s+(?:se\s+lleva|se\s+env[ií]a|se\s+recoge|se\s+entrega|se\s+despacha|se\s+transporta|se\s+manda|se\s+necesita|para\s+enviar|para\s+recoger|para\s+entregar|hay\s+que|donde\s+se|con\s+destino|hacia|desde)\b.*$/ui', '', $val);
+                    $val = trim($val);
+                    
+                    // 🔧 FIX: Validar contra lista de ciudades conocidas
+                    // Si la ciudad extraída contiene palabras extra, intentar matchear solo la primera palabra
+                    $knownCities = [
+                        'BOGOTA', 'MEDELLIN', 'CALI', 'BARRANQUILLA', 'CARTAGENA', 'BUCARAMANGA',
+                        'CUCUTA', 'PEREIRA', 'MANIZALES', 'ARMENIA', 'IBAGUE', 'NEIVA',
+                        'VILLAVICENCIO', 'PASTO', 'POPAYAN', 'SANTA MARTA', 'SINCELEJO', 
+                        'MONTERIA', 'VALLEDUPAR', 'RIOHACHA', 'QUIBDO', 'LETICIA', 'SAN ANDRES',
+                        'YOPAL', 'ARAUCA', 'FLORENCIA', 'MOCOA', 'TUNJA', 'DUITAMA', 'SOGAMOSO',
+                        'GIRARDOT', 'ZIPAQUIRA', 'FACATATIVA', 'SOACHA', 'BUENAVENTURA',
+                        'BARRANCABERMEJA', 'PALMIRA', 'TULUA', 'BUGA', 'CARTAGO', 'DOSQUEBRADAS',
+                        'ENVIGADO', 'ITAGUI', 'BELLO', 'APARTADO', 'TURBO', 'RIONEGRO',
+                        'IPIALES', 'TUMACO', 'TUQUERRES', 'OCANA', 'PAMPLONA', 'AGUACHICA',
+                        'MAGANGUE', 'EL CARMEN', 'FUNDACION', 'CIENAGA', 'SABANALARGA',
+                        'SOLEDAD', 'MAICAO', 'URIBIA', 'LORICA', 'CERETE', 'SAHAGUN',
+                        'PLANETA RICA', 'CAUCASIA', 'SEGOVIA', 'PUERTO BERRIO', 'LA DORADA',
+                        'HONDA', 'ESPINAL', 'MELGAR', 'FUSAGASUGA', 'CHIA', 'CAJICA',
+                        'MOSQUERA', 'FUNZA', 'MADRID', 'CARTAGENA DE INDIAS', 'SANTA FE',
+                        'SAN GIL', 'SOCORRO', 'PIEDECUESTA', 'FLORIDABLANCA', 'GIRON',
+                        'PUERTO BOYACA', 'CHIQUINQUIRA', 'SANTA ROSA DE CABAL', 'LA VIRGINIA',
+                        'CHINCHINA', 'VILLAMARIA', 'GARZON', 'PITALITO', 'LA PLATA',
+                        'SAN JOSE DEL GUAVIARE', 'MITU', 'PUERTO CARRENO', 'INIRIDA',
+                        'PUERTO GAITAN', 'ACACIAS', 'GRANADA', 'SAN MARTIN'
+                    ];
+                    
+                    // Normalizar para comparación
+                    $valUpper = mb_strtoupper(strtr(trim($val), [
+                        'á' => 'A', 'é' => 'E', 'í' => 'I', 'ó' => 'O', 'ú' => 'U',
+                        'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+                        'ñ' => 'N', 'Ñ' => 'N'
+                    ]), 'UTF-8');
+                    
+                    // Si no está en la lista exacta, verificar si empieza con una ciudad conocida
+                    if (!in_array($valUpper, $knownCities)) {
+                        foreach ($knownCities as $city) {
+                            if (strpos($valUpper, $city) === 0 && strlen($valUpper) > strlen($city)) {
+                                // La ciudad extraída empieza con una ciudad conocida pero tiene texto extra
+                                $charAfter = substr($valUpper, strlen($city), 1);
+                                if ($charAfter === ' ' || $charAfter === ',') {
+                                    // Excepciones: "CARTAGENA DE INDIAS", "SANTA MARTA", etc.
+                                    $remaining = trim(substr($valUpper, strlen($city)));
+                                    $isCompoundCity = preg_match('/^(DE\s+INDIAS|DE\s+CABAL|DE\s+CAUCA|DEL?\s+)$/ui', $remaining);
+                                    if (!$isCompoundCity) {
+                                        Log::info("🔧 Ciudad limpiada: '{$valUpper}' → '{$city}' (removido: '{$remaining}')");
+                                        $val = $city;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
                     // 🔥 POST-PROCESAMIENTO: Eliminar prefijos "importacion", "exportacion", "cotizacion"
                     $val = preg_replace('/^(importaci[oó]n|exportaci[oó]n|cotizaci[oó]n\s+de?)\s+/ui', '', $val);
                     $val = trim($val);
@@ -704,6 +916,7 @@ EOT;
                     $upperVal = mb_strtoupper($val);
                     
                     $abbreviations = [
+                        // Códigos IATA
                         'BOG' => 'BOGOTA', 'MED' => 'MEDELLIN', 'CLO' => 'CALI', 
                         'BAQ' => 'BARRANQUILLA', 'CTG' => 'CARTAGENA', 'BGA' => 'BUCARAMANGA',
                         'CUC' => 'CUCUTA', 'PEI' => 'PEREIRA', 'MZL' => 'MANIZALES',
@@ -715,7 +928,17 @@ EOT;
                         'AUC' => 'ARAUCA', 'FLA' => 'FLORENCIA', 'MCO' => 'MOCOA',
                         'TUN' => 'TUNJA', 'DUI' => 'DUITAMA', 'SOG' => 'SOGAMOSO',
                         'GIR' => 'GIRARDOT', 'ZIP' => 'ZIPAQUIRA', 'FAC' => 'FACATATIVA',
-                        'SOA' => 'SOACHA'
+                        'SOA' => 'SOACHA',
+                        // Abreviaturas informales comunes
+                        'BUN' => 'BUENAVENTURA', 'BUENAV' => 'BUENAVENTURA', 'BVTURA' => 'BUENAVENTURA', 'BTURA' => 'BUENAVENTURA',
+                        'BQUILLA' => 'BARRANQUILLA', 'BQLLA' => 'BARRANQUILLA', 'BQUILL' => 'BARRANQUILLA',
+                        'BMANGA' => 'BUCARAMANGA', 'BGT' => 'BUCARAMANGA',
+                        'CART' => 'CARTAGENA', 'CGEN' => 'CARTAGENA',
+                        'BARRANCA' => 'BARRANCABERMEJA', 'BMEJA' => 'BARRANCABERMEJA',
+                        'STA MARTA' => 'SANTA MARTA', 'S MARTA' => 'SANTA MARTA',
+                        'S ANDRES' => 'SAN ANDRES',
+                        'VVICENCIO' => 'VILLAVICENCIO',
+                        'DOSQ' => 'DOSQUEBRADAS'
                     ];
                     
                     if (isset($abbreviations[$upperVal])) {
@@ -863,6 +1086,22 @@ EOT;
             }
         }
 
+        // 🚛 FIX: Si hay contenedores, vehículo SIEMPRE es TRACTOCAMION
+        // Los contenedores solo se transportan en tractocamión, nunca en turbo/sencillo/camioneta
+        if (isset($normalized['empaque'])) {
+            $empaqueUpper = mb_strtoupper($normalized['empaque']);
+            if (strpos($empaqueUpper, 'CONTENEDOR') !== false) {
+                if (empty($normalized['vehiculo']) || $normalized['vehiculo'] !== 'TRACTOCAMION') {
+                    Log::info('🚛 Vehículo forzado a TRACTOCAMION por presencia de contenedor', [
+                        'empaque' => $normalized['empaque'],
+                        'vehiculo_original' => $normalized['vehiculo'] ?? 'null',
+                        'vehiculo_final' => 'TRACTOCAMION'
+                    ]);
+                    $normalized['vehiculo'] = 'TRACTOCAMION';
+                }
+            }
+        }
+
         return $normalized;
     }
 
@@ -890,6 +1129,23 @@ EOT;
         } elseif (substr_count($cleaned, ',') > 1) {
             // Solo comas múltiples - son separadores de miles
             $cleaned = str_replace(',', '', $cleaned);
+        } elseif (substr_count($cleaned, '.') === 1) {
+            // 🔧 FIX: Un solo punto - determinar si es decimal o miles español
+            // Si hay exactamente 3 dígitos después del punto → separador de miles español
+            // Ejemplo: "6.400" → 6400 (miles), "3.5" → 3.5 (decimal)
+            if (preg_match('/\.(\d{3})$/', $cleaned)) {
+                $cleaned = str_replace('.', '', $cleaned);
+            }
+            // Si no tiene 3 dígitos después → es decimal normal (ej: "3.5")
+        } elseif (substr_count($cleaned, ',') === 1) {
+            // 🔧 FIX: Una sola coma - determinar si es decimal o miles
+            // Si hay exactamente 3 dígitos después de la coma → separador de miles
+            // Ejemplo: "6,400" → 6400 (miles), "3,5" → 3.5 (decimal)
+            if (preg_match('/,(\d{3})$/', $cleaned)) {
+                $cleaned = str_replace(',', '', $cleaned);
+            } else {
+                $cleaned = str_replace(',', '.', $cleaned);
+            }
         }
 
         $number = floatval($cleaned);

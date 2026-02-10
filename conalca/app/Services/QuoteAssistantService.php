@@ -957,7 +957,7 @@ CAMPOS DISPONIBLES:
 4. cantidad: Cantidad de unidades/bultos (IMPORTANTE: si el usuario dice "18 pallets", la cantidad es 18; si dice "210 cajas", la cantidad es 210. NUNCA poner 1 cuando el usuario especifica un número de unidades)
 5. tipo_embajale: Tipo de embalaje (caja, pallet, etc.)
 6. tipo_producto: Tipo de producto/mercancía
-7. vehiculo_requerido: Tipo de vehículo necesario
+7. vehiculo_requerido: Tipo de vehículo necesario. ⚠️ REGLA CONTENEDORES: Si se mencionan CONTENEDORES (de 20, de 40, 20\', 40\', 1x20, 2x40, etc.), vehiculo_requerido es SIEMPRE "TRACTOCAMION". Los contenedores SOLO se transportan en tractocamión, NUNCA turbo, sencillo ni camioneta. Si NO hay contenedores y NO se menciona vehículo, dejar vacío.
 8. valor_declarado: Valor declarado de la mercancía
 
 RESPUESTAS INTELIGENTES:
