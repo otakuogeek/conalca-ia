@@ -5665,6 +5665,172 @@ class MCPAssistantService
             'text_length' => strlen($text)
         ]);
         
+        // 🆕 FIX: Detectar patrón "CIUDAD-CIUDAD" con datos de producto/peso intercalados
+        // Ejemplo: "bogotá-medellín Valor: $ 99.992 ... Peso: 1314 kilogramos ... bogotá-Buenaventura Valor: $ 237.154 ..."
+        // Este patrón detecta múltiples bloques separados por "ciudad-ciudad" con guión/dash
+        $ciudadesComunes = [
+            'bogota', 'bogotá', 'medellin', 'medellín', 'cali', 'barranquilla', 'cartagena',
+            'bucaramanga', 'pereira', 'cucuta', 'cúcuta', 'ibague', 'ibagué', 'manizales',
+            'santa marta', 'villavicencio', 'pasto', 'monteria', 'montería', 'neiva',
+            'valledupar', 'armenia', 'popayan', 'popayán', 'sincelejo', 'tunja', 'riohacha',
+            'buenaventura', 'girardot', 'floridablanca', 'soacha', 'bello', 'soledad',
+            'palmira', 'envigado', 'itagui', 'itagüí', 'dosquebradas', 'tulua', 'tuluá',
+            'apartado', 'apartadó', 'cartago', 'barrancabermeja', 'yopal', 'florencia',
+            'funza', 'zipaquira', 'zipaquirá', 'chia', 'chía', 'sogamoso', 'duitama',
+            'ipiales', 'tumaco', 'quibdo', 'quibdó', 'leticia', 'mocoa', 'arauca',
+            'san andres', 'san andrés', 'providencia', 'puerto asis', 'puerto asís',
+            'puerto carreño', 'inírida', 'mitú', 'turbo', 'caucasia', 'rionegro',
+            'la dorada', 'honda', 'mariquita', 'espinal', 'melgar', 'fusagasuga',
+            'fusagasugá', 'facatativa', 'facatativá', 'madrid', 'mosquera', 'cajica',
+            'cajicá', 'tocancipá', 'tocancipa', 'cota', 'tenjo', 'tabio', 'la calera',
+            'sibate', 'sibaté', 'sopo', 'sopó', 'guatape', 'guatapé', 'santa rosa de cabal',
+            'la virginia', 'chinchina', 'chinchiná'
+        ];
+        
+        // Construir patrón regex directamente desde la lista de ciudades conocidas
+        // Ordenar por longitud descendente para que "Santa Marta" matchee antes que "Santa"
+        $ciudadesOrdenadas = $ciudadesComunes;
+        usort($ciudadesOrdenadas, function($a, $b) { return mb_strlen($b) - mb_strlen($a); });
+        $cityPattern = implode('|', array_map(function($c) { return preg_quote($c, '/'); }, $ciudadesOrdenadas));
+        
+        // Patrón para detectar "ciudad-ciudad" o "ciudad - ciudad" usando lista de ciudades conocidas
+        $patronCiudadGuion = '/(' . $cityPattern . ')\s*[-–—]\s*(' . $cityPattern . ')/ui';
+        
+        Log::info('🔍 Buscando patrón CIUDAD-CIUDAD con guión', ['patron_length' => strlen($patronCiudadGuion)]);
+        
+        if (preg_match_all($patronCiudadGuion, $text, $matchesGuion, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            $validPairs = [];
+            
+            foreach ($matchesGuion as $match) {
+                $validPairs[] = [
+                    'origen' => self::normalizeCityName(trim($match[1][0])),
+                    'destino' => self::normalizeCityName(trim($match[2][0])),
+                    'offset' => $match[0][1],
+                    'length' => strlen($match[0][0])
+                ];
+            }
+            
+            Log::info('🔍 Pares ciudad-ciudad con guión encontrados', [
+                'total_matches' => count($matchesGuion),
+                'valid_pairs' => count($validPairs),
+                'pairs' => array_map(function($p) { return $p['origen'] . ' → ' . $p['destino']; }, $validPairs)
+            ]);
+            
+            if (count($validPairs) >= 2) {
+                Log::info('🔥 MÚLTIPLES RUTAS detectadas por patrón CIUDAD-CIUDAD con guión');
+                
+                foreach ($validPairs as $idx => $pair) {
+                    $matchStart = $pair['offset'];
+                    $matchEnd = $matchStart + $pair['length'];
+                    
+                    // Obtener contexto después del par (hasta el siguiente par o fin de texto)
+                    $nextStart = isset($validPairs[$idx + 1]) ? $validPairs[$idx + 1]['offset'] : strlen($text);
+                    $contextoDespues = substr($text, $matchEnd, $nextStart - $matchEnd);
+                    
+                    $route = [
+                        'ruta_numero' => $idx + 1,
+                        'origen' => $pair['origen'],
+                        'destino' => $pair['destino'],
+                    ];
+                    
+                    // Extraer Valor: $ XX.XXX o Valor: $ XXX,XXX
+                    if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
+                        $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
+                        $route['valor_declarado'] = (int)$valorStr;
+                        Log::info("💰 Valor extraído (ruta #{$route['ruta_numero']})", ['valor' => $route['valor_declarado'], 'raw' => $valorMatch[1]]);
+                    }
+                    
+                    // Extraer Peso: XXXX kilogramos
+                    $pesoExtraido = self::extractPeso($contextoDespues);
+                    if ($pesoExtraido) {
+                        $route['peso_kg'] = $pesoExtraido;
+                        $route['pesoMercancia'] = $pesoExtraido;
+                        $route['peso_mercancia'] = $pesoExtraido;
+                    }
+                    
+                    // Extraer Nombre Específico como producto
+                    if (preg_match('/Nombre\s+Espec[ií]fico\s*:\s*(.+?)(?:\s+Material|\s+Peso|\s+Tamaño|\s+Dimensiones|$)/ui', $contextoDespues, $nombreMatch)) {
+                        $route['producto'] = mb_strtoupper(trim($nombreMatch[1]), 'UTF-8');
+                        $route['descripcion_mercancia'] = trim($nombreMatch[1]);
+                        Log::info("📦 Producto extraído de 'Nombre Específico' (ruta #{$route['ruta_numero']})", ['producto' => $route['producto']]);
+                    }
+                    
+                    // Extraer Material
+                    if (preg_match('/Material\s*:\s*(.+?)(?:\s+Peso|\s+Tamaño|\s+Dimensiones|$)/ui', $contextoDespues, $materialMatch)) {
+                        $route['material'] = trim($materialMatch[1]);
+                    }
+                    
+                    // Extraer Dimensiones
+                    if (preg_match('/Dimensiones\s*:\s*(.+?)(?:\s+[a-záéíóúñ]+-[a-záéíóúñ]+|$)/ui', $contextoDespues, $dimMatch)) {
+                        $route['dimensiones'] = trim($dimMatch[1]);
+                    }
+                    
+                    // Extraer Tamaño
+                    if (preg_match('/Tamaño\s*:\s*(.+?)(?:\s+Dimensiones|$)/ui', $contextoDespues, $tamMatch)) {
+                        $route['tamano'] = trim($tamMatch[1]);
+                    }
+                    
+                    $routes[] = $route;
+                    
+                    Log::info("✅ Ruta #{$route['ruta_numero']} extraída (patrón CIUDAD-CIUDAD guión)", [
+                        'origen' => $route['origen'],
+                        'destino' => $route['destino'],
+                        'peso_kg' => $route['peso_kg'] ?? 'N/A',
+                        'producto' => $route['producto'] ?? 'N/A',
+                        'valor' => $route['valor_declarado'] ?? 'N/A'
+                    ]);
+                }
+                
+                Log::info('✅ Múltiples rutas detectadas por CIUDAD-CIUDAD guión', ['total' => count($routes)]);
+                return $routes;
+            }
+            // Si solo encontramos 1 par, dejamos que el flujo normal lo procese como ruta única
+            elseif (count($validPairs) === 1) {
+                Log::info('📦 Solo 1 par ciudad-ciudad con guión, procesando como ruta única');
+                // Aún así extraer los datos para esta única ruta
+                $pair = $validPairs[0];
+                $matchEnd = $pair['offset'] + $pair['length'];
+                $contextoDespues = substr($text, $matchEnd);
+                
+                $route = [
+                    'ruta_numero' => 1,
+                    'origen' => $pair['origen'],
+                    'destino' => $pair['destino'],
+                ];
+                
+                // Extraer Valor
+                if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
+                    $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
+                    $route['valor_declarado'] = (int)$valorStr;
+                }
+                
+                // Extraer Peso
+                $pesoExtraido = self::extractPeso($contextoDespues);
+                if ($pesoExtraido) {
+                    $route['peso_kg'] = $pesoExtraido;
+                }
+                
+                // Extraer Nombre Específico como producto
+                if (preg_match('/Nombre\s+Espec[ií]fico\s*:\s*(.+?)(?:\s+Material|\s+Peso|\s+Tamaño|\s+Dimensiones|$)/ui', $contextoDespues, $nombreMatch)) {
+                    $route['producto'] = mb_strtoupper(trim($nombreMatch[1]), 'UTF-8');
+                    $route['descripcion_mercancia'] = trim($nombreMatch[1]);
+                }
+                
+                // Extraer Material
+                if (preg_match('/Material\s*:\s*(.+?)(?:\s+Peso|\s+Tamaño|\s+Dimensiones|$)/ui', $contextoDespues, $materialMatch)) {
+                    $route['material'] = trim($materialMatch[1]);
+                }
+                
+                // Extraer Dimensiones
+                if (preg_match('/Dimensiones\s*:\s*(.+?)(?:\s+[a-záéíóúñ]+-[a-záéíóúñ]+|$)/ui', $contextoDespues, $dimMatch)) {
+                    $route['dimensiones'] = trim($dimMatch[1]);
+                }
+                
+                $routes[] = $route;
+                return $routes;
+            }
+        }
+        
         // 🆕 FIX #569: Detectar patrón "de X a Y y Z" (múltiples destinos desde mismo origen)
         // Ejemplo: "De Cartagena a Bogotá y Medellín" → 2 rutas
         // 🔧 FIX #571: Agregar validaciones para excluir productos y números
@@ -9118,6 +9284,16 @@ class MCPAssistantService
                                'furgon', 'furgón', 'niñera', 'ninera', 'mula', 'doble troque', 'cama baja',
                                'camabaja', 'estacas', 'plataforma', 'carrotanque', 'volqueta'];
         
+        // 🆕 PATRÓN PRIORITARIO: "Nombre Específico: Motobomba ZW 8x5x12 (G)"
+        // Detecta productos con nombre técnico/específico
+        if (preg_match('/Nombre\s+Espec[ií]fico\s*:\s*(.+?)(?:\s+Material\s*:|\s+Peso\s*:|\s+Tamaño\s*:|\s+Dimensiones\s*:|$)/ui', $text, $nombreEspMatch)) {
+            $producto = mb_strtoupper(trim($nombreEspMatch[1]), 'UTF-8');
+            if (strlen($producto) > 1) {
+                Log::info("📦 Producto detectado (patrón 'Nombre Específico: X')", ['producto' => $producto]);
+                return $producto;
+            }
+        }
+        
         // 🔧 FIX: Función auxiliar para validar y retornar producto (evita duplicar código)
         $validarYRetornarProducto = function($producto, $patron) use ($vehiculosExcluidos) {
             $productoLower = mb_strtolower(trim($producto), 'UTF-8');
@@ -9427,6 +9603,17 @@ class MCPAssistantService
      */
     private static function extractValorDeclarado($text)
     {
+        // 🆕 PATRÓN PRIORITARIO: "Valor: $ 99.992" o "Valor: $ 237,154" o "Valor: $99.992"
+        // Formato de cotización con etiqueta "Valor:" seguida de símbolo $ y número
+        if (preg_match('/Valor\s*:\s*\$\s*([\d.,]+)/ui', $text, $matchValor)) {
+            $valorStr = str_replace(['.', ','], '', $matchValor[1]);
+            $valor = (int)$valorStr;
+            if ($valor > 0) {
+                Log::info('💰 Valor detectado (patrón "Valor: $ X")', ['valor' => $valor, 'raw' => $matchValor[1]]);
+                return $valor;
+            }
+        }
+        
         // 🆕 PATRÓN PRIORITARIO: "$10,000,000 COP" o "$10.000.000 COP" (formato con separadores + moneda)
         // Ejemplo: "valor declarado de $10,000,000 COP" o "un valor declarado de $5,000,000 COP"
         if (preg_match('/(?:valor\s+declarado|valor)\s+(?:de\s+)?\$\s*([\d.,]+)\s*(?:cop|pesos?)/ui', $text, $matches)) {
