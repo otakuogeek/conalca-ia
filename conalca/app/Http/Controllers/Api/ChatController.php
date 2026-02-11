@@ -592,6 +592,53 @@ class ChatController extends Controller
                 }
             }
             
+            // 💵 FILTRO FINAL: Si el mensaje del usuario menciona USD/dólares, eliminar valor_declarado
+            // de extracted_data antes de enviar al frontend
+            $userMsg = $request->message ?? '';
+            $esValorEnUSD = \App\Services\MCPAssistantService::detectValorEnUSD($userMsg);
+            
+            if ($esValorEnUSD && !empty($extractedData)) {
+                Log::info('💵 ChatController: USD detectado en mensaje, limpiando valor de extracted_data');
+                
+                // Si es array de rutas (multi-ruta o array indexado)
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        unset($ruta['valor']);
+                        unset($ruta['valor_declarado']);
+                        unset($ruta['valorMercancia']);
+                        unset($ruta['valor_mercancia']);
+                        $ruta['valor_en_usd'] = true;
+                    }
+                    unset($ruta);
+                } else {
+                    // Ruta única
+                    unset($extractedData['valor']);
+                    unset($extractedData['valor_declarado']);
+                    unset($extractedData['valorMercancia']);
+                    unset($extractedData['valor_mercancia']);
+                    $extractedData['valor_en_usd'] = true;
+                }
+            }
+            // También limpiar si las rutas ya tienen valor_en_usd (de procesamientos anteriores)
+            elseif (!empty($extractedData)) {
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        if (!empty($ruta['valor_en_usd'])) {
+                            unset($ruta['valor']);
+                            unset($ruta['valor_declarado']);
+                            unset($ruta['valorMercancia']);
+                            unset($ruta['valor_mercancia']);
+                        }
+                    }
+                    unset($ruta);
+                } elseif (!empty($extractedData['valor_en_usd'])) {
+                    unset($extractedData['valor']);
+                    unset($extractedData['valor_declarado']);
+                    unset($extractedData['valorMercancia']);
+                    unset($extractedData['valor_mercancia']);
+                }
+            }
+
             Log::info('Respuesta final del chat', [
                 'is_completed' => $isCompleted,
                 'messages_count' => count($messages),
@@ -600,7 +647,8 @@ class ChatController extends Controller
                 'extracted_data_keys' => !empty($extractedData) ? array_keys($extractedData) : [],
                 'is_multi_route' => (is_array($extractedData) && isset($extractedData[0]) && is_array($extractedData[0])) || 
                                    (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true),
-                'group_id' => $request->group_id
+                'group_id' => $request->group_id,
+                'valor_en_usd' => $esValorEnUSD
             ]);
 
             // 🆕 Obtener productos pendientes de selección (si existen)

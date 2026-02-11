@@ -83,6 +83,32 @@ class DataExtractionService
             // Parsear respuesta JSON
             $extractedData = $this->parseExtractionResponse($assistantMessage);
 
+            // 💵 DETECCIÓN USD EN MENSAJE ORIGINAL: Si el usuario mencionó USD/dólares en el
+            // mensaje original, NO almacenar el valor numérico sin importar lo que la IA devuelva
+            $tieneUSDenMensaje = preg_match('/\b(usd|dolar(?:es)?|d[oó]lar(?:es)?|us\$|u\.s\.|dollars?)\b/ui', $userMessage)
+                && preg_match('/\b(valor|precio|carga|mercanc[ií]a|declarado)\b/ui', $userMessage);
+            
+            if ($tieneUSDenMensaje) {
+                Log::info('💵 USD detectado en mensaje original del usuario - eliminando valor extraído');
+                // Eliminar cualquier valor que la IA haya extraído
+                if (isset($extractedData['extracted'])) {
+                    unset($extractedData['extracted']['valor']);
+                    unset($extractedData['extracted']['valor_declarado']);
+                    unset($extractedData['extracted']['valorMercancia']);
+                    $extractedData['extracted']['valor_en_usd'] = true;
+                }
+                // También para multi-ruta
+                if (isset($extractedData['multi_ruta']) && isset($extractedData['rutas'])) {
+                    foreach ($extractedData['rutas'] as &$ruta) {
+                        unset($ruta['valor']);
+                        unset($ruta['valor_declarado']);
+                        unset($ruta['valorMercancia']);
+                        $ruta['valor_en_usd'] = true;
+                    }
+                    unset($ruta);
+                }
+            }
+
             // 🆕 LÓGICA TARA (Manual, post-procesamiento para respuesta rápida)
             // Esto asegura que la respuesta inmediata tenga el cálculo aplicado
             $lastUserMessage = strtolower($userMessage);
@@ -440,6 +466,11 @@ ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
 - Diferentes orígenes y/o destinos
 - Contenedores de TIPOS DIFERENTES: "2x40 // 1x20" → 2 rutas
 - Contenedores con PESOS DIFERENTES: "uno con 8.000 kg y otro con 20.000 kg" → 2 rutas
+- ENTREGA DIVIDIDA: "PRIMER DESTINO: ... SEGUNDO DESTINO: ..." → Cada destino es una RUTA SEPARADA con su propia cantidad
+  Ejemplo: "ORIGEN: Cartagena PRIMER DESTINO: Cartagena (5 Pallets) SEGUNDO DESTINO: Barranquilla (7 Pallets)"
+  → Ruta 1: origen=Cartagena, destino=Cartagena, cantidad=5
+  → Ruta 2: origen=Cartagena, destino=Barranquilla, cantidad=7
+  ⚠️ IMPORTANTE: El origen y primer destino PUEDEN ser la misma ciudad (entrega local)
 
 ⚠️ CUÁNDO NO ES MULTI-RUTA (IMPORTANTE):
 - "2 contenedores de 20" con UN solo peso → ES RUTA ÚNICA con cantidad: 2
@@ -489,7 +520,7 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 4. cantidad - Número de unidades (VER REGLA DE CONTENEDORES ABAJO)
 5. empaque - Tipo de empaque (cajas, bultos, estibas, CONTENEDOR 20, CONTENEDOR 40)
 6. producto - Mercancía real a transportar
-7. valor - Valor declarado en COP
+7. valor - Valor declarado en PESOS COLOMBIANOS (COP). ⚠️ Si el valor está en USD, dólares o moneda extranjera, retorna "USD" como valor (NO el número). El sistema preguntará al usuario el valor en pesos colombianos.
 8. vehiculo - Tipo de vehículo (NORMALIZADO: TURBO, SENCILLO, TRACTOCAMION, PATINETA, CAMIONETA, DOBLETROQUE). IMPORTANTE: "camión sencillo" = SENCILLO, "camión turbo" = TURBO
    ⚠️ REGLA DE VEHÍCULO CON CONTENEDORES: Si hay CONTENEDORES (de 20, de 40, 20', 40', etc.), vehiculo es SIEMPRE "TRACTOCAMION" aunque el usuario no lo mencione. Los contenedores SOLO se transportan en tractocamión.
    ⚠️ Si NO hay contenedores y el usuario NO menciona vehículo → vehiculo: null (no inventar)
@@ -546,6 +577,15 @@ CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
 - Si hay contenedor y dice "X kg + tara" o "peso más tara" → incluye_tara: false (significa que hay que SUMAR la tara)
 - Si hay contenedor y NO menciona nada sobre tara → incluye_tara: false (default)
 - Si NO hay contenedor (carga suelta, cajas, pallets, bultos) → incluye_tara: false SIEMPRE, el peso se deja tal cual
+- ⚠️ NUNCA sumes tara a cajas, bultos, pallets, estibas. La tara es EXCLUSIVAMENTE para contenedores marítimos.
+
+⚠️ REGLA CRÍTICA DE PESO TOTAL CON C/U (SIN CONTENEDORES):
+Cuando hay "c/u", "cada uno", "por unidad" y NO hay contenedores:
+- El peso que se reporta debe ser el PESO TOTAL = peso_unitario × cantidad
+- Ejemplo: "4 cajas - Peso 23.6 kilos c/u" → peso: 94.4 (que es 4 × 23.6)
+- Ejemplo: "10 bultos de 50 kg c/u" → peso: 500 (que es 10 × 50)
+- NUNCA reportes solo el peso unitario como peso total
+- NUNCA interpretes "23.6" como 23600 (el punto es DECIMAL)
 
 REGLAS IMPORTANTES:
 ✓ Convierte SIEMPRE toneladas a kg: 1 tonelada = 1000 kg, 2.5 toneladas = 2500 kg
@@ -562,6 +602,12 @@ REGLAS IMPORTANTES:
 ✓ Origen y destino deben ser SOLO el nombre de la ciudad, sin verbos ni frases extra
   - "cartagena a bucaramanga se lleva 2 contenedores" → origen: "CARTAGENA", destino: "BUCARAMANGA" (NO "BUCARAMANGA SE LLEVA")
   - "bogotá hasta cali se envían 10 cajas" → origen: "BOGOTA", destino: "CALI" (NO "CALI SE ENVIAN")
+✓ IMPORTANTE: Si el origen o destino dice "PUERTO DE [CIUDAD]" o "PUERTO [CIUDAD]", extraer SOLO la ciudad:
+  - "PUERTO BARRANQUILLA" → "BARRANQUILLA"
+  - "PUERTO DE BUENAVENTURA" → "BUENAVENTURA"
+  - "PUERTO CARTAGENA" → "CARTAGENA"
+  - "PUERTO DE SANTA MARTA" → "SANTA MARTA"
+  - Lo mismo aplica para "AEROPUERTO DE [CIUDAD]" o "TERMINAL DE [CIUDAD]" → extraer solo la ciudad
 
 FORMATO DE RESPUESTA RUTA ÚNICA:
 {
@@ -579,10 +625,19 @@ FORMATO DE RESPUESTA RUTA ÚNICA:
 }
 
 ⚠️ REGLA CRÍTICA DE PESO "C/U" o "CADA UNO":
-- Si dice "Peso: X toneladas c/u" o "X kg cada uno" o "X toneladas por cada contenedor" → APLICA EL MISMO PESO A TODAS LAS RUTAS
-- Ejemplo: "2x40 // 1x20 ... Peso: 15 toneladas sin tara c/u" → Ruta 1: peso=15000, Ruta 2: peso=15000 (AMBAS 15 toneladas)
-- El peso "c/u" (cada uno) significa que CADA ruta tiene ESE peso individualmente
-- NO dividas el peso entre las rutas, cada una tiene el peso completo
+Hay DOS contextos para "c/u" dependiendo de si hay contenedores o no:
+
+1. CON CONTENEDORES: "Peso: X toneladas c/u" → cada RUTA tiene X toneladas de peso
+   - Ejemplo: "2x40 // 1x20 ... Peso: 15 toneladas sin tara c/u" → Ruta 1: peso=15000, Ruta 2: peso=15000
+
+2. SIN CONTENEDORES (cajas, bultos, etc.): "Peso: X kg c/u" → peso POR UNIDAD, se debe MULTIPLICAR por la cantidad
+   - Ejemplo: "4 cajas - Peso 23.6 kilos c/u" → peso = 4 × 23.6 = 94.4 kg (NO 23.6, NO 23600)
+   - Ejemplo: "10 bultos - Peso 15 kg cada uno" → peso = 10 × 15 = 150 kg
+   - Ejemplo: "6 estibas de 500 kg c/u" → peso = 6 × 500 = 3000 kg
+   - ⚠️ IMPORTANTE: "23.6 kilos" = 23.6 kg (con punto decimal), NO 23600 kg
+   - ⚠️ El punto en "23.6" es separador DECIMAL, no de miles. En español, el punto puede ser decimal.
+   - ⚠️ Para carga SIN contenedores, el peso total = peso_unitario × cantidad
+   - ⚠️ incluye_tara SIEMPRE es false para carga sin contenedores (NO HAY TARA)
 
 EJEMPLOS MULTI-RUTA:
 Input: "Cotiza dos rutas: Bogotá a Cartagena, 10500 kg con tara incluida, 520 cajas. La segunda Cali a Buenaventura, 2900 kg sin tara, 75 cajas"
@@ -831,10 +886,20 @@ EOT;
                 case 'valor':
                 case 'value':
                 case 'price':
-                    // Extraer número sin símbolos
-                    $num = $this->extractNumber($value);
-                    if ($num) {
-                        $normalized['valor'] = $num;
+                    // 💵 VALIDACIÓN USD: Si el valor viene en dólares, NO almacenar - pedir en COP
+                    $valStr = trim($value);
+                    $esUSD = preg_match('/\b(usd|dolar|dolares|dólares|dólar|us\$|u\.s\.|dollars?)\b/ui', $valStr)
+                        || mb_strtoupper($valStr) === 'USD';
+                    
+                    if ($esUSD) {
+                        // No guardar el valor, marcar como pendiente en USD
+                        $normalized['valor_en_usd'] = true;
+                        Log::info('💵 Valor en USD detectado - se pedirá en COP', ['valor_original' => $valStr]);
+                    } else {
+                        $num = $this->extractNumber($valStr);
+                        if ($num) {
+                            $normalized['valor'] = $num;
+                        }
                     }
                     break;
 
@@ -858,6 +923,36 @@ EOT;
                     // Ejemplo: "CARTAGENA DE INDIAS" → mantener (es nombre real)
                     $val = preg_replace('/\s+(?:se\s+lleva|se\s+env[ií]a|se\s+recoge|se\s+entrega|se\s+despacha|se\s+transporta|se\s+manda|se\s+necesita|para\s+enviar|para\s+recoger|para\s+entregar|hay\s+que|donde\s+se|con\s+destino|hacia|desde)\b.*$/ui', '', $val);
                     $val = trim($val);
+                    
+                    // 🚢 LIMPIAR "PUERTO DE" o "PUERTO" seguido de ciudades portuarias conocidas
+                    $ciudadesPortuarias = [
+                        'BARRANQUILLA', 'BUENAVENTURA', 'CARTAGENA', 'SANTA MARTA', 'TUMACO',
+                        'TURBO', 'COVEÑAS', 'COVENAS', 'MAMONAL', 'PALERMO', 'POZOS COLORADOS',
+                        'SOCIEDAD PORTUARIA', 'SPRB'
+                    ];
+                    if (preg_match('/^puerto\s+(?:de\s+)?(.+)$/ui', $val, $matchPuerto)) {
+                        $posibleCiudad = mb_strtoupper(trim($matchPuerto[1]), 'UTF-8');
+                        $posibleCiudadNorm = strtr($posibleCiudad, [
+                            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'Ñ' => 'N'
+                        ]);
+                        foreach ($ciudadesPortuarias as $ciudadPortuaria) {
+                            if ($posibleCiudadNorm === $ciudadPortuaria || 
+                                strpos($posibleCiudadNorm, $ciudadPortuaria) !== false ||
+                                strpos($ciudadPortuaria, $posibleCiudadNorm) !== false) {
+                                Log::info("🚢 Puerto de ciudad eliminado en DataExtraction", [
+                                    'original' => $val,
+                                    'ciudad_extraida' => $matchPuerto[1]
+                                ]);
+                                $val = trim($matchPuerto[1]);
+                                break;
+                            }
+                        }
+                    }
+                    // ✈️ LIMPIAR "AEROPUERTO DE" o "TERMINAL DE" seguido de ciudad
+                    if (preg_match('/^(?:aeropuerto|terminal)\s+(?:de\s+)?(.+)$/ui', $val, $matchAero)) {
+                        $val = trim($matchAero[1]);
+                        Log::info("✈️ Aeropuerto/Terminal de ciudad eliminado", ['ciudad_extraida' => $val]);
+                    }
                     
                     // 🔧 FIX: Validar contra lista de ciudades conocidas
                     // Si la ciudad extraída contiene palabras extra, intentar matchear solo la primera palabra
@@ -1160,13 +1255,24 @@ EOT;
         $response = '';
 
         // Si hay datos extraídos
+        $valorEnUSD = false;
         if (!empty($extractedData)) {
             $response .= "✅ He identificado los siguientes detalles de tu cotización:\n\n";
             
             foreach ($extractedData as $field => $value) {
+                // Detectar flag de valor en USD
+                if ($field === 'valor_en_usd' && $value) {
+                    $valorEnUSD = true;
+                    continue;
+                }
                 $fieldLabel = $this->humanizeFieldName($field);
                 $response .= "- **$fieldLabel**: $value\n";
             }
+        }
+
+        // Si se detectó valor en USD, agregar como campo faltante especial
+        if ($valorEnUSD) {
+            $missingFields[] = 'valor_cop';
         }
 
         // Si hay campos faltantes críticos
@@ -1216,7 +1322,8 @@ EOT;
             'cantidad' => '¿Cuántas **unidades o bultos** comprende el envío?',
             'contenedor' => '¿Qué tipo de **empaque o contenedor** se utilizará?',
             'producto' => '¿Cuál es el **tipo de producto o mercancía** que se transportará?',
-            'valor' => '¿Cuál es el **valor declarado** de la mercancía?',
+            'valor' => '¿Cuál es el **valor declarado** de la mercancía en **pesos colombianos (COP)**?',
+            'valor_cop' => 'El valor fue indicado en dólares (USD). ¿Podrías indicarme el **valor declarado en pesos colombianos (COP)**?',
             'incoterm' => '¿Cuál es el **incoterm** aplicable (DDP, CIF, FOB)?',
             'observaciones' => '¿Hay alguna **observación especial** que deba considerar?'
         ];

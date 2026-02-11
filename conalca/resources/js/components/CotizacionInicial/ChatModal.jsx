@@ -280,7 +280,7 @@ const ChatModal = ({
         producto_codigo: r.producto_codigo || r.codigoProducto,
         producto_nombre: r.producto_nombre || r.productoNombre,
         vehiculo_requerido: r.vehiculo || r.claseVehiculo || r.vehiculo_requerido,
-        valor_declarado: r.valorMercancia || r.valor_declarado || r.valor_mercancia || 0,
+        valor_declarado: r.valor_en_usd ? 0 : (r.valorMercancia || r.valor_declarado || r.valor_mercancia || 0),
         incluye_tara: r.incluye_tara === true,
         ruta_numero: idx + 1
       };
@@ -1005,7 +1005,8 @@ const ChatModal = ({
                   peso_mercancia: pesoValue,
                   pesoMercancia: pesoValue,
                   cantidadMercancia: route.cantidad_unidades ?? route.cantidad ?? null,
-                  valorMercancia: route.valor_mercancia ?? route.valor_declarado ?? null,
+                  // 💵 Si valor está en USD, NO mostrar en el panel
+                  valorMercancia: route.valor_en_usd ? null : (route.valor_mercancia ?? route.valor_declarado ?? null),
                   vehiculo: route.vehiculo ?? null, // Para compatibilidad
                   claseVehiculo: route.vehiculo ?? route.claseVehiculo ?? route.vehiculo_requerido ?? null, // 🆕 Para el panel
                   // 🔥 PRIORIDAD PRODUCTO: producto_mencionado > producto > tipo_producto
@@ -1060,7 +1061,7 @@ const ChatModal = ({
                           peso_mercancia: pesoValue,
                           pesoMercancia: pesoValue,
                           cantidadMercancia: r.cantidad || r.cantidadMercancia,
-                          valorMercancia: r.valor_declarado || r.valorMercancia,
+                          valorMercancia: r.valor_en_usd ? null : (r.valor_declarado || r.valorMercancia),
                           producto: r.producto_mencionado || r.producto,
                           tipo_producto: r.producto_mencionado || r.tipo_producto || r.producto,
                           producto_mencionado: r.producto_mencionado || r.producto,
@@ -1360,9 +1361,9 @@ const ChatModal = ({
             tipo_producto: rutaNormalizada.producto || null,
             tipo_embajale: rutaNormalizada.empaque || rutaNormalizada.contenedor || null,
             empaque: rutaNormalizada.empaque || null,
-            valorMercancia: rutaNormalizada.valor || null,
-            valor_declarado: rutaNormalizada.valor || null,
-            valor_mercancia: rutaNormalizada.valor || null,
+            valorMercancia: rutaNormalizada.valor_en_usd ? null : (rutaNormalizada.valor || null),
+            valor_declarado: rutaNormalizada.valor_en_usd ? null : (rutaNormalizada.valor || null),
+            valor_mercancia: rutaNormalizada.valor_en_usd ? null : (rutaNormalizada.valor || null),
             vehiculo_requerido: rutaNormalizada.vehiculo || null,
             claseVehiculo: rutaNormalizada.vehiculo || null,
             vehiculo: rutaNormalizada.vehiculo || null,
@@ -1435,8 +1436,9 @@ const ChatModal = ({
           tipo_embajale: datosNormalizados.contenedor || currentData.tipo_embajale || currentData.empaque || null,
           tipo_embalaje: datosNormalizados.contenedor || currentData.tipo_embalaje || currentData.empaque || null,
           empaque: datosNormalizados.empaque || currentData.empaque || null,
-          valorMercancia: datosNormalizados.valor || currentData.valorMercancia || currentData.valor_mercancia || null,
-          valor_declarado: datosNormalizados.valor || currentData.valorMercancia || currentData.valor_declarado || null,
+          // 💵 Si valor_en_usd, NO mapear el valor
+          valorMercancia: extractedData.valor_en_usd ? null : (datosNormalizados.valor || currentData.valorMercancia || currentData.valor_mercancia || null),
+          valor_declarado: extractedData.valor_en_usd ? null : (datosNormalizados.valor || currentData.valorMercancia || currentData.valor_declarado || null),
           vehiculo: datosNormalizados.vehiculo || currentData.vehiculo || null,
           vehiculo_requerido: datosNormalizados.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
           claseVehiculo: datosNormalizados.vehiculo || currentData.claseVehiculo || currentData.vehiculo_requerido || null,
@@ -2056,8 +2058,8 @@ const ChatModal = ({
               tipo_producto: route.producto_mencionado || route.producto || route.tipo_producto || null,
               producto_codigo: route.producto_codigo || null,
               producto_nombre: route.producto_nombre || null,
-              valorMercancia: route.valor || route.valor_mercancia || route.valor_declarado || null,
-              valor_declarado: route.valor || route.valor_mercancia || route.valor_declarado || null,
+              valorMercancia: route.valor_en_usd ? null : (route.valor || route.valor_mercancia || route.valor_declarado || null),
+              valor_declarado: route.valor_en_usd ? null : (route.valor || route.valor_mercancia || route.valor_declarado || null),
               vehiculo: route.vehiculo || null, // Para compatibilidad
               claseVehiculo: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null, // 🆕 AGREGAR claseVehiculo para el panel
               vehiculo_requerido: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null, // 🆕 Para el panel izquierdo
@@ -2475,8 +2477,8 @@ const ChatModal = ({
                   producto: route.producto || route.tipo_producto || null,
                   tipo_producto: route.producto || route.tipo_producto || null,
                   producto_codigo: route.producto_codigo || null,
-                  valorMercancia: route.valor || route.valor_mercancia || route.valor_declarado || null,
-                  valor_declarado: route.valor || route.valor_mercancia || route.valor_declarado || null,
+                  valorMercancia: route.valor_en_usd ? null : (route.valor || route.valor_mercancia || route.valor_declarado || null),
+                  valor_declarado: route.valor_en_usd ? null : (route.valor || route.valor_mercancia || route.valor_declarado || null),
                   vehiculo: route.vehiculo || null,
                   claseVehiculo: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
                   vehiculo_requerido: route.vehiculo || route.claseVehiculo || route.vehiculo_requerido || null,
@@ -2592,7 +2594,7 @@ const ChatModal = ({
                     destino: editedRoute.destino ?? editedRoute.ciudadDestino,
                     peso_kg: editedRoute.peso_kg ?? editedRoute.peso ?? editedRoute.pesoMercancia,
                     cantidad: editedRoute.cantidad ?? editedRoute.cantidadMercancia,
-                    valor_declarado: editedRoute.valor_declarado ?? editedRoute.valor ?? editedRoute.valorMercancia,
+                    valor_declarado: editedRoute.valor_en_usd ? null : (editedRoute.valor_declarado ?? editedRoute.valor ?? editedRoute.valorMercancia),
                     vehiculo: editedRoute.vehiculo ?? editedRoute.claseVehiculo,
                     empaque: editedRoute.empaque,
                     empaque_id: editedRoute.empaque_id,
@@ -2711,7 +2713,7 @@ const ChatModal = ({
                 destino: r.ciudadDestino,
                 peso_kg: r.pesoMercancia,
                 cantidad: r.cantidadMercancia,
-                valor_declarado: r.valorMercancia || r.valor_declarado,
+                valor_declarado: r.valor_en_usd ? 0 : (r.valorMercancia || r.valor_declarado),
                 vehiculo: r.claseVehiculo,
                 empaque: r.empaque,
                 empaque_id: r.empaque_id,
@@ -2834,8 +2836,8 @@ const ChatModal = ({
                 peso_kg: pesoFinal || routeData.peso_kg || existingRoute.peso_kg || null,
                 cantidadMercancia: routeData.cantidad || existingRoute.cantidadMercancia || null,
                 cantidad: routeData.cantidad || existingRoute.cantidad || null,
-                valorMercancia: routeData.valor_declarado || existingRoute.valorMercancia || null,
-                valor_declarado: routeData.valor_declarado || existingRoute.valor_declarado || null,
+                valorMercancia: routeData.valor_en_usd ? null : (routeData.valor_declarado || existingRoute.valorMercancia || null),
+                valor_declarado: routeData.valor_en_usd ? null : (routeData.valor_declarado || existingRoute.valor_declarado || null),
                 claseVehiculo: routeData.vehiculo || existingRoute.claseVehiculo || null,
                 vehiculo: routeData.vehiculo || existingRoute.vehiculo || null,
                 vehiculo_requerido: routeData.vehiculo || existingRoute.vehiculo_requerido || null,

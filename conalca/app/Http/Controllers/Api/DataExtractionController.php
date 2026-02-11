@@ -191,21 +191,30 @@ class DataExtractionController extends Controller
                                         'peso' => $pesoConTara
                                     ]);
                                 } else if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
-                                    // 🔧 FIX: Determinar tara según tamaño de contenedor
-                                    $taraEdicion = 3400; // Default
-                                    if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
-                                        $taraEdicion = 2300;
-                                    } elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
-                                        $taraEdicion = 2300;
+                                    // 🔧 FIX v3: Solo aplicar tara si hay contenedores
+                                    $textoContEdicion = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                                    $hayContEdicion = preg_match('/contenedor|container|\d+[xX]\d+|\d+\s*(?:pies|ft|pie)/ui', $textoContEdicion);
+                                    if ($hayContEdicion) {
+                                        $taraEdicion = 3400; // Default
+                                        if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
+                                            $taraEdicion = 2300;
+                                        } elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
+                                            $taraEdicion = 2300;
+                                        }
+                                        $ruta['peso'] = $pesoBase + $taraEdicion;
+                                        $ruta['peso_kg'] = $pesoBase + $taraEdicion;
+                                        $ruta['tara'] = $taraEdicion;
+                                        $ruta['incluye_tara'] = true;
+                                        Log::info('🏋️ TARA aplicada en edición fusionada, ruta ' . ($idx + 1), [
+                                            'tara' => $taraEdicion,
+                                            'peso_con_tara' => $ruta['peso']
+                                        ]);
+                                    } else {
+                                        // Sin contenedor → NO aplicar tara
+                                        $ruta['peso'] = $pesoBase;
+                                        $ruta['peso_kg'] = $pesoBase;
+                                        $ruta['incluye_tara'] = false;
                                     }
-                                    $ruta['peso'] = $pesoBase + $taraEdicion;
-                                    $ruta['peso_kg'] = $pesoBase + $taraEdicion;
-                                    $ruta['tara'] = $taraEdicion;
-                                    $ruta['incluye_tara'] = true;
-                                    Log::info('🏋️ TARA aplicada en edición fusionada, ruta ' . ($idx + 1), [
-                                        'tara' => $taraEdicion,
-                                        'peso_con_tara' => $ruta['peso']
-                                    ]);
                                 } else if ($incluyeTara) {
                                     // Ya tiene tara, sincronizar campos
                                     $ruta['peso'] = $pesoBase;
@@ -274,21 +283,30 @@ class DataExtractionController extends Controller
                         $incluyeTara = $ruta['incluye_tara'] ?? false;
                         
                         if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
-                            // 🔧 FIX: Determinar tara según tamaño de contenedor
-                            $taraEdicion2 = 3400; // Default
-                            if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
-                                $taraEdicion2 = 2300;
-                            } elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
-                                $taraEdicion2 = 2300;
+                            // 🔧 FIX v3: Solo aplicar tara si hay contenedores
+                            $textoContEd2 = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                            $hayContEd2 = preg_match('/contenedor|container|\d+[xX]\d+|\d+\s*(?:pies|ft|pie)/ui', $textoContEd2);
+                            if ($hayContEd2) {
+                                $taraEdicion2 = 3400; // Default
+                                if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
+                                    $taraEdicion2 = 2300;
+                                } elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
+                                    $taraEdicion2 = 2300;
+                                }
+                                $ruta['peso'] = $pesoBase + $taraEdicion2;
+                                $ruta['peso_kg'] = $pesoBase + $taraEdicion2;
+                                $ruta['tara'] = $taraEdicion2;
+                                $ruta['incluye_tara'] = true;
+                                Log::info('🏋️ TARA aplicada para frontend (edición) en ruta ' . ($idx + 1), [
+                                    'peso_original' => $pesoBase,
+                                    'peso_con_tara' => $ruta['peso']
+                                ]);
+                            } else {
+                                // Sin contenedor → NO aplicar tara
+                                $ruta['peso'] = $pesoBase;
+                                $ruta['peso_kg'] = $pesoBase;
+                                $ruta['incluye_tara'] = false;
                             }
-                            $ruta['peso'] = $pesoBase + $taraEdicion2;
-                            $ruta['peso_kg'] = $pesoBase + $taraEdicion2;
-                            $ruta['tara'] = $taraEdicion2;
-                            $ruta['incluye_tara'] = true;
-                            Log::info('🏋️ TARA aplicada para frontend (edición) en ruta ' . ($idx + 1), [
-                                'peso_original' => $pesoBase,
-                                'peso_con_tara' => $ruta['peso']
-                            ]);
                         } else if ($incluyeTara) {
                             // Ya tiene tara, sincronizar campos
                             $ruta['peso'] = $pesoBase;
@@ -342,35 +360,39 @@ class DataExtractionController extends Controller
                         $ruta['peso_kg'] = $pesoBase;
                         Log::info('✅ TARA YA INCLUIDA en ruta ' . ($idx + 1) . ', peso se mantiene: ' . $pesoBase . ' kg');
                     } elseif (is_numeric($pesoBase) && $pesoBase > 0) {
-                        // 🔧 FIX CRÍTICO: Determinar tara según tamaño de contenedor
-                        // Contenedor de 20 pies = 2300 kg, otros = 3400 kg
-                        $taraRuta = 3400; // Default
+                        // 🔧 FIX v3: Solo aplicar tara si hay CONTENEDORES
+                        $textoContRuta = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                        $hayContRuta = preg_match('/contenedor|container|\d+[xX]\d+|\d+\s*(?:pies|ft|pie)/ui', $textoContRuta);
                         
-                        // Verificar tamano_contenedor en los datos
-                        if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
-                            $taraRuta = 2300;
+                        if ($hayContRuta) {
+                            // 🔧 FIX CRÍTICO: Determinar tara según tamaño de contenedor
+                            $taraRuta = 3400; // Default
+                            if (isset($ruta['tamano_contenedor']) && $ruta['tamano_contenedor'] == 20) {
+                                $taraRuta = 2300;
+                            } elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
+                                $taraRuta = 2300;
+                            } elseif (isset($ruta['contenedor']) && preg_match('/\d+[xX]20/i', $ruta['contenedor'])) {
+                                $taraRuta = 2300;
+                            }
+                            $ruta['peso'] = $pesoBase + $taraRuta;
+                            $ruta['peso_kg'] = $pesoBase + $taraRuta;
+                            $ruta['tara'] = $taraRuta;
+                            $ruta['incluye_tara'] = true;
+                            Log::info('🏋️ TARA SUMADA en ruta ' . ($idx + 1), [
+                                'peso_original' => $pesoBase,
+                                'tara_aplicada' => $taraRuta,
+                                'peso_con_tara' => $ruta['peso'],
+                                'empaque' => $ruta['empaque'] ?? 'N/A',
+                                'contenedor' => $ruta['contenedor'] ?? 'N/A',
+                                'razon' => 'Flag incluye_tara=false CON contenedor'
+                            ]);
+                        } else {
+                            // Sin contenedor → NO aplicar tara (carga suelta)
+                            $ruta['peso'] = $pesoBase;
+                            $ruta['peso_kg'] = $pesoBase;
+                            $ruta['incluye_tara'] = false;
+                            Log::info('📦 Sin contenedor en ruta ' . ($idx + 1) . ' → peso se mantiene: ' . $pesoBase . ' kg');
                         }
-                        // Si no hay tamano_contenedor, buscar en empaque o contenedor
-                        elseif (isset($ruta['empaque']) && preg_match('/CONTENEDOR\s*20/i', $ruta['empaque'])) {
-                            $taraRuta = 2300;
-                        }
-                        elseif (isset($ruta['contenedor']) && preg_match('/\d+[xX]20/i', $ruta['contenedor'])) {
-                            $taraRuta = 2300;
-                        }
-                        
-                        // El peso NO incluye tara - SUMAR tara calculada
-                        $ruta['peso'] = $pesoBase + $taraRuta;
-                        $ruta['peso_kg'] = $pesoBase + $taraRuta;
-                        $ruta['tara'] = $taraRuta;
-                        $ruta['incluye_tara'] = true;
-                        Log::info('🏋️ TARA SUMADA en ruta ' . ($idx + 1), [
-                            'peso_original' => $pesoBase,
-                            'tara_aplicada' => $taraRuta,
-                            'peso_con_tara' => $ruta['peso'],
-                            'empaque' => $ruta['empaque'] ?? 'N/A',
-                            'contenedor' => $ruta['contenedor'] ?? 'N/A',
-                            'razon' => 'Flag incluye_tara=false (usuario dijo "sin tara")'
-                        ]);
                     }
                     $rutasConTara[] = $ruta;
                 }
@@ -418,6 +440,11 @@ class DataExtractionController extends Controller
                 
                 foreach ($fieldMapping as $extractedKey => $dbKey) {
                     if (isset($extracted[$extractedKey]) && !empty($extracted[$extractedKey])) {
+                        // 💵 NO guardar valor_declarado si está en USD
+                        if ($extractedKey === 'valor' && isset($extracted['valor_en_usd']) && $extracted['valor_en_usd']) {
+                            Log::info('💵 Valor en USD detectado - NO se guarda valor_declarado en BD');
+                            continue;
+                        }
                         $normalizedData[$dbKey] = $extracted[$extractedKey];
                     }
                 }
@@ -453,16 +480,29 @@ class DataExtractionController extends Controller
                 }
             }
 
+            // 💵 Si hay valor en USD, limpiar el valor de los datos extraídos antes de enviar al frontend
+            $extractedForFrontend = $result['extracted'] ?? [];
+            if (isset($extractedForFrontend['valor_en_usd']) && $extractedForFrontend['valor_en_usd']) {
+                unset($extractedForFrontend['valor']);
+                unset($extractedForFrontend['valor_declarado']);
+                unset($extractedForFrontend['valorMercancia']);
+                // Agregar 'valor' a los campos faltantes si no está ya
+                if (!in_array('valor', $result['missing'] ?? [])) {
+                    $result['missing'][] = 'valor';
+                }
+                Log::info('💵 Valor en USD: limpiado de extracted, agregado a missing');
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'extracted' => $result['extracted'] ?? [],
+                    'extracted' => $extractedForFrontend,
                     'missing' => $result['missing'] ?? [],
                     'questions' => $result['questions'] ?? [],
                     'message' => $assistantResponse,
                     'metadata' => [
                         'confidence' => $result['confidence'] ?? 0,
-                        'fields_found' => count($result['extracted'] ?? []),
+                        'fields_found' => count($extractedForFrontend),
                         'fields_missing' => count($result['missing'] ?? []),
                         'summary' => $result['summary'] ?? ''
                     ]
@@ -551,10 +591,29 @@ class DataExtractionController extends Controller
                 'mercancia' => '📦 **Mercancía**'
             ];
 
+            // 💵 Detectar si hay valor en USD
+            $valorEnUSD = isset($extracted['valor_en_usd']) && $extracted['valor_en_usd'];
+            
+            // Campos internos que NO se deben mostrar al usuario
+            $camposOcultos = ['valor_en_usd', 'empaque_id', 'is_edit', 'producto_codigo'];
+
             foreach ($extracted as $key => $value) {
+                // Saltar campos internos/ocultos
+                if (in_array($key, $camposOcultos)) continue;
+                
+                // 💵 Si hay valor en USD, NO mostrar el valor numérico
+                if ($valorEnUSD && in_array($key, ['valor', 'valor_declarado', 'valorMercancia'])) continue;
+                
                 $label = $fieldLabels[$key] ?? ucfirst(str_replace('_', ' ', $key));
                 $formattedValue = $this->formatFieldValue($key, $value);
                 $response .= "- $label: `$formattedValue`\n";
+            }
+            
+            // 💵 Agregar contra-pregunta por valor en USD
+            if ($valorEnUSD) {
+                $response .= "\n⚠️ **El valor de la carga fue indicado en dólares (USD).**\n";
+                $response .= "\n📋 Para continuar, necesito que me indiques:\n";
+                $response .= "\n- ¿Cuál es el **valor declarado en pesos colombianos (COP)**?";
             }
         }
 
@@ -628,8 +687,10 @@ class DataExtractionController extends Controller
             $pesoBase = $ruta['peso'] ?? 0;
             $incluyeTara = $ruta['incluye_tara'] ?? false;
             $peso = $pesoBase;
-            if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0) {
-                $textoContenedor = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+            // 🔧 FIX: Solo aplicar tara si hay contenedores (NO para cajas, bultos, pallets, etc.)
+            $textoContenedor = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+            $hayContenedorEnRuta = preg_match('/contenedor|container|\d+[xX]\d+|\d+\s*(?:pies|ft|pie)/ui', $textoContenedor);
+            if (!$incluyeTara && is_numeric($pesoBase) && $pesoBase > 0 && $hayContenedorEnRuta) {
                 $taraAplicar = \App\Services\MCPAssistantService::getTaraByContenedorPublic($textoContenedor);
                 $peso = $pesoBase + $taraAplicar; // Sumar tara según contenedor
             }
@@ -691,16 +752,20 @@ class DataExtractionController extends Controller
                 }
                 
                 // 🔧 FIX CRÍTICO: Calcular peso CON TARA si no está incluida ANTES de guardar
+                // 🔧 FIX v3: SOLO aplicar tara si hay CONTENEDORES, NO para carga suelta (cajas, bultos, etc.)
                 $pesoBase = $ruta['peso'] ?? 0;
                 $incluyeTara = $ruta['incluye_tara'] ?? false;
                 
-                // 🔧 FIX: Si hay comando de tara y el peso parece sin tara, forzar suma
+                // 🔧 Verificar si la ruta tiene contenedores
+                $textoContenedorSave = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
+                $hayContenedorSave = preg_match('/contenedor|container|\d+[xX]\d+|\d+\s*(?:pies|ft|pie)/ui', $textoContenedorSave);
+                
+                // 🔧 FIX: Si hay comando de tara y el peso parece sin tara, forzar suma (SOLO con contenedores)
                 $pesoPareceSinTara = $forzarSumaTara && is_numeric($pesoBase) && $pesoBase > 0 && ($pesoBase % 1000 == 0);
                 
-                if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0) {
+                if ((!$incluyeTara || $pesoPareceSinTara) && is_numeric($pesoBase) && $pesoBase > 0 && $hayContenedorSave) {
                     // 🔧 FIX v2: Usar tara según contenedor (20 pies = 2300, otros = 3400)
-                    $textoContenedor = $ruta['empaque'] ?? $ruta['contenedor'] ?? $ruta['tamano_contenedor'] ?? '';
-                    $taraAplicar = \App\Services\MCPAssistantService::getTaraByContenedorPublic($textoContenedor);
+                    $taraAplicar = \App\Services\MCPAssistantService::getTaraByContenedorPublic($textoContenedorSave);
                     $ruta['peso'] = $pesoBase + $taraAplicar; // Sumar tara según contenedor
                     $ruta['peso_kg'] = $pesoBase + $taraAplicar; // También actualizar peso_kg
                     $ruta['tara'] = $taraAplicar; // Guardar tara aplicada
@@ -711,6 +776,11 @@ class DataExtractionController extends Controller
                         'peso_con_tara' => $ruta['peso'],
                         'razon' => $pesoPareceSinTara ? 'Forzado por mensaje original' : 'Flag incluye_tara=false'
                     ]);
+                } else if (!$hayContenedorSave && is_numeric($pesoBase) && $pesoBase > 0) {
+                    // Sin contenedor → NO aplicar tara (carga suelta)
+                    $ruta['peso_kg'] = $pesoBase;
+                    $ruta['incluye_tara'] = false;
+                    Log::info('📦 Sin contenedor en ruta ' . ($idx + 1) . ' → peso se mantiene: ' . $pesoBase . ' kg (sin tara)');
                 } else if ($incluyeTara && !$pesoPareceSinTara) {
                     Log::info('✅ Ruta ' . ($idx + 1) . ' ya incluye tara, peso se mantiene: ' . $pesoBase);
                 }
@@ -756,7 +826,7 @@ class DataExtractionController extends Controller
             
             case 'valor':
                 return is_numeric($value)
-                    ? 'USD ' . number_format($value, 2, ',', '.')
+                    ? '$' . number_format($value, 0, ',', '.')
                     : $value;
             
             case 'cantidad':

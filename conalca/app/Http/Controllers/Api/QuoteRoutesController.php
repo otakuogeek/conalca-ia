@@ -263,8 +263,10 @@ class QuoteRoutesController extends Controller
                         'vehiculo_requerido' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
                         'vehiculo' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
                         'claseVehiculo' => $extracted['claseVehiculo'] ?? $extracted['vehiculo'] ?? 'Sencillo',
-                        'valor_declarado' => $extracted['valor_declarado'] ?? $extracted['valor'] ?? null,
-                        'valorMercancia' => $extracted['valor_declarado'] ?? $extracted['valor'] ?? null,
+                        // 💵 Si valor_en_usd, no enviar valor_declarado
+                        'valor_declarado' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $extracted['valor'] ?? null),
+                        'valorMercancia' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $extracted['valor'] ?? null),
+                        'valor_en_usd' => !empty($extracted['valor_en_usd']),
                         'active' => 1,
                         'decision_cliente' => 'pendiente',
                         'incluye_tara' => $extracted['incluye_tara'] ?? false,
@@ -316,8 +318,10 @@ class QuoteRoutesController extends Controller
                     'vehiculo' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? $cotization->vehiculo_requerido,
                     'claseVehiculo' => $extracted['claseVehiculo'] ?? $extracted['vehiculo'] ?? $cotization->vehiculo_requerido,
                     // 🔧 FIX: Priorizar valor_declarado de extracted_data
-                    'valor_declarado' => $extracted['valor_declarado'] ?? $cotization->valor_declarado,
-                    'valorMercancia' => $extracted['valor_declarado'] ?? $cotization->valor_declarado,
+                    // 💵 Si valor_en_usd, no enviar valor_declarado
+                    'valor_declarado' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $cotization->valor_declarado),
+                    'valorMercancia' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $cotization->valor_declarado),
+                    'valor_en_usd' => !empty($extracted['valor_en_usd']),
                     'active' => $cotization->active,
                     'decision_cliente' => $cotization->decision_cliente,
                     'incluye_tara' => $extracted['incluye_tara'] ?? false,

@@ -248,7 +248,15 @@ class MCPAssistantService
             if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . strtoupper($ruta['origen']) . "\n";
             if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . strtoupper($ruta['destino']) . "\n";
             if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . $ruta['producto'] . "\n";
-            if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+            if (!empty($ruta['peso_kg'])) {
+                $dec = !empty($ruta['peso_calculado_cu']) ? 1 : 0;
+                $pesoFmt = number_format($ruta['peso_kg'], $dec, ',', '.');
+                if (!empty($ruta['peso_calculado_cu']) && !empty($ruta['peso_unitario']) && !empty($ruta['cantidad'])) {
+                    $respuesta .= "- Peso: {$pesoFmt} kg ({$ruta['cantidad']} × " . number_format($ruta['peso_unitario'], 1, ',', '.') . " kg c/u)\n";
+                } else {
+                    $respuesta .= "- Peso: {$pesoFmt} kg\n";
+                }
+            }
             if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
             $respuesta .= "\nPuedes **crear la cotización** cuando estés listo.";
             return $respuesta;
@@ -267,7 +275,15 @@ class MCPAssistantService
             
             $respuesta .= "**Ruta {$num}:** {$origen} → {$destino}\n";
             if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . $ruta['producto'] . "\n";
-            if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+            if (!empty($ruta['peso_kg'])) {
+                $dec = !empty($ruta['peso_calculado_cu']) ? 1 : 0;
+                $pesoFmt = number_format($ruta['peso_kg'], $dec, ',', '.');
+                if (!empty($ruta['peso_calculado_cu']) && !empty($ruta['peso_unitario']) && !empty($ruta['cantidad'])) {
+                    $respuesta .= "- Peso: {$pesoFmt} kg ({$ruta['cantidad']} × " . number_format($ruta['peso_unitario'], 1, ',', '.') . " kg c/u)\n";
+                } else {
+                    $respuesta .= "- Peso: {$pesoFmt} kg\n";
+                }
+            }
             if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
             $respuesta .= "\n";
         }
@@ -591,6 +607,7 @@ class MCPAssistantService
         // 🌍🆕 DETECCIÓN DE MÚLTIPLES ORÍGENES/DESTINOS
         // Si el usuario especifica múltiples orígenes y/o destinos, expandir a rutas individuales
         // Ejemplo: "origen cali y cartagena a destino medellin" → 2 rutas
+        // Ejemplo: "ORIGEN: Cartagena PRIMER DESTINO: Cartagena SEGUNDO DESTINO: Barranquilla" → 2 rutas
         // 
         // 🚫 EXCEPCIÓN: Si el mensaje contiene múltiples "cotización de X a Y", 
         // NO usar lógica de multi-rutas porque cada cotización es independiente
@@ -622,9 +639,191 @@ class MCPAssistantService
             // 🔧 FIX BUG #545: Si es patrón "Todo llega a DESTINO: desde X... desde Y...", 
             // dividir texto en segmentos y extraer datos específicos por ruta
             $esPatronDestinoComun = isset($multipleRoutes['_patron']) && $multipleRoutes['_patron'] === 'destino_comun';
+            $esPatronOrigenComun = isset($multipleRoutes['_patron']) && $multipleRoutes['_patron'] === 'origen_comun';
             $datosEspecificosPorRuta = [];
+            $datosEspecificosPorDestino = [];
             
-            if ($esPatronDestinoComun && isset($multipleRoutes['_segmentos'])) {
+            // 🆕 Patrón "PRIMER DESTINO / SEGUNDO DESTINO" — un origen con múltiples destinos
+            if ($esPatronOrigenComun && isset($multipleRoutes['_segmentos'])) {
+                Log::info('🔧 Procesando segmentos específicos por destino (origen común)', [
+                    'total_segmentos' => count($multipleRoutes['_segmentos'])
+                ]);
+                
+                foreach ($multipleRoutes['_segmentos'] as $destino => $segmento) {
+                    $datos = [];
+                    
+                    $cantidad = self::extractCantidad($segmento);
+                    if ($cantidad) {
+                        $datos['cantidad'] = $cantidad;
+                        $datos['cantidadMercancia'] = $cantidad;
+                    }
+                    
+                    $peso = self::extractPeso($segmento);
+                    if ($peso) {
+                        $datos['peso_mercancia'] = $peso;
+                        $datos['pesoMercancia'] = $peso;
+                        $datos['peso_kg'] = $peso;
+                    }
+                    
+                    $producto = self::extractProducto($segmento);
+                    if ($producto) {
+                        $datos['producto'] = $producto;
+                        $datos['tipo_producto'] = $producto;
+                        $datos['producto_mencionado'] = $producto;
+                    }
+                    
+                    $empaque = self::extractEmpaque($segmento);
+                    if ($empaque) {
+                        if (is_array($empaque)) {
+                            $datos['empaque'] = $empaque['empaque'];
+                            $datos['tipo_embalaje'] = $empaque['empaque'];
+                            $datos['empaque_id'] = $empaque['empaque_id'];
+                            if (isset($empaque['cantidad_contenedor']) && $empaque['cantidad_contenedor'] > 0) {
+                                $datos['cantidad'] = $empaque['cantidad_contenedor'];
+                                $datos['cantidadMercancia'] = $empaque['cantidad_contenedor'];
+                            }
+                        } else {
+                            $datos['empaque'] = $empaque;
+                            $datos['tipo_embalaje'] = $empaque;
+                        }
+                    }
+                    
+                    if (self::detectValorEnUSD($segmento)) {
+                        $datos['valor_en_usd'] = true;
+                    } else {
+                        $valor = self::extractValorDeclarado($segmento);
+                        if ($valor) {
+                            $datos['valor_declarado'] = $valor;
+                            $datos['valorMercancia'] = $valor;
+                        }
+                    }
+                    
+                    // 🆕 LÓGICA C/U por segmento: peso por unidad × cantidad (solo sin contenedores)
+                    $cantidadSeg = $datos['cantidad'] ?? null;
+                    $pesoSeg = $datos['peso_kg'] ?? null;
+                    if ($cantidadSeg && $pesoSeg && !self::hayContenedorEnTexto($segmento) && !self::hayContenedorEnTexto($fullText)) {
+                        $pesoUnitarioSeg = self::detectPesoUnitario($segmento) ?? self::detectPesoUnitario($fullText);
+                        if ($pesoUnitarioSeg !== null) {
+                            $pesoTotalSeg = round($pesoUnitarioSeg * $cantidadSeg, 2);
+                            $datos['peso_mercancia'] = $pesoTotalSeg;
+                            $datos['pesoMercancia'] = $pesoTotalSeg;
+                            $datos['peso_kg'] = $pesoTotalSeg;
+                            $datos['peso_unitario'] = $pesoUnitarioSeg;
+                            $datos['peso_calculado_cu'] = true;
+                            Log::info('📊 Peso recalculado por unidad (c/u) en segmento destino', [
+                                'destino' => $destino,
+                                'peso_unitario' => $pesoUnitarioSeg,
+                                'cantidad' => $cantidadSeg,
+                                'peso_total' => $pesoTotalSeg
+                            ]);
+                        }
+                    }
+                    
+                    if (!empty($datos)) {
+                        $datosEspecificosPorDestino[$destino] = $datos;
+                        Log::info('📍 Datos específicos para destino', [
+                            'destino' => $destino,
+                            'datos' => array_keys($datos)
+                        ]);
+                    }
+                }
+                
+                // 🆕 FIX: Extraer datos comunes del texto completo si no se encontraron en segmentos
+                // Importante cuando segmentos de destino son cortos (ej: "Puerto Cartagena")
+                // y los detalles de carga están en sección común ("DETALLES DE LA CARGA")
+                $hayPesoEnSegmentos = false;
+                foreach ($datosEspecificosPorDestino as $dd) {
+                    if (isset($dd['peso_mercancia'])) $hayPesoEnSegmentos = true;
+                }
+                
+                if (!$hayPesoEnSegmentos) {
+                    Log::info('🔧 Extrayendo datos comunes de fullText (origen_comun, segmentos sin datos de carga)');
+                    
+                    $peso = self::extractPeso($fullText);
+                    $cantidad = self::extractCantidad($fullText);
+                    $producto = self::extractProducto($fullText);
+                    $vehiculo = self::extractVehiculo($fullText);
+                    $empaque = self::extractEmpaque($fullText);
+                    
+                    if ($peso) {
+                        $datosComunes['peso_mercancia'] = $peso;
+                        $datosComunes['pesoMercancia'] = $peso;
+                        $datosComunes['peso_kg'] = $peso;
+                        Log::info('📊 Peso común extraído de fullText', ['peso' => $peso]);
+                    }
+                    if ($cantidad) {
+                        $datosComunes['cantidad'] = $cantidad;
+                        $datosComunes['cantidadMercancia'] = $cantidad;
+                        Log::info('📦 Cantidad común extraída de fullText', ['cantidad' => $cantidad]);
+                    }
+                    if ($producto) {
+                        $datosComunes['producto'] = $producto;
+                        $datosComunes['tipo_producto'] = $producto;
+                        $datosComunes['producto_mencionado'] = $producto;
+                    }
+                    if ($vehiculo) {
+                        $datosComunes['vehiculo'] = $vehiculo;
+                        $datosComunes['claseVehiculo'] = $vehiculo;
+                    }
+                    if ($empaque) {
+                        if (is_array($empaque)) {
+                            $datosComunes['empaque'] = $empaque['empaque'];
+                            $datosComunes['tipo_embalaje'] = $empaque['empaque'];
+                            $datosComunes['empaque_id'] = $empaque['empaque_id'];
+                            if (isset($empaque['cantidad_contenedor']) && $empaque['cantidad_contenedor'] > 0) {
+                                $datosComunes['cantidad'] = $empaque['cantidad_contenedor'];
+                                $datosComunes['cantidadMercancia'] = $empaque['cantidad_contenedor'];
+                            }
+                        } else {
+                            $datosComunes['empaque'] = $empaque;
+                            $datosComunes['tipo_embalaje'] = $empaque;
+                        }
+                    }
+                    
+                    // Valor declarado
+                    if (self::detectValorEnUSD($fullText)) {
+                        $datosComunes['valor_en_usd'] = true;
+                    } else {
+                        $valor = self::extractValorDeclarado($fullText);
+                        if ($valor) {
+                            $datosComunes['valor_declarado'] = $valor;
+                            $datosComunes['valorMercancia'] = $valor;
+                        }
+                    }
+                    
+                    // 🆕 Lógica C/U: peso por unidad × cantidad (solo sin contenedores)
+                    if ($peso && $cantidad && !self::hayContenedorEnTexto($fullText)) {
+                        $pesoUnitario = self::detectPesoUnitario($fullText);
+                        if ($pesoUnitario !== null) {
+                            $pesoTotalCU = round($pesoUnitario * $cantidad, 2);
+                            $datosComunes['peso_mercancia'] = $pesoTotalCU;
+                            $datosComunes['pesoMercancia'] = $pesoTotalCU;
+                            $datosComunes['peso_kg'] = $pesoTotalCU;
+                            $datosComunes['peso_unitario'] = $pesoUnitario;
+                            $datosComunes['peso_calculado_cu'] = true;
+                            Log::info('📊 Peso c/u en datos comunes (origen_comun)', [
+                                'peso_unitario' => $pesoUnitario,
+                                'cantidad' => $cantidad,
+                                'peso_total' => $pesoTotalCU,
+                                'calculo' => "{$cantidad} × {$pesoUnitario} = {$pesoTotalCU} kg"
+                            ]);
+                        }
+                    }
+                    
+                    // Tara solo para contenedores
+                    if (isset($datosComunes['peso_kg']) && self::hayContenedorEnTexto($fullText) && !isset($datosComunes['peso_calculado_cu'])) {
+                        $taraBase = self::getTaraByContenedor($fullText);
+                        $pesoConTara = $datosComunes['peso_kg'] + $taraBase;
+                        $datosComunes['peso_bruto'] = $datosComunes['peso_kg'];
+                        $datosComunes['peso_mercancia'] = $pesoConTara;
+                        $datosComunes['pesoMercancia'] = $pesoConTara;
+                        $datosComunes['peso_kg'] = $pesoConTara;
+                        $datosComunes['tara'] = $taraBase;
+                        $datosComunes['incluye_tara'] = true;
+                    }
+                }
+
+            } elseif ($esPatronDestinoComun && isset($multipleRoutes['_segmentos'])) {
                 // Procesar cada segmento individualmente
                 Log::info('🔧 Procesando segmentos específicos por origen', [
                     'total_segmentos' => count($multipleRoutes['_segmentos'])
@@ -671,16 +870,44 @@ class MCPAssistantService
                         }
                     }
                     
-                    $valor = self::extractValorDeclarado($segmento);
-                    if ($valor) {
-                        $datos['valor_declarado'] = $valor;
-                        $datos['valorMercancia'] = $valor;
+                    // 💵 Detectar si el valor está en USD antes de extraer
+                    if (self::detectValorEnUSD($segmento)) {
+                        $datos['valor_en_usd'] = true;
+                        Log::info('💵 Valor en USD detectado en segmento - no se almacenará, se pedirá en COP');
+                    } else {
+                        $valor = self::extractValorDeclarado($segmento);
+                        if ($valor) {
+                            $datos['valor_declarado'] = $valor;
+                            $datos['valorMercancia'] = $valor;
+                        }
                     }
                     
                     $cantidad = self::extractCantidad($segmento);
                     if ($cantidad) {
                         $datos['cantidad'] = $cantidad;
                         $datos['cantidadMercancia'] = $cantidad;
+                    }
+                    
+                    // 🆕 LÓGICA C/U por segmento origen: peso por unidad × cantidad (solo sin contenedores)
+                    $cantidadSegOr = $datos['cantidad'] ?? null;
+                    $pesoSegOr = $datos['peso_kg'] ?? null;
+                    if ($cantidadSegOr && $pesoSegOr && !self::hayContenedorEnTexto($segmento) && !self::hayContenedorEnTexto($fullText)) {
+                        $pesoUnitarioSegOr = self::detectPesoUnitario($segmento) ?? self::detectPesoUnitario($fullText);
+                        if ($pesoUnitarioSegOr !== null) {
+                            $pesoTotalSegOr = round($pesoUnitarioSegOr * $cantidadSegOr, 2);
+                            $datos['peso_mercancia'] = $pesoTotalSegOr;
+                            $datos['pesoMercancia'] = $pesoTotalSegOr;
+                            $datos['peso_kg'] = $pesoTotalSegOr;
+                            $datos['peso_unitario'] = $pesoUnitarioSegOr;
+                            $datos['peso_calculado_cu'] = true;
+                            $peso = $pesoTotalSegOr; // Actualizar para la lógica de tara posterior
+                            Log::info('📊 Peso recalculado por unidad (c/u) en segmento origen', [
+                                'origen' => $origen,
+                                'peso_unitario' => $pesoUnitarioSegOr,
+                                'cantidad' => $cantidadSegOr,
+                                'peso_total' => $pesoTotalSegOr
+                            ]);
+                        }
                     }
                     
                     // Procesar tara si está mencionada
@@ -876,6 +1103,29 @@ class MCPAssistantService
                 Log::info('📦 Empaque común para todas las rutas', ['empaque' => $datosComunes['empaque']]);
             }
             
+            // 🆕 LÓGICA C/U: Si el texto indica peso por unidad (c/u, cada uno) y NO hay contenedores,
+            // recalcular el peso total como: peso_unitario × cantidad
+            // Ejemplo: "4 cajas - Peso 23.6 kilos c/u" → 4 × 23.6 = 94.4 kg
+            $hayContenedorParaCU = self::hayContenedorEnTexto($fullText);
+            if (!$hayContenedorParaCU && $peso && $cantidad) {
+                $pesoUnitario = self::detectPesoUnitario($fullText);
+                if ($pesoUnitario !== null) {
+                    $pesoTotalCU = round($pesoUnitario * $cantidad, 2);
+                    $datosComunes['peso_mercancia'] = $pesoTotalCU;
+                    $datosComunes['pesoMercancia'] = $pesoTotalCU;
+                    $datosComunes['peso_kg'] = $pesoTotalCU;
+                    $datosComunes['peso_unitario'] = $pesoUnitario;
+                    $datosComunes['peso_calculado_cu'] = true;
+                    $peso = $pesoTotalCU; // Actualizar $peso para la lógica de tara posterior
+                    Log::info('📊 Peso recalculado por unidad (c/u) - NO contenedor', [
+                        'peso_unitario' => $pesoUnitario,
+                        'cantidad' => $cantidad,
+                        'peso_total' => $pesoTotalCU,
+                        'calculo' => "{$cantidad} × {$pesoUnitario} = {$pesoTotalCU} kg"
+                    ]);
+                }
+            }
+            
             // 🆕 CALCULAR TARA AUTOMÁTICAMENTE
             // Lógica mejorada: Si el usuario dice "sin tara" o "no incluye tara", significa que DEBE sumarse la tara
             // 🔧 FIX: NO recalcular tara si estamos editando campos de una ruta existente
@@ -974,11 +1224,17 @@ class MCPAssistantService
                 ]);
             }
             // Extraer valor declarado
-            $valor = self::extractValorDeclarado($fullText);
-            if ($valor) {
-                $datosComunes['valor_declarado'] = $valor;
-                $datosComunes['valorMercancia'] = $valor;
-                Log::info('💰 Valor común para todas las rutas', ['valor' => $valor]);
+            // 💵 Detectar si el valor está en USD antes de extraer
+            if (self::detectValorEnUSD($fullText)) {
+                $datosComunes['valor_en_usd'] = true;
+                Log::info('💵 Valor en USD detectado - no se almacenará, se pedirá en COP');
+            } else {
+                $valor = self::extractValorDeclarado($fullText);
+                if ($valor) {
+                    $datosComunes['valor_declarado'] = $valor;
+                    $datosComunes['valorMercancia'] = $valor;
+                    Log::info('💰 Valor común para todas las rutas', ['valor' => $valor]);
+                }
             }
             
             } // Fin del else (lógica original)
@@ -990,8 +1246,12 @@ class MCPAssistantService
                     // 🔧 FIX BUG #545: Usar datos específicos si están disponibles
                     $datosRuta = $datosComunes;
                     if (!empty($datosEspecificosPorRuta) && isset($datosEspecificosPorRuta[$origen])) {
-                        // Mergear datos específicos sobre los comunes
+                        // Mergear datos específicos por ORIGEN sobre los comunes
                         $datosRuta = array_merge($datosComunes, $datosEspecificosPorRuta[$origen]);
+                    }
+                    if (!empty($datosEspecificosPorDestino) && isset($datosEspecificosPorDestino[$destino])) {
+                        // Mergear datos específicos por DESTINO sobre los comunes
+                        $datosRuta = array_merge($datosRuta, $datosEspecificosPorDestino[$destino]);
                     }
                     
                     $rutasGeneradas[] = array_merge([
@@ -1006,9 +1266,10 @@ class MCPAssistantService
                 }
             }
             
-            Log::info('✅ Rutas generadas con datos específicos por origen', [
+            Log::info('✅ Rutas generadas con datos específicos', [
                 'total_rutas' => count($rutasGeneradas),
-                'usa_datos_especificos' => !empty($datosEspecificosPorRuta),
+                'usa_datos_especificos_por_origen' => !empty($datosEspecificosPorRuta),
+                'usa_datos_especificos_por_destino' => !empty($datosEspecificosPorDestino),
                 'datos_comunes' => array_keys($datosComunes),
                 'primera_ruta' => $rutasGeneradas[0] ?? null
             ]);
@@ -1028,6 +1289,13 @@ class MCPAssistantService
                     // 🆕 CREAR FILAS EN cotizacion_models para cada ruta
                     // Esto permite que QuoteDetailsPanel muestre las rutas correctamente
                     foreach ($rutasGeneradas as $index => $ruta) {
+                        // 💵 Si valor_en_usd está activo, NO guardar valor_declarado
+                        $valorParaGuardar = 0;
+                        if (empty($ruta['valor_en_usd'])) {
+                            $valorParaGuardar = $ruta['valor_declarado'] ?? $ruta['valorMercancia'] ?? 0;
+                        } else {
+                            Log::info('💵 CotizacionModel::create - valor_en_usd detectado, guardando valor_declarado=0');
+                        }
                         \App\Models\CotizacionModel::create([
                             'group_cotization_id' => $groupId,
                             'user_id' => $group->user_id,
@@ -1039,7 +1307,7 @@ class MCPAssistantService
                             'tipo_embajale' => $ruta['empaque'] ?? $ruta['tipo_embalaje'] ?? 'Caja',
                             'tipo_producto' => $ruta['producto'] ?? $ruta['tipo_producto'] ?? $ruta['producto_mencionado'] ?? 'Mercancía general',
                             'vehiculo_requerido' => $ruta['vehiculo'] ?? $ruta['claseVehiculo'] ?? $ruta['vehiculo_requerido'] ?? 'Sencillo',
-                            'valor_declarado' => $ruta['valor_declarado'] ?? $ruta['valorMercancia'] ?? 0,
+                            'valor_declarado' => $valorParaGuardar,
                             'active' => true
                         ]);
                     }
@@ -1070,6 +1338,12 @@ class MCPAssistantService
                         $confirmacionRutas .= "- ⚖️ Peso Bruto: " . number_format($datosComunes['peso_bruto'], 0, ',', '.') . " kg\n";
                         $confirmacionRutas .= "- ⚖️ Tara: " . number_format($datosComunes['tara'], 0, ',', '.') . " kg\n";
                         $confirmacionRutas .= "- ⚖️ **Peso Total (con tara):** " . number_format($datosComunes['peso_mercancia'], 0, ',', '.') . " kg\n";
+                    } elseif (!empty($datosComunes['peso_calculado_cu']) && isset($datosComunes['peso_mercancia'])) {
+                        // Peso calculado por unidad (c/u): mostrar desglose
+                        $pesoMerc = $datosComunes['peso_mercancia'];
+                        $pesoUnit = $datosComunes['peso_unitario'] ?? 0;
+                        $cantUnit = $datosComunes['cantidad'] ?? 0;
+                        $confirmacionRutas .= "- ⚖️ Peso: " . number_format($pesoMerc, 1, ',', '.') . " kg ({$cantUnit} × " . number_format($pesoUnit, 1, ',', '.') . " kg c/u)\n";
                     } elseif (isset($datosComunes['peso_mercancia'])) {
                         // Solo peso sin tara calculada
                         $confirmacionRutas .= "- ⚖️ Peso: " . number_format($datosComunes['peso_mercancia'], 0, ',', '.') . " kg\n";
@@ -1227,19 +1501,24 @@ class MCPAssistantService
             }
             
             // Detectar VALOR DECLARADO (con o sin conectores)
-            if (preg_match('/(?:el\s+)?valor(?:\s+declarado)?\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:millones?)?/ui', $lastUserMessageForEdit, $m)) {
-                $valor = floatval(str_replace([',', '.'], ['', ''], $m[1]));
-                if (preg_match('/millones?/ui', $lastUserMessageForEdit)) {
-                    $valor = $valor * 1000000;
+            // 💵 Verificar que NO sea USD antes de almacenar
+            if (!self::detectValorEnUSD($lastUserMessageForEdit)) {
+                if (preg_match('/(?:el\s+)?valor(?:\s+declarado)?\s*(?:' . $palabrasAgregar . ')\s*([\d.,]+)\s*(?:millones?)?/ui', $lastUserMessageForEdit, $m)) {
+                    $valor = floatval(str_replace([',', '.'], ['', ''], $m[1]));
+                    if (preg_match('/millones?/ui', $lastUserMessageForEdit)) {
+                        $valor = $valor * 1000000;
+                    }
+                    $camposMultiples['valor_declarado'] = $valor;
+                } elseif (preg_match('/(?:el\s+)?valor(?:\s+declarado)?\s+([\d.,]+)\s*(?:millones?)?(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
+                    // Sin conector: "valor 5000000,"
+                    $valor = floatval(str_replace([',', '.'], ['', ''], $m[1]));
+                    if (preg_match('/millones?/ui', $lastUserMessageForEdit)) {
+                        $valor = $valor * 1000000;
+                    }
+                    $camposMultiples['valor_declarado'] = $valor;
                 }
-                $camposMultiples['valor_declarado'] = $valor;
-            } elseif (preg_match('/(?:el\s+)?valor(?:\s+declarado)?\s+([\d.,]+)\s*(?:millones?)?(?:\s*[,;]|$)/ui', $lastUserMessageForEdit, $m)) {
-                // Sin conector: "valor 5000000,"
-                $valor = floatval(str_replace([',', '.'], ['', ''], $m[1]));
-                if (preg_match('/millones?/ui', $lastUserMessageForEdit)) {
-                    $valor = $valor * 1000000;
-                }
-                $camposMultiples['valor_declarado'] = $valor;
+            } else {
+                Log::info('💵 Valor en USD detectado en edición múltiple - se pedirá en COP');
             }
             
             // Detectar EMBALAJE/EMPAQUE (con o sin conectores)
@@ -2985,7 +3264,15 @@ class MCPAssistantService
                 if (!empty($ruta['origen'])) $respuesta .= "- Origen: " . strtoupper($ruta['origen']) . "\n";
                 if (!empty($ruta['destino'])) $respuesta .= "- Destino: " . strtoupper($ruta['destino']) . "\n";
                 if (!empty($ruta['vehiculo'])) $respuesta .= "- Vehículo: " . strtoupper($ruta['vehiculo']) . "\n";
-                if (!empty($ruta['peso_kg'])) $respuesta .= "- Peso: " . number_format($ruta['peso_kg'], 0, ',', '.') . " kg\n";
+                if (!empty($ruta['peso_kg'])) {
+                    $dec = !empty($ruta['peso_calculado_cu']) ? 1 : 0;
+                    $pesoFmt = number_format($ruta['peso_kg'], $dec, ',', '.');
+                    if (!empty($ruta['peso_calculado_cu']) && !empty($ruta['peso_unitario']) && !empty($ruta['cantidad'])) {
+                        $respuesta .= "- Peso: {$pesoFmt} kg ({$ruta['cantidad']} × " . number_format($ruta['peso_unitario'], 1, ',', '.') . " kg c/u)\n";
+                    } else {
+                        $respuesta .= "- Peso: {$pesoFmt} kg\n";
+                    }
+                }
                 if (!empty($ruta['producto'])) $respuesta .= "- Producto: " . strtoupper($ruta['producto']) . "\n";
                 $respuesta .= "\n";
             }
@@ -3518,8 +3805,15 @@ class MCPAssistantService
                             if (!empty($datosAI)) {
                                 // Normalizar nombres de campos para BD
                                 if (isset($datosAI['valor'])) {
-                                    $datosAI['valor_declarado'] = $datosAI['valor'];
-                                    unset($datosAI['valor']);
+                                    // 💵 Verificar USD antes de copiar valor
+                                    if (self::detectValorEnUSD($lastUserMessage ?? '')) {
+                                        unset($datosAI['valor']);
+                                        $datosAI['valor_en_usd'] = true;
+                                        Log::info('💵 Valor en USD detectado en datosAI - no se copia a valor_declarado');
+                                    } else {
+                                        $datosAI['valor_declarado'] = $datosAI['valor'];
+                                        unset($datosAI['valor']);
+                                    }
                                 }
                                 
                                 // 🔧 FIX CRÍTICO: NO sobrescribir peso si ya existe uno correcto
@@ -4018,31 +4312,53 @@ class MCPAssistantService
                 $taraYaDecidida = false;
                 $taraYaIncluidaEnDatos = false;
                 $pesoConTaraYaCalculado = null;
+                $pesoCalculadoCU = false; // 🆕 Flag: si el peso fue calculado por c/u
                 
-                // Verificar en extractedData si ya se decidió sobre la tara
+                // Verificar en extractedData si ya se decidió sobre la tara o c/u
                 if (!empty($extractedData)) {
                     $isMultiRoute = isset($extractedData[0]) && is_array($extractedData[0]);
                     if ($isMultiRoute) {
                         // Para múltiples rutas, verificar la ruta correspondiente
                         foreach ($extractedData as $idx => $ruta) {
-                            if (isset($ruta['incluye_tara'])) {
-                                $taraYaDecidida = true;
-                                $taraYaIncluidaEnDatos = $ruta['incluye_tara'] === true;
-                                // 🆕 FIX: Obtener el peso_kg que ya tiene la tara calculada
-                                $pesoConTaraYaCalculado = $ruta['peso_kg'] ?? $ruta['peso'] ?? null;
-                                Log::info('✅ Tara YA DECIDIDA en extractedData (multi-ruta)', [
-                                    'ruta' => $idx,
-                                    'incluye_tara' => $taraYaIncluidaEnDatos,
-                                    'peso_kg_con_tara' => $pesoConTaraYaCalculado
-                                ]);
-                                break;
+                            if (is_numeric($idx) && is_array($ruta)) {
+                                // 🆕 Verificar si el peso fue calculado por c/u
+                                if (!empty($ruta['peso_calculado_cu']) && !empty($ruta['peso_kg'])) {
+                                    $taraYaDecidida = true;
+                                    $pesoConTaraYaCalculado = $ruta['peso_kg'];
+                                    $pesoCalculadoCU = true;
+                                    Log::info('✅ Peso calculado por c/u en extractedData (multi-ruta)', [
+                                        'ruta' => $idx,
+                                        'peso_kg' => $pesoConTaraYaCalculado,
+                                        'peso_unitario' => $ruta['peso_unitario'] ?? 'N/A'
+                                    ]);
+                                    break;
+                                }
+                                if (isset($ruta['incluye_tara'])) {
+                                    $taraYaDecidida = true;
+                                    $taraYaIncluidaEnDatos = $ruta['incluye_tara'] === true;
+                                    $pesoConTaraYaCalculado = $ruta['peso_kg'] ?? $ruta['peso'] ?? null;
+                                    Log::info('✅ Tara YA DECIDIDA en extractedData (multi-ruta)', [
+                                        'ruta' => $idx,
+                                        'incluye_tara' => $taraYaIncluidaEnDatos,
+                                        'peso_kg_con_tara' => $pesoConTaraYaCalculado
+                                    ]);
+                                    break;
+                                }
                             }
                         }
                     } else {
-                        if (isset($extractedData['incluye_tara'])) {
+                        // 🆕 Verificar si el peso fue calculado por c/u (ruta única)
+                        if (!empty($extractedData['peso_calculado_cu']) && !empty($extractedData['peso_kg'])) {
+                            $taraYaDecidida = true;
+                            $pesoConTaraYaCalculado = $extractedData['peso_kg'];
+                            $pesoCalculadoCU = true;
+                            Log::info('✅ Peso calculado por c/u en extractedData (ruta única)', [
+                                'peso_kg' => $pesoConTaraYaCalculado,
+                                'peso_unitario' => $extractedData['peso_unitario'] ?? 'N/A'
+                            ]);
+                        } elseif (isset($extractedData['incluye_tara'])) {
                             $taraYaDecidida = true;
                             $taraYaIncluidaEnDatos = $extractedData['incluye_tara'] === true;
-                            // 🆕 FIX: Obtener el peso_kg que ya tiene la tara calculada
                             $pesoConTaraYaCalculado = $extractedData['peso_kg'] ?? $extractedData['peso'] ?? null;
                             Log::info('✅ Tara YA DECIDIDA en extractedData (ruta única)', [
                                 'incluye_tara' => $taraYaIncluidaEnDatos,
@@ -4052,13 +4368,17 @@ class MCPAssistantService
                     }
                 }
                 
-                // Si ya se decidió sobre la tara, usar el peso que YA tiene la tara calculada
-                if ($taraYaDecidida && $taraYaIncluidaEnDatos && $pesoConTaraYaCalculado) {
-                    // 🆕 FIX CRÍTICO: Usar el peso_kg de extractedData que YA tiene la tara sumada
-                    // NO usar el peso de OpenAI porque OpenAI envía el peso sin tara
+                // 🆕 Si el peso fue calculado por c/u, usarlo directamente (NO agregar tara para carga suelta)
+                if ($taraYaDecidida && $pesoCalculadoCU && $pesoConTaraYaCalculado) {
+                    $arguments['peso_mercancia'] = (string) round($pesoConTaraYaCalculado);
+                    Log::info('✅ Peso c/u calculado por sistema - usando directamente', [
+                        'peso_cu_calculado' => $pesoConTaraYaCalculado,
+                        'peso_mercancia_final' => $arguments['peso_mercancia']
+                    ]);
+                } elseif ($taraYaDecidida && $taraYaIncluidaEnDatos && $pesoConTaraYaCalculado) {
+                    // FIX CRÍTICO: Usar el peso_kg de extractedData que YA tiene la tara sumada
                     $arguments['peso_mercancia'] = (string) intval($pesoConTaraYaCalculado);
                     Log::info('✅ TARA ya incluida según extractedData - usando peso_kg calculado', [
-                        'peso_openai_sin_tara' => $arguments['peso_mercancia'] ?? 'N/A',
                         'peso_extractedData_con_tara' => $pesoConTaraYaCalculado
                     ]);
                 } else {
@@ -4074,82 +4394,97 @@ class MCPAssistantService
                         }
                     }
                     
-                    // 🆕 FIX CRÍTICO: Re-extraer peso del mensaje original del usuario
-                    // Porque OpenAI convierte "12.400" (español: 12400) a "12.4" (decimal) incorrectamente
-                    $pesoExtraidoDelMensaje = self::extractPeso($allUserMsgs);
-                    $pesoDeOpenAI = self::normalizeWeight($arguments['peso_mercancia']);
-                    
-                    // Usar el peso extraído del mensaje si es mayor que el de OpenAI
-                    if ($pesoExtraidoDelMensaje !== null && $pesoExtraidoDelMensaje > $pesoDeOpenAI * 100) {
-                        $pesoOriginal = $pesoExtraidoDelMensaje;
-                        Log::info('🔧 Peso re-extraído del mensaje original (OpenAI interpretó mal formato español)', [
-                            'peso_openai_mal' => $pesoDeOpenAI,
-                            'peso_extraido_correcto' => $pesoExtraidoDelMensaje
-                        ]);
-                    } else {
-                        $pesoOriginal = $pesoDeOpenAI;
-                    }
-                    
-                    // 🔧 FIX CRÍTICO: Detectar "sin tara" PRIMERO (tiene MAYOR prioridad)
-                    // Si dice "sin tara", SIEMPRE sumar tara, no importa otros patrones
-                    $sinTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $allUserMsgs);
-                    
-                    // 🔧 REGEX para detectar "con tara incluida" (SOLO si NO dice "sin tara")
-                    $taraYaIncluida = !$sinTara && preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $allUserMsgs);
-                    
-                    Log::info('🔍 Análisis de tara en create_cotizacion', [
-                        'sin_tara_detectado' => (bool) $sinTara,
-                        'tara_ya_incluida_detectado' => (bool) $taraYaIncluida,
-                        'peso_original' => $pesoOriginal,
-                        'mensaje_preview' => substr($allUserMsgs, 0, 150)
-                    ]);
-                    
-                    // 🔧 PRIORIDAD CORREGIDA: "sin tara" tiene prioridad sobre "con tara incluida"
-                    // 🔧 FIX v2: Determinar tara según tipo de contenedor
-                    // PRIMERO verificar en el tipo_embalaje (más confiable)
-                    // LUEGO verificar en el mensaje del usuario
-                    $taraAplicar = 3400; // Default
-                    
-                    // Verificar tipo_embalaje en los argumentos
+                    // 🆕 FIX: Verificar si hay contenedores ANTES de aplicar cualquier tara
+                    $hayContenedorEnToolCall = self::hayContenedorEnTexto($allUserMsgs);
                     $tipoEmbalaje = $arguments['tipo_embajale'] ?? $arguments['tipo_embalaje'] ?? '';
-                    if (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $tipoEmbalaje)) {
-                        $taraAplicar = 2300;
-                        Log::info('📦 Tara 2300 detectada por tipo_embalaje', ['tipo_embalaje' => $tipoEmbalaje]);
-                    } elseif (preg_match('/contenedor\s+de\s+20|1x20|2x20|\b20\s*pies/ui', $allUserMsgs)) {
-                        $taraAplicar = 2300;
-                        Log::info('📦 Tara 2300 detectada en mensaje del usuario');
-                    } else {
-                        // Fallback a la función getTaraByContenedor
-                        $taraAplicar = self::getTaraByContenedor($allUserMsgs);
-                    }
+                    $embajajeEsContenedor = preg_match('/contenedor/i', $tipoEmbalaje);
+                    $hayContenedor = $hayContenedorEnToolCall || $embajajeEsContenedor;
                     
-                    if ($sinTara) {
-                        // Si dice "sin tara", SUMAR tara según contenedor
-                        $pesoConTara = $pesoOriginal + $taraAplicar;
-                        $arguments['peso_mercancia'] = (string) $pesoConTara;
-                        Log::info('🏋️ TARA aplicada en create_cotizacion (detectado "sin tara")', [
-                            'peso_original' => $pesoOriginal,
-                            'tara' => $taraAplicar,
-                            'tipo_embalaje' => $tipoEmbalaje,
-                            'peso_con_tara' => $pesoConTara
-                        ]);
-                    } elseif ($taraYaIncluida) {
-                        // Si dice "con tara incluida", NO agregar
-                        $arguments['peso_mercancia'] = (string) $pesoOriginal;
-                        Log::info('✅ TARA ya incluida (detectada "con tara incluida"), peso se mantiene', [
-                            'peso' => $pesoOriginal
-                        ]);
-                    } elseif (!preg_match('/\btara\b/ui', $allUserMsgs)) {
-                        // Si NO menciona tara en absoluto, agregar tara según contenedor por defecto
-                        $pesoConTara = $pesoOriginal + $taraAplicar;
-                        $arguments['peso_mercancia'] = (string) $pesoConTara;
-                        Log::info('🏋️ TARA aplicada en create_cotizacion (no mencionó tara)', [
-                            'peso_original' => $pesoOriginal,
-                            'tara' => $taraAplicar,
-                            'peso_con_tara' => $pesoConTara
+                    // 🆕 FIX: Detectar peso unitario (c/u) y recalcular
+                    $pesoUnitarioCU = self::detectPesoUnitario($allUserMsgs);
+                    $cantidadCU = self::extractCantidad($allUserMsgs);
+                    
+                    if ($pesoUnitarioCU !== null && $cantidadCU && !$hayContenedor) {
+                        // C/U detectado: calcular peso total = cantidad × peso unitario
+                        $pesoTotalCU = round($pesoUnitarioCU * $cantidadCU, 2);
+                        $arguments['peso_mercancia'] = (string) round($pesoTotalCU);
+                        Log::info('📊 Peso recalculado por c/u en create_cotizacion (NO contenedor)', [
+                            'peso_unitario' => $pesoUnitarioCU,
+                            'cantidad' => $cantidadCU,
+                            'peso_total' => $pesoTotalCU,
+                            'calculo' => "{$cantidadCU} × {$pesoUnitarioCU} = {$pesoTotalCU} kg"
                         ]);
                     } else {
-                        $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                        // 🆕 FIX CRÍTICO: Re-extraer peso del mensaje original del usuario
+                        // Porque OpenAI convierte "12.400" (español: 12400) a "12.4" (decimal) incorrectamente
+                        $pesoExtraidoDelMensaje = self::extractPeso($allUserMsgs);
+                        $pesoDeOpenAI = self::normalizeWeight($arguments['peso_mercancia']);
+                        
+                        // Usar el peso extraído del mensaje si es mayor que el de OpenAI
+                        if ($pesoExtraidoDelMensaje !== null && $pesoExtraidoDelMensaje > $pesoDeOpenAI * 100) {
+                            $pesoOriginal = $pesoExtraidoDelMensaje;
+                            Log::info('🔧 Peso re-extraído del mensaje original (OpenAI interpretó mal formato español)', [
+                                'peso_openai_mal' => $pesoDeOpenAI,
+                                'peso_extraido_correcto' => $pesoExtraidoDelMensaje
+                            ]);
+                        } else {
+                            $pesoOriginal = $pesoDeOpenAI;
+                        }
+                        
+                        // 🆕 FIX CRÍTICO: Si NO hay contenedor, NO aplicar tara NUNCA (carga suelta)
+                        if (!$hayContenedor) {
+                            $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                            Log::info('📦 Sin contenedor → peso se mantiene sin tara (carga suelta)', [
+                                'peso' => $pesoOriginal,
+                                'tipo_embalaje' => $tipoEmbalaje
+                            ]);
+                        } else {
+                            // Solo aplicar lógica de tara si HAY contenedor
+                            $sinTara = preg_match('/(?:no\s+incluye|sin)\s*(?:la\s+)?tara|\+\s*tara|m[aá]s\s+tara|peso\s+neto/ui', $allUserMsgs);
+                            $taraYaIncluida = !$sinTara && preg_match('/(?:con\s+(?:la\s+)?tara\s+incluida|tara\s+(?:ya\s+)?incluida|(?:ya\s+)?(?:incluye|tiene)\s+(?:la\s+)?tara|con\s+tara(?!\s+(?:no|sin))|peso\s+bruto|(?:kilos?|kilogramos?|kg)\s+con\s+tara)/ui', $allUserMsgs);
+                            
+                            Log::info('🔍 Análisis de tara en create_cotizacion (CON contenedor)', [
+                                'sin_tara_detectado' => (bool) $sinTara,
+                                'tara_ya_incluida_detectado' => (bool) $taraYaIncluida,
+                                'peso_original' => $pesoOriginal,
+                                'hay_contenedor' => true,
+                                'mensaje_preview' => substr($allUserMsgs, 0, 150)
+                            ]);
+                            
+                            // Determinar tara según tipo de contenedor
+                            $taraAplicar = 3400; // Default
+                            if (preg_match('/CONTENEDOR\s*20|20\s*pies/i', $tipoEmbalaje)) {
+                                $taraAplicar = 2300;
+                            } elseif (preg_match('/contenedor\s+de\s+20|1x20|2x20|\b20\s*pies/ui', $allUserMsgs)) {
+                                $taraAplicar = 2300;
+                            } else {
+                                $taraAplicar = self::getTaraByContenedor($allUserMsgs);
+                            }
+                            
+                            if ($sinTara) {
+                                $pesoConTara = $pesoOriginal + $taraAplicar;
+                                $arguments['peso_mercancia'] = (string) $pesoConTara;
+                                Log::info('🏋️ TARA aplicada en create_cotizacion (detectado "sin tara")', [
+                                    'peso_original' => $pesoOriginal,
+                                    'tara' => $taraAplicar,
+                                    'peso_con_tara' => $pesoConTara
+                                ]);
+                            } elseif ($taraYaIncluida) {
+                                $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                                Log::info('✅ TARA ya incluida, peso se mantiene', ['peso' => $pesoOriginal]);
+                            } elseif (!preg_match('/\btara\b/ui', $allUserMsgs)) {
+                                // Solo agregar tara por defecto si hay contenedor
+                                $pesoConTara = $pesoOriginal + $taraAplicar;
+                                $arguments['peso_mercancia'] = (string) $pesoConTara;
+                                Log::info('🏋️ TARA aplicada por defecto (contenedor, no mencionó tara)', [
+                                    'peso_original' => $pesoOriginal,
+                                    'tara' => $taraAplicar,
+                                    'peso_con_tara' => $pesoConTara
+                                ]);
+                            } else {
+                                $arguments['peso_mercancia'] = (string) $pesoOriginal;
+                            }
+                        }
                     }
                 }
             }
@@ -5734,10 +6069,15 @@ class MCPAssistantService
                     ];
                     
                     // Extraer Valor: $ XX.XXX o Valor: $ XXX,XXX
-                    if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
-                        $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
-                        $route['valor_declarado'] = (int)$valorStr;
-                        Log::info("💰 Valor extraído (ruta #{$route['ruta_numero']})", ['valor' => $route['valor_declarado'], 'raw' => $valorMatch[1]]);
+                    // 💵 Verificar que no sea USD
+                    if (!self::detectValorEnUSD($contextoDespues)) {
+                        if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
+                            $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
+                            $route['valor_declarado'] = (int)$valorStr;
+                            Log::info("💰 Valor extraído (ruta #{$route['ruta_numero']})", ['valor' => $route['valor_declarado'], 'raw' => $valorMatch[1]]);
+                        }
+                    } else {
+                        $route['valor_en_usd'] = true;
                     }
                     
                     // Extraer Peso: XXXX kilogramos
@@ -5799,9 +6139,14 @@ class MCPAssistantService
                 ];
                 
                 // Extraer Valor
-                if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
-                    $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
-                    $route['valor_declarado'] = (int)$valorStr;
+                // 💵 Verificar que no sea USD
+                if (!self::detectValorEnUSD($contextoDespues)) {
+                    if (preg_match('/Valor\s*:\s*\$?\s*([\d.,]+)/ui', $contextoDespues, $valorMatch)) {
+                        $valorStr = str_replace(['.', ','], '', $valorMatch[1]);
+                        $route['valor_declarado'] = (int)$valorStr;
+                    }
+                } else {
+                    $route['valor_en_usd'] = true;
                 }
                 
                 // Extraer Peso
@@ -6333,23 +6678,29 @@ class MCPAssistantService
                     }
                     
                     // Extraer valor declarado del contextoDespues
-                    $valorExtraido = self::extractValorDeclarado($contextoDespues);
-                    if ($valorExtraido) {
-                        $routeData['valor_declarado'] = $valorExtraido;
-                        Log::info("💰 Valor declarado extraído (Ruta #{$routeData['ruta_numero']})", [
-                            'valor' => $valorExtraido,
-                            'contexto' => substr($contextoDespues, 0, 150)
-                        ]);
-                    }
-                    // Si no se encuentra valor después, buscar antes (fallback)
-                    elseif ($contextoAntes) {
-                        $valorExtraido = self::extractValorDeclarado($contextoAntes);
+                    // 💵 Verificar que no sea USD
+                    if (!self::detectValorEnUSD($contextoDespues) && !self::detectValorEnUSD($contextoAntes ?? '')) {
+                        $valorExtraido = self::extractValorDeclarado($contextoDespues);
                         if ($valorExtraido) {
                             $routeData['valor_declarado'] = $valorExtraido;
-                            Log::info("💰 Valor declarado extraído del contextoAntes (Ruta #{$routeData['ruta_numero']})", [
-                                'valor' => $valorExtraido
+                            Log::info("💰 Valor declarado extraído (Ruta #{$routeData['ruta_numero']})", [
+                                'valor' => $valorExtraido,
+                                'contexto' => substr($contextoDespues, 0, 150)
                             ]);
                         }
+                        // Si no se encuentra valor después, buscar antes (fallback)
+                        elseif ($contextoAntes) {
+                            $valorExtraido = self::extractValorDeclarado($contextoAntes);
+                            if ($valorExtraido) {
+                                $routeData['valor_declarado'] = $valorExtraido;
+                                Log::info("💰 Valor declarado extraído del contextoAntes (Ruta #{$routeData['ruta_numero']})", [
+                                    'valor' => $valorExtraido
+                                ]);
+                            }
+                        }
+                    } else {
+                        $routeData['valor_en_usd'] = true;
+                        Log::info("💵 Valor en USD detectado en multi-ruta #{$routeData['ruta_numero']} - se pedirá en COP");
                     }
                     
                     // Extraer cantidad del contextoDespues PRIMERO
@@ -6368,8 +6719,10 @@ class MCPAssistantService
                     // 🆕 FIX CRÍTICO: Valor declarado en múltiples rutas
                     // Para PRIMERA RUTA (idx=0): buscar en contextoAntes O contextoDespues
                     // Para RUTAS SIGUIENTES: SOLO buscar en contextoDespues (su propio contexto)
+                    // 💵 Solo si no se detectó USD previamente
                     $valorDeclaradoEncontrado = false;
                     
+                    if (!isset($routeData['valor_en_usd']) || !$routeData['valor_en_usd']) {
                     if ($idx === 0) {
                         // Primera ruta: puede tener valor antes o después
                         if (preg_match('/valor(?:\s+declarado)?\s+(?:de\s+)?(?:\$\s*)?(\d+(?:[.,]\d+)?)\s*millones?/ui', $contextoDespues, $valorMatch)) {
@@ -6392,6 +6745,7 @@ class MCPAssistantService
                         // 🔧 NO buscar en contextoAntes para rutas siguientes
                         // El valor en contextoAntes pertenece a la ruta anterior
                     }
+                    } // fin if (!valor_en_usd)
                     
                     // Extraer vehículo (priorizar contextoDespues)
                     // 🔧 MEJORADO: Buscar tipos de vehículo válidos, ignorando palabras como "sería", "seria", etc.
@@ -8479,6 +8833,58 @@ class MCPAssistantService
      * Convierte a formato estándar compatible con BD
      */
     /**
+     * 🏙️ Extraer nombre de ciudad de un segmento de texto (puede contener dirección completa)
+     * Busca nombres de ciudades colombianas conocidas, o entre paréntesis con prefijo como "CEDI ARDISA CIUDAD"
+     */
+    private static function extractCityFromSegment($segmento)
+    {
+        // Lista de ciudades colombianas principales
+        $ciudades = 'CARTAGENA|BARRANQUILLA|BOGOT[AÁ]|MEDELL[IÍ]N|CALI|BUCARAMANGA|SANTA\s+MARTA|BUENAVENTURA|PEREIRA|MANIZALES|IBAGU[EÉ]|C[UÚ]CUTA|VILLAVICENCIO|PASTO|ARMENIA|NEIVA|MONTER[IÍ]A|SINCELEJO|POPAY[AÁ]N|TUNJA|VALLEDUPAR|RIOHACHA|QUIBD[OÓ]|FLORENCIA|MOCOA|LETICIA|YOPAL|SAN\s+ANDR[EÉ]S|FUNZA|COTA|MADRID|SOACHA|ZIPAQUIR[AÁ]|GIRARDOT|PALMIRA|YUMBO|TURBACO|SOLEDAD|MALAMBO|BARRANCABERMEJA|DUITAMA|SOGAMOSO|BUGA|CARTAGO|DOSQUEBRADAS|ENVIGADO|BELLO|SABANETA|RIONEGRO|ITAG[UÜ][IÍ]';
+        
+        // 🆕 Mapeo de nombres de aeropuertos/puertos conocidos → ciudad
+        $aeropuertoPuerto = [
+            '/Jos[eé]\s+Mar[ií]a\s+C[oó]rd[ov]+a/ui' => 'RIONEGRO',
+            '/El\s+Dorado/ui' => 'BOGOTA',
+            '/Rafael\s+N[uú][ñn]ez/ui' => 'CARTAGENA',
+            '/Ernesto\s+Cortissoz/ui' => 'BARRANQUILLA',
+            '/Bonilla\s+Arag[oó]n/ui' => 'CALI',
+            '/Sim[oó]n\s+Bol[ií]var/ui' => 'SANTA MARTA',
+            '/Palonegro/ui' => 'BUCARAMANGA',
+            '/Camilo\s+Daza/ui' => 'CUCUTA',
+            '/Mateca[ñn]a/ui' => 'PEREIRA',
+        ];
+        foreach ($aeropuertoPuerto as $patronAero => $ciudadAero) {
+            if (preg_match($patronAero, $segmento)) {
+                return $ciudadAero;
+            }
+        }
+        
+        // Primero buscar en texto entre paréntesis (ej: "CEDI ARDISA CARTAGENA")
+        if (preg_match_all('/\(([^)]+)\)/u', $segmento, $parentesis)) {
+            foreach ($parentesis[1] as $contenido) {
+                if (preg_match('/\b(' . $ciudades . ')\b/ui', $contenido, $m)) {
+                    return mb_strtoupper(trim($m[1]));
+                }
+            }
+        }
+        
+        // Buscar mención directa de ciudad tras departamento
+        if (preg_match('/,\s*([^,]+?),?\s*(?:Atl[aá]ntico|Bol[ií]var|Cundinamarca|Antioquia|Valle|Santander)/ui', $segmento, $mDepto)) {
+            $posibleCiudad = trim($mDepto[1]);
+            if (preg_match('/\b(' . $ciudades . ')\b/ui', $posibleCiudad, $m)) {
+                return mb_strtoupper(trim($m[1]));
+            }
+        }
+        
+        // Buscar cualquier ciudad conocida en el texto
+        if (preg_match('/\b(' . $ciudades . ')\b/ui', $segmento, $m)) {
+            return mb_strtoupper(trim($m[1]));
+        }
+        
+        return null;
+    }
+    
+    /**
      * 🔧 FIX BUG #534: Valida si un fragmento de texto es una ciudad válida
      * Filtra falsos positivos como números, verbos, palabras clave, etc.
      * 
@@ -8626,6 +9032,37 @@ class MCPAssistantService
         // DEBE HACERSE PRIMERO, antes de cualquier otra normalización
         $cityName = preg_replace('/^(importaci[oó]n|exportaci[oó]n|cotizaci[oó]n(?:\s+de)?)\s+/ui', '', $cityName);
         $cityName = trim($cityName);
+        
+        // 🚢 LIMPIAR "PUERTO DE" o "PUERTO" seguido de ciudades portuarias conocidas
+        // Ciudades con puertos importantes en Colombia donde "puerto de X" o "puerto X" significa la ciudad X
+        $ciudadesPortuarias = [
+            'BARRANQUILLA', 'BUENAVENTURA', 'CARTAGENA', 'SANTA MARTA', 'TUMACO', 
+            'TURBO', 'COVEÑAS', 'COVENAS', 'MAMONAL', 'PALERMO', 'POZOS COLORADOS',
+            'SOCIEDAD PORTUARIA', 'SPRB'
+        ];
+        
+        // Patrón: "puerto de [ciudad]" o "puerto [ciudad]" (case insensitive)
+        if (preg_match('/^puerto\s+(?:de\s+)?(.+)$/ui', $cityName, $matchPuerto)) {
+            $posibleCiudad = mb_strtoupper(trim($matchPuerto[1]), 'UTF-8');
+            // Normalizar acentos para comparar
+            $posibleCiudadNorm = strtr($posibleCiudad, [
+                'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'Ñ' => 'N'
+            ]);
+            
+            // Verificar si la ciudad después de "puerto" es una ciudad portuaria conocida
+            foreach ($ciudadesPortuarias as $ciudadPortuaria) {
+                if (strpos($posibleCiudadNorm, $ciudadPortuaria) !== false || 
+                    strpos($ciudadPortuaria, $posibleCiudadNorm) !== false ||
+                    $posibleCiudadNorm === $ciudadPortuaria) {
+                    Log::info('🚢 Puerto de ciudad eliminado', [
+                        'original' => $cityName, 
+                        'ciudad_extraida' => $matchPuerto[1]
+                    ]);
+                    $cityName = trim($matchPuerto[1]);
+                    break;
+                }
+            }
+        }
         
         // Abreviaciones comunes (Agregado solicitud usuario)
         $abbreviations = [
@@ -8801,6 +9238,155 @@ class MCPAssistantService
         
         $origenes = [];
         $destinos = [];
+        
+        // 🆕 Patrón -1: "ORIGEN: X ... PRIMER DESTINO: Y ... SEGUNDO DESTINO: Z"
+        // Es un patrón de ENTREGA DIVIDIDA (split delivery): un solo origen con múltiples destinos numerados
+        // Cada destino puede tener su propia cantidad
+        // Ejemplo: "ORIGEN: Puerto de Cartagena PRIMER DESTINO: ...CARTAGENA... SEGUNDO DESTINO: ...Barranquilla..."
+        $patronDestinosNumerados = '/(?:PRIMER|1(?:er|ro)?\.?)\s*DESTINO\s*:\s*(.+?)(?=(?:SEGUNDO|2(?:do|o)?\.?)\s*DESTINO|INFORMACIÓN|INFORMACI[OÓ]N|DATOS|$)/uis';
+        $patronSegundoDestino = '/(?:SEGUNDO|2(?:do|o)?\.?)\s*DESTINO\s*:\s*(.+?)(?=(?:TERCER|3(?:er|ro)?\.?)\s*DESTINO|INFORMACIÓN|INFORMACI[OÓ]N|DATOS|$)/uis';
+        $patronTercerDestino = '/(?:TERCER|3(?:er|ro)?\.?)\s*DESTINO\s*:\s*(.+?)(?=(?:CUARTO|4(?:to|o)?\.?)\s*DESTINO|INFORMACIÓN|INFORMACI[OÓ]N|DATOS|$)/uis';
+        
+        $tieneDestinosNumerados = preg_match($patronDestinosNumerados, $mensaje);
+        
+        if ($tieneDestinosNumerados) {
+            // Extraer origen
+            $origenDetectado = null;
+            if (preg_match('/ORIGEN\s*:\s*(.+?)(?=PRIMER|1(?:er|ro)?\.?\s*DESTINO)/uis', $mensaje, $mOrigen)) {
+                $origenTexto = trim($mOrigen[1]);
+                // Extraer ciudad del texto de origen (puede tener dirección completa)
+                // Buscar nombre de ciudad conocida o al final entre paréntesis
+                if (preg_match('/\b(CARTAGENA|BARRANQUILLA|BOGOT[AÁ]|MEDELL[IÍ]N|CALI|BUCARAMANGA|SANTA\s+MARTA|BUENAVENTURA|PEREIRA|MANIZALES|IBAGU[EÉ]|C[UÚ]CUTA|VILLAVICENCIO|PASTO|ARMENIA|NEIVA|MONTER[IÍ]A|SINCELEJO|POPAY[AÁ]N|TUNJA|VALLEDUPAR|RIOHACHA|QUIBD[OÓ]|FLORENCIA|MOCOA|LETICIA|YOPAL|SAN\s+ANDR[EÉ]S|FUNZA|COTA|MADRID|SOACHA|ZIPAQUIR[AÁ]|GIRARDOT)\b/ui', $origenTexto, $mCiudad)) {
+                    $origenDetectado = mb_strtoupper(trim($mCiudad[1]));
+                } else {
+                    // Intentar extraer "Puerto de CIUDAD" → CIUDAD
+                    if (preg_match('/Puerto\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $origenTexto, $mPuerto)) {
+                        $origenDetectado = mb_strtoupper(trim($mPuerto[1]));
+                    } else {
+                        // Usar las últimas palabras significativas
+                        $origenDetectado = self::normalizeCityName(trim($origenTexto));
+                    }
+                }
+            }
+            
+            if ($origenDetectado) {
+                $destinosDetectados = [];
+                $segmentosPorDestino = [];
+                
+                // Extraer PRIMER DESTINO
+                if (preg_match($patronDestinosNumerados, $mensaje, $mDest1)) {
+                    $segmento1 = trim($mDest1[1]);
+                    $ciudad1 = self::extractCityFromSegment($segmento1);
+                    if ($ciudad1) {
+                        $destinosDetectados[] = $ciudad1;
+                        $segmentosPorDestino[$ciudad1] = $segmento1;
+                    }
+                }
+                
+                // Extraer SEGUNDO DESTINO
+                if (preg_match($patronSegundoDestino, $mensaje, $mDest2)) {
+                    $segmento2 = trim($mDest2[1]);
+                    $ciudad2 = self::extractCityFromSegment($segmento2);
+                    if ($ciudad2) {
+                        $destinosDetectados[] = $ciudad2;
+                        $segmentosPorDestino[$ciudad2] = $segmento2;
+                    }
+                }
+                
+                // Extraer TERCER DESTINO (si existe)
+                if (preg_match($patronTercerDestino, $mensaje, $mDest3)) {
+                    $segmento3 = trim($mDest3[1]);
+                    $ciudad3 = self::extractCityFromSegment($segmento3);
+                    if ($ciudad3) {
+                        $destinosDetectados[] = $ciudad3;
+                        $segmentosPorDestino[$ciudad3] = $segmento3;
+                    }
+                }
+                
+                if (count($destinosDetectados) >= 2) {
+                    Log::info('🌍 Múltiples destinos numerados detectados (PRIMER/SEGUNDO DESTINO)', [
+                        'origen' => $origenDetectado,
+                        'destinos' => $destinosDetectados,
+                        'total_rutas' => count($destinosDetectados),
+                        'segmentos' => array_keys($segmentosPorDestino)
+                    ]);
+                    
+                    return [
+                        'origenes' => [$origenDetectado],
+                        'destinos' => $destinosDetectados,
+                        '_patron' => 'origen_comun',
+                        '_segmentos' => $segmentosPorDestino
+                    ];
+                }
+            }
+        }
+        
+        // 🆕 Patrón -1B: "ORIGEN: X ... Destino 1: Y ... Destino 2: Z"
+        // Similar a Patrón -1 pero con destinos numerados "Destino N:" en lugar de "PRIMER/SEGUNDO DESTINO"
+        // Ejemplo: "ORIGEN : Itagüí DESTINO - Destino 1: Puerto Cartagena - Destino 2: Aeropuerto José María Córdova"
+        $patronDestinoNumerico = '/Destino\s+\d+\s*:/ui';
+        $tieneDestinosNumericos = preg_match_all($patronDestinoNumerico, $mensaje);
+        
+        if ($tieneDestinosNumericos >= 2) {
+            // Extraer origen
+            $origenDetectadoN = null;
+            if (preg_match('/ORIGEN\s*:\s*(.+?)(?=DESTINO)/uis', $mensaje, $mOrigenN)) {
+                $origenTextoN = trim($mOrigenN[1]);
+                $origenDetectadoN = self::extractCityFromSegment($origenTextoN);
+                if (!$origenDetectadoN) {
+                    // Intentar "Puerto de CIUDAD"
+                    if (preg_match('/Puerto\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $origenTextoN, $mPuertoN)) {
+                        $origenDetectadoN = mb_strtoupper(trim($mPuertoN[1]));
+                    } else {
+                        $origenDetectadoN = self::normalizeCityName(trim($origenTextoN));
+                    }
+                }
+            }
+            
+            if ($origenDetectadoN) {
+                $destinosDetectadosN = [];
+                $segmentosPorDestinoN = [];
+                
+                // Extraer cada "Destino N:" con su contenido
+                if (preg_match_all('/Destino\s+(\d+)\s*:\s*(.+?)(?=Destino\s+\d+\s*:|DETALLES|DATOS|INFORMACI[OÓ]N|CARGA|$)/uis', $mensaje, $mDestinosN, PREG_SET_ORDER)) {
+                    foreach ($mDestinosN as $mDestN) {
+                        $segmentoTextoN = trim($mDestN[2]);
+                        // Limpiar guiones y espacios al final
+                        $segmentoTextoN = preg_replace('/[\s\-–—]+$/', '', $segmentoTextoN);
+                        
+                        $ciudadN = self::extractCityFromSegment($segmentoTextoN);
+                        if (!$ciudadN) {
+                            if (preg_match('/Puerto\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $segmentoTextoN, $mPuertoD)) {
+                                $ciudadN = mb_strtoupper(trim($mPuertoD[1]));
+                            } else {
+                                $ciudadN = self::normalizeCityName($segmentoTextoN);
+                            }
+                        }
+                        
+                        if ($ciudadN) {
+                            $destinosDetectadosN[] = $ciudadN;
+                            $segmentosPorDestinoN[$ciudadN] = $segmentoTextoN;
+                        }
+                    }
+                }
+                
+                if (count($destinosDetectadosN) >= 2) {
+                    Log::info('🌍 Múltiples destinos numerados detectados (Destino 1/2/3)', [
+                        'origen' => $origenDetectadoN,
+                        'destinos' => $destinosDetectadosN,
+                        'total_rutas' => count($destinosDetectadosN),
+                        'segmentos' => array_keys($segmentosPorDestinoN)
+                    ]);
+                    
+                    return [
+                        'origenes' => [$origenDetectadoN],
+                        'destinos' => $destinosDetectadosN,
+                        '_patron' => 'origen_comun',
+                        '_segmentos' => $segmentosPorDestinoN
+                    ];
+                }
+            }
+        }
         
         // 🆕 Patrón 0: "Todo llega a DESTINO: desde/de ORIGEN1... y desde/de ORIGEN2..."
         // Ejemplo: "Todo llega a Buenaventura: desde Pereira van... y desde Manizales salen..."
@@ -9164,6 +9750,62 @@ class MCPAssistantService
     /**
      * ⚖️ EXTRAER PESO (en kilogramos)
      */
+    /**
+     * 📊 DETECTAR PESO POR UNIDAD (c/u, cada uno, cada una)
+     * Detecta si el texto indica un peso por unidad individual
+     * Ejemplo: "23.6 kilos c/u" → retorna 23.6
+     * @param string $text Texto a analizar
+     * @return float|null Peso por unidad en kg, o null si no se detecta
+     */
+    private static function detectPesoUnitario($text)
+    {
+        // Patrón 1: "NÚMERO kg/kilos c/u" o "NÚMERO kg/kilos cada uno/una"
+        // Ejemplo: "23.6 kilos c/u", "10 kg cada uno", "5.5 kilogramos por unidad"
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)\s*(?:c\/\s*u|cada\s+(?:uno|una|1)|por\s+(?:unidad|cada\s+(?:uno|una)))/ui', $text, $matches)) {
+            $peso = (float)str_replace(',', '.', $matches[1]);
+            Log::info('📊 Peso por unidad detectado (X kg c/u)', ['peso_unitario' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        // Patrón 2: "Peso NÚMERO c/u" (sin unidad explícita, se asume kg)
+        if (preg_match('/[Pp]eso\s*:?\s*(\d+(?:[.,]\d+)?)\s*(?:c\/\s*u|cada\s+(?:uno|una|1))/ui', $text, $matches)) {
+            $peso = (float)str_replace(',', '.', $matches[1]);
+            Log::info('📊 Peso por unidad detectado (Peso X c/u)', ['peso_unitario' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        // Patrón 3: "c/u NÚMERO kg/kilos" o "cada uno NÚMERO kg" (orden invertido)
+        if (preg_match('/(?:c\/\s*u|cada\s+(?:uno|una|1)|por\s+unidad)\s*(?:de\s+)?(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)/ui', $text, $matches)) {
+            $peso = (float)str_replace(',', '.', $matches[1]);
+            Log::info('📊 Peso por unidad detectado (c/u X kg)', ['peso_unitario' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        // Patrón 4: "pesan X kilos cada uno", "pesa X kg c/u"
+        if (preg_match('/(?:pesan?|pesa)\s+(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)\s*(?:c\/\s*u|cada\s+(?:uno|una|1)|por\s+(?:unidad|cada))/ui', $text, $matches)) {
+            $peso = (float)str_replace(',', '.', $matches[1]);
+            Log::info('📊 Peso por unidad detectado (pesan X kg c/u)', ['peso_unitario' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        // Patrón 5: "de X kilos c/u" o "de X kg cada uno"
+        if (preg_match('/de\s+(\d+(?:[.,]\d+)?)\s*(?:kg|kilos?|kilogramos?)\s*(?:c\/\s*u|cada\s+(?:uno|una|1)|por\s+(?:unidad|cada))/ui', $text, $matches)) {
+            $peso = (float)str_replace(',', '.', $matches[1]);
+            Log::info('📊 Peso por unidad detectado (de X kg c/u)', ['peso_unitario' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        // Patrón 6: "X libras c/u" o "X lb cada uno" (convertir a kg: 1 lb = 0.453592 kg)
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:libras?|lbs?)\s*(?:c\/\s*u|cada\s+(?:uno|una|1)|por\s+(?:unidad|cada))/ui', $text, $matches)) {
+            $libras = (float)str_replace(',', '.', $matches[1]);
+            $peso = round($libras * 0.453592, 2);
+            Log::info('📊 Peso por unidad detectado en libras (X lb c/u)', ['libras' => $libras, 'peso_kg' => $peso, 'raw' => $matches[0]]);
+            return $peso;
+        }
+
+        return null;
+    }
+
     private static function extractPeso($text)
     {
         // 🆕 Patrón: "Total weight: 5,647.6 kg" (formato con comas inglesas)
@@ -9599,7 +10241,30 @@ class MCPAssistantService
     }
 
     /**
-     * 💰 EXTRAER VALOR DECLARADO
+     * � DETECTAR SI EL TEXTO MENCIONA VALOR EN USD/DÓLARES
+     * Retorna true si el valor declarado está en moneda extranjera (USD)
+     */
+    public static function detectValorEnUSD($text)
+    {
+        // Patrones que indican valor en USD/dólares
+        $patronesUSD = [
+            '/(?:valor|precio|carga)\s*(?:de\s+la\s+)?(?:mercanc[ií]a|carga|declarado)?\s*:?\s*(?:usd|dolar(?:es)?|d[óo]lar(?:es)?|us\$)/ui',
+            '/(?:usd|dolar(?:es)?|d[óo]lar(?:es)?|us\$)\s*[\d.,]+/ui',
+            '/[\d.,]+\s*(?:usd|dolar(?:es)?|d[óo]lar(?:es)?|us\$)/ui',
+            '/\busd\s+[\d.,]+/ui',
+        ];
+        
+        foreach ($patronesUSD as $patron) {
+            if (preg_match($patron, $text)) {
+                Log::info('💵 Valor en USD/dólares detectado en texto', ['texto' => substr($text, 0, 200)]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * �💰 EXTRAER VALOR DECLARADO
      */
     private static function extractValorDeclarado($text)
     {
@@ -10441,6 +11106,9 @@ class MCPAssistantService
             foreach ($data as $key => $value) {
                 if ($key === 'empaque_id') continue; // Ya mostrado arriba
                 
+                // 💵 No mostrar flag valor_en_usd como dato capturado
+                if ($key === 'valor_en_usd') continue;
+                
                 // Convertir valores a string de forma segura
                 if (is_array($value)) {
                     $value = json_encode($value);
@@ -10456,6 +11124,15 @@ class MCPAssistantService
                 if (isset($requiredFields[$key])) {
                     unset($requiredFields[$key]);
                 }
+            }
+            
+            // 💵 Si se detectó valor en USD, asegurar que valor_declarado quede como faltante
+            $valorEnUSD = isset($data['valor_en_usd']) && $data['valor_en_usd'] === true;
+            if ($valorEnUSD) {
+                // Asegurar que valor_declarado esté en la lista de faltantes
+                $requiredFields['valor_declarado'] = 'Valor declarado en PESOS COLOMBIANOS (COP)';
+                $dataInstruction .= "\n⚠️ VALOR EN USD DETECTADO: El usuario indicó el valor en dólares (USD).\n";
+                $dataInstruction .= "NO uses ese valor. Pregunta al usuario: '¿Podría indicarme el valor declarado en pesos colombianos (COP)?'\n";
             }
             
             // 🆕 Listar campos FALTANTES
@@ -10572,6 +11249,13 @@ El usuario puede dar el valor en MÚLTIPLES FORMATOS. DEBES reconocerlos TODOS:
 ✅ "un valor declarado de $10,000,000 COP" → valor_declarado = 10000000
 ✅ "5 millones COP" → valor_declarado = 5000000
 ✅ "valor de 10000000" → valor_declarado = 10000000
+
+⚠️ FORMATO DE RESPUESTA PARA VALORES:
+- SIEMPRE muestra el valor en formato colombiano: $3.000.000
+- ⛔ NUNCA antepongas "USD" al mostrar un valor declarado en tu respuesta
+- ⛔ NUNCA escribas "USD 3.000.000" ni "Valor: USD X"
+- ✅ Escribe simplemente: "$3.000.000" o "3.000.000 COP"
+- El valor declarado SIEMPRE es en pesos colombianos (COP), nunca en USD
 
 ⚠️ IMPORTANTE: 
 - El formato "\$X,XXX,XXX COP" o "\$X.XXX.XXX" es muy común en Colombia
@@ -10694,6 +11378,14 @@ Tú: "✅ Ruta 3 actualizada:
 - Tú solo extrae la INTENCIÓN del usuario: "quiere incluir tara".
 - Si el usuario dice "peso 20 toneladas con tara", extrae "peso: 20000", "incluye_tara: true".
 - Si el usuario dice "agrega tara", el sistema lo hará.
+
+📊 PESO POR UNIDAD (c/u, cada uno) - REGLA CRÍTICA:
+- Si el usuario dice "X kilos c/u" o "X kg cada uno", el sistema YA calcula el peso total automáticamente.
+- Ejemplo: "4 cajas - Peso 23.6 kilos c/u" → el sistema calcula 4 × 23.6 = 94.4 kg
+- "c/u" significa "cada uno" (por unidad)
+- Esta regla SOLO aplica cuando NO hay contenedores
+- NO recalcules el peso manualmente, el sistema ya lo hace
+- Muestra el peso total calculado, NO el peso por unidad
 
 �� VALORES POR DEFECTO - NUEVA REGLA (CRÍTICA):
 🚨 NUNCA INVENTAR DATOS QUE EL USUARIO NO PROPORCIONÓ 🚨
