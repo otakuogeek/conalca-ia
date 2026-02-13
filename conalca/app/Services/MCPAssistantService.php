@@ -9400,6 +9400,10 @@ class MCPAssistantService
             'neumaticos', 'llantas', 'repuestos', 'electrodomesticos', 'herramientas',
             // 🔧 FIX #572: Números y palabras de conexión
             'son', 'es', 'hay', 'tiene', 'medio', 'un', 'una', 'dos', 'tres',
+            // 🆕 FIX: Nombres de PAÍSES que NO son ciudades
+            'colombia', 'ecuador', 'venezuela', 'peru', 'panama', 'brasil', 'chile',
+            'argentina', 'mexico', 'bolivia', 'uruguay', 'paraguay',
+            'estados unidos', 'usa', 'eeuu', 'china', 'india', 'espana',
         ];
         
         // 🔧 FIX #572: Remover acentos para comparación (café → cafe)
@@ -9623,7 +9627,11 @@ class MCPAssistantService
             'cotizacion', 'cotización', 'necesito', 'quiero', 'requiero', 'solicito', 'pido',
             'peso', 'valor', 'tara', 'toneladas', 'kilos', 'unidades', 'cajas', 'maíz', 'maiz',
             'llantas', 'contenedor', 'contenido', 'detalle', 'informacion', 'dato', 'datos',
-            'estoy', 'esta', 'está', 'hola', 'como', 'estas', 'estás'
+            'estoy', 'esta', 'está', 'hola', 'como', 'estas', 'estás',
+            // 🆕 FIX: Nombres de países - NO son ciudades
+            'colombia', 'ecuador', 'venezuela', 'peru', 'perú', 'panama', 'panamá',
+            'brasil', 'chile', 'argentina', 'mexico', 'méxico', 'bolivia', 'uruguay', 'paraguay',
+            'estados unidos', 'usa', 'eeuu', 'china', 'india', 'españa', 'espana'
         ];
         
         if (in_array(mb_strtolower($cityName), $blackList)) {
@@ -9638,8 +9646,15 @@ class MCPAssistantService
         // 🆕 Extraer ciudad de "Aeropuerto de X" o "Terminal de X" (pero NO "Puerto X")
         // "Puerto Asís", "Puerto Carreño" son nombres de ciudades válidos
         if (preg_match('/(?:Aeropuerto|Terminal)\s+(?:de\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ]+)/ui', $cityName, $puertoMatch)) {
-            $cityName = trim($puertoMatch[1]);
-            Log::info('📍 Ciudad extraída de Aeropuerto/Terminal', ['original' => $cityName, 'ciudad' => $puertoMatch[1]]);
+            $ciudadAeropuerto = trim($puertoMatch[1]);
+            Log::info('📍 Ciudad extraída de Aeropuerto/Terminal', ['original' => $cityName, 'ciudad' => $ciudadAeropuerto]);
+            $cityName = $ciudadAeropuerto;
+            // 🆕 FIX: Verificar si es un código IATA que necesita expansión
+            $upperCiudadAero = mb_strtoupper($ciudadAeropuerto, 'UTF-8');
+            if (isset($abbreviations[$upperCiudadAero])) {
+                Log::info('✈️ Código IATA expandido en normalizeCityName', ['codigo' => $upperCiudadAero, 'ciudad' => $abbreviations[$upperCiudadAero]]);
+                return $abbreviations[$upperCiudadAero];
+            }
         }
         
         // Mapeo de caracteres especiales
@@ -9982,8 +9997,19 @@ class MCPAssistantService
         // Patrón 5: "Origen: CIUDAD1 y CIUDAD2" + "Ciudad: CIUDAD3" (formato email multi-línea)
         // Este patrón busca "Origen:" en una línea y "Ciudad:" en otra línea
         // 🔥 IMPORTANTE: Capturar SOLO hasta "Destino:" para evitar capturar direcciones
+        // 🆕 FIX: Si Origen contiene una dirección (números, #, Cra, Calle, etc.), NO procesar como multi-ruta
         if (preg_match('/Origen:\s*(.+?)(?=\s*(?:Destino:|Ciudad:|\n|$))/uis', $mensaje, $mOrigen)) {
             $origenesText = trim($mOrigen[1]);
+            
+            // 🆕 FIX CRÍTICO: Si el texto de origen contiene una DIRECCIÓN (Cra, Calle, #, números con guiones),
+            // NO es multi-ruta, es UN SOLO origen con dirección completa
+            $esOrigenDireccion = preg_match('/(?:Cra|Cll|Carrera|Calle|Av|Avenida|Diagonal|Transversal|#|\d+\s*-\s*\d+|Km\s*\.?\s*\d)/ui', $origenesText);
+            if ($esOrigenDireccion) {
+                Log::info('🚫 detectMultipleRouteCities: Patrón 5 ignorado - Origen contiene dirección', [
+                    'origenes_text' => substr($origenesText, 0, 100)
+                ]);
+                // No retornar aquí, seguir evaluando otros patrones
+            } else {
             
             // Buscar destino en línea "Ciudad:" (prioridad) o "Destino:" o "Delivery" o "close to"
             $destinoText = null;
@@ -10028,6 +10054,7 @@ class MCPAssistantService
                     return ['origenes' => $origenes, 'destinos' => $destinos];
                 }
             }
+            } // fin del else (!$esOrigenDireccion)
         }
         
         // Patrón 1.5: "sale desde X y llega a Y" (UNA sola ruta con verbos)
@@ -11007,8 +11034,15 @@ class MCPAssistantService
      */
     private static function extractTipoContenedor($text)
     {
+        // 🆕 FIX: Si el texto contiene patrones de DIMENSIONES FÍSICAS, NO buscar contenedores ahí
+        // "Largo 550 x 46 Ancho x 46 Alto" son dimensiones, NO contenedores
+        $textSinDimensiones = preg_replace('/(?:dimensiones|largo|ancho|alto|cms|cm|metros|m)\s*:?\s*[\d\s\.xX]+/ui', '', $text);
+        if (empty(trim($textSinDimensiones))) {
+            $textSinDimensiones = $text; // fallback si queda vacío
+        }
+        
         // 🆕 Patrón: "Contenedor: 1 x 40 HQ" (formato formal con label)
-        if (preg_match('/(?:Contenedor|Container)\s*:\s*(\d+)\s*[xX]\s*(\d+)\s*(HQ|HC|GP|RF|OT|FR|STD|STANDARD)?/ui', $text, $matches)) {
+        if (preg_match('/(?:Contenedor|Container)\s*:\s*(\d+)\s*[xX]\s*(20|40|45)\s*(HQ|HC|GP|RF|OT|FR|STD|STANDARD)?/ui', $textSinDimensiones, $matches)) {
             $cantidad = $matches[1];
             $tamaño = $matches[2];
             $tipo = isset($matches[3]) && !empty($matches[3]) ? strtoupper($matches[3]) : 'GP';
@@ -11021,21 +11055,26 @@ class MCPAssistantService
         // 🆕 Patrón PRIORITARIO: Formato "1X40 HQ" o "2X20 GP" o "1x40hc" o "1x40'HC" (NxTAMAÑO TIPO)
         // Este formato es muy común en solicitudes de logística
         // 🔧 FIX: Agregar soporte para comilla simple (') entre tamaño y tipo: "1x40'HC"
-        if (preg_match('/(\d+)\s*[Xx]\s*(\d+)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/ui', $text, $matches)) {
-            $cantidad = $matches[1];
+        // 🆕 FIX: Restringir tamaño a SOLO valores válidos de contenedor (20, 40, 45)
+        //         y cantidad a 1-2 dígitos para evitar matchear dimensiones como "550 x 46"
+        if (preg_match('/(\d{1,2})\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/ui', $textSinDimensiones, $matches)) {
+            $cantidad = intval($matches[1]);
             $tamaño = $matches[2];
-            $tipo = isset($matches[3]) && !empty($matches[3]) ? strtoupper($matches[3]) : 'GP';
-            // Si HQ, normalizar a HC (High Cube)
-            if ($tipo === 'HQ') $tipo = 'HC';
-            $contenedor = $cantidad . "X" . $tamaño . "' " . $tipo;
-            Log::info('Tipo de contenedor detectado (formato NxTAMAÑO)', ['raw' => $matches[0], 'parsed' => $contenedor, 'cantidad' => $cantidad]);
-            return $contenedor;
+            // Solo aceptar cantidades razonables (1-20 contenedores)
+            if ($cantidad >= 1 && $cantidad <= 20) {
+                $tipo = isset($matches[3]) && !empty($matches[3]) ? strtoupper($matches[3]) : 'GP';
+                // Si HQ, normalizar a HC (High Cube)
+                if ($tipo === 'HQ') $tipo = 'HC';
+                $contenedor = $cantidad . "X" . $tamaño . "' " . $tipo;
+                Log::info('Tipo de contenedor detectado (formato NxTAMAÑO)', ['raw' => $matches[0], 'parsed' => $contenedor, 'cantidad' => $cantidad]);
+                return $contenedor;
+            }
         }
         
         // Formato "40hc", "40HC", "40'", "20'" (sin cantidad) - MEJORADO para evitar capturar tiempos
         // Evitar capturar cosas como "06:09 p.m." o "08:25 a.m."
         // Requiere que sea un tamaño válido de contenedor (20, 40, 45, etc.)
-        if (preg_match('/\b(20|40|45)\s*[\'"]?\s*(hc|gp|rf|ot|fr)?\b/ui', $text, $matches)) {
+        if (preg_match('/\b(20|40|45)\s*[\'"]?\s*(hc|gp|rf|ot|fr)?\b/ui', $textSinDimensiones, $matches)) {
             $tamaño = $matches[1];
             $tipo = isset($matches[2]) && !empty($matches[2]) ? strtoupper($matches[2]) : 'GP';
             $contenedor = $tamaño . "' " . $tipo;

@@ -467,7 +467,7 @@ ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
 - Frases clave: "dos rutas", "tres rutas", "varias rutas", "múltiples rutas"
 - Patrones: "Una es... La otra es...", "La primera... La segunda...", "Ruta 1... Ruta 2..."
 - Ejemplos: "necesito dos rutas, una de Bogotá a Cali... y otra de Medellín a Cartagena"
-- Diferentes orígenes y/o destinos
+- Diferentes orígenes y/o destinos EXPLÍCITAMENTE SEPARADOS como rutas distintas
 - Contenedores de TIPOS DIFERENTES: "2x40 // 1x20" → 2 rutas
 - Contenedores con PESOS DIFERENTES: "uno con 8.000 kg y otro con 20.000 kg" → 2 rutas
 - ENTREGA DIVIDIDA: "PRIMER DESTINO: ... SEGUNDO DESTINO: ..." → Cada destino es una RUTA SEPARADA con su propia cantidad
@@ -475,6 +475,13 @@ ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
   → Ruta 1: origen=Cartagena, destino=Cartagena, cantidad=5
   → Ruta 2: origen=Cartagena, destino=Barranquilla, cantidad=7
   ⚠️ IMPORTANTE: El origen y primer destino PUEDEN ser la misma ciudad (entrega local)
+
+⚠️ CUÁNDO NO ES MULTI-RUTA (CRÍTICO - LEER PRIMERO):
+- Una dirección con "Ciudad, País" (ej: "Bogotá, Colombia") es UN SOLO origen, NO dos rutas
+- "Colombia" es el PAÍS, NUNCA lo uses como ciudad de origen o destino
+- Si solo hay UN origen y UN destino (aunque la dirección sea larga), es RUTA ÚNICA
+- Ejemplo INCORRECTO: "Origen: Carrera 69p, Bogotá, Colombia / Destino: Aeropuerto de BOG" → NO crear 2 rutas
+- Ejemplo CORRECTO: → Ruta única: origen=BOGOTA, destino=BOGOTA
 
 ⚠️ CUÁNDO NO ES MULTI-RUTA (IMPORTANTE):
 - "2 contenedores de 20" con UN solo peso → ES RUTA ÚNICA con cantidad: 2
@@ -518,11 +525,15 @@ SI DETECTAS MÚLTIPLES RUTAS:
 }
 
 CAMPOS A EXTRAER POR CADA RUTA (EN ESTE ORDEN):
-1. origen - Ciudad/lugar de recogida
-2. destino - Ciudad/lugar de entrega
-3. peso - Peso total en kg (convierte toneladas: 1 ton = 1000 kg)
+1. origen - Ciudad/lugar de recogida. NUNCA puede ser "COLOMBIA" (eso es el país, no una ciudad)
+2. destino - Ciudad/lugar de entrega. NUNCA puede ser "COLOMBIA" (eso es el país, no una ciudad)
+3. peso - Peso total en kg (convierte toneladas: 1 ton = 1000 kg). Si hay KVOL (peso volumétrico) y PESO (peso real), usar el MAYOR de los dos como peso
 4. cantidad - Número de unidades (VER REGLA DE CONTENEDORES ABAJO)
-5. empaque - Tipo de empaque (cajas, bultos, estibas, CONTENEDOR 20, CONTENEDOR 40)
+5. empaque - Tipo de empaque. SOLO valores válidos: cajas, bultos, estibas, paquetes, bolsas, rollos, cilindros, guacales, tonel, granel, CONTENEDOR 20, CONTENEDOR 40. Si NO puedes identificar el empaque claramente → empaque: null (NO inventar)
+   ⚠️ REGLA CRÍTICA: Las DIMENSIONES (Largo x Ancho x Alto) NO son empaque. "Largo 550 x 46 Ancho x 46 Alto CMS" es información de DIMENSIONES, NO un contenedor ni empaque. NUNCA interpretes medidas físicas como formato de contenedor.
+   - "550 x 46 x 46 cm" → empaque: null (son dimensiones, NO contenedor)
+   - "Dimensiones: Largo 550 x 46 Ancho x 46 Alto" → empaque: null
+   - SOLO es contenedor si dice EXPLÍCITAMENTE "contenedor de 20", "contenedor de 40", "1x40", "2x20", etc.
 6. producto - Mercancía real a transportar
 7. valor - Valor declarado en PESOS COLOMBIANOS (COP). ⚠️ Si el valor está en USD, dólares o moneda extranjera, retorna "USD" como valor (NO el número). El sistema preguntará al usuario el valor en pesos colombianos.
 8. vehiculo - Tipo de vehículo (NORMALIZADO: TURBO, SENCILLO, TRACTOCAMION, PATINETA, CAMIONETA, DOBLETROQUE). IMPORTANTE: "camión sencillo" = SENCILLO, "camión turbo" = TURBO
@@ -608,14 +619,19 @@ REGLAS IMPORTANTES:
   - "bogotá hasta cali se envían 10 cajas" → origen: "BOGOTA", destino: "CALI" (NO "CALI SE ENVIAN")
 
 ⚠️ REGLA CRÍTICA DE ORIGEN/DESTINO CON DIRECCIONES:
-- Si el campo "Recoleccion:", "Origen:" o "Destino:" contiene una DIRECCIÓN (Cra., Cl., Av., #, dirección con números), NO es una ciudad.
-- Si contiene el nombre de un AEROPUERTO, ZONA DE CARGA, EMPRESA, BODEGA, TERMINAL o cualquier otro lugar que NO sea una ciudad → origen/destino debe ser null.
-- NUNCA deduzcas o adivines la ciudad a partir de una dirección, nombre de empresa o aeropuerto.
-  - "Recoleccion: Cra. 50 #134 D 31" → origen: null (es una dirección, NO una ciudad)
-  - "Destino: Aeropuerto zona de carga Cargo Pack" → destino: null (es un lugar dentro de un aeropuerto, NO una ciudad)
-  - "Recoleccion: Bodega principal km 5 via Siberia" → origen: null (es una ubicación, NO una ciudad)
-  - "Destino: Terminal marítimo SPR Cartagena" → destino: null (es una terminal, NO solo la ciudad)
-- Solo extrae origen/destino si es EXPLÍCITAMENTE el nombre de una ciudad colombiana.
+- Si el campo "Recoleccion:", "Origen:" o "Destino:" contiene una DIRECCIÓN (Cra., Cl., Av., #, dirección con números), extrae SOLO la ciudad mencionada en la dirección.
+  - "Origen: Carrera 69p # 78 - 67, Bogotá, Colombia" → origen: "BOGOTA" (la ciudad está en la dirección)
+  - "Recoleccion: Cra. 50 #134 D 31, Medellín" → origen: "MEDELLIN"
+  - "Recoleccion: Cra. 50 #134 D 31" → origen: null (NO hay ciudad mencionada)
+- Si contiene un AEROPUERTO con código IATA o nombre de ciudad, extraer SOLO la ciudad:
+  - "Destino: Aeropuerto de BOG" → destino: "BOGOTA" (BOG = código IATA de Bogotá)
+  - "Destino: Aeropuerto El Dorado" → destino: "BOGOTA"
+  - "Destino: Aeropuerto zona de carga Cargo Pack" → destino: null (no hay ciudad ni código)
+  - "Recoleccion: Bodega principal km 5 via Siberia" → origen: null (es una ubicación sin ciudad)
+  - "Destino: Terminal marítimo SPR Cartagena" → destino: "CARTAGENA"
+- ⚠️ IMPORTANTE: "Colombia" en una dirección es el PAÍS, NO una ciudad ni un segundo origen/destino. NUNCA uses "COLOMBIA" como ciudad.
+  - "Carrera 69p # 78 - 67, Bogotá, Colombia" → origen: "BOGOTA" (Colombia es el país, IGNORAR)
+  - NUNCA crees una ruta con origen o destino "COLOMBIA"
 
 ✓ IMPORTANTE: Si el origen o destino dice "PUERTO DE [CIUDAD]" o "PUERTO [CIUDAD]", extraer SOLO la ciudad:
   - "PUERTO BARRANQUILLA" → "BARRANQUILLA"
@@ -623,6 +639,12 @@ REGLAS IMPORTANTES:
   - "PUERTO CARTAGENA" → "CARTAGENA"
   - "PUERTO DE SANTA MARTA" → "SANTA MARTA"
   - Lo mismo aplica para "AEROPUERTO DE [CIUDAD]" o "TERMINAL DE [CIUDAD]" → extraer solo la ciudad
+
+✓ IMPORTANTE: Expandir SIEMPRE los códigos IATA de aeropuertos colombianos al nombre de la ciudad:
+  - "Aeropuerto de BOG" → "BOGOTA", "Aeropuerto de MDE" o "MED" → "MEDELLIN"
+  - "Aeropuerto CLO" → "CALI", "Aeropuerto CTG" → "CARTAGENA"
+  - "Aeropuerto BAQ" → "BARRANQUILLA", "Aeropuerto BGA" → "BUCARAMANGA"
+  - "Aeropuerto SMR" → "SANTA MARTA"
 
 FORMATO DE RESPUESTA RUTA ÚNICA:
 {
@@ -867,7 +889,48 @@ EOT;
             }
         }
         
+        // 🆕 FIX: Verificar si empaque es válido - si no lo es, agregarlo como faltante
+        $empaque = $extracted['empaque'] ?? null;
+        if (empty($empaque) || ($empaque && !$this->isValidEmpaque($empaque))) {
+            $missing[] = 'empaque';
+        }
+        
         return $missing;
+    }
+
+    /**
+     * 🆕 Valida si un empaque es un tipo reconocido
+     */
+    private function isValidEmpaque(?string $empaque): bool
+    {
+        if (empty($empaque)) return false;
+        
+        $empaqueUpper = mb_strtoupper(trim($empaque), 'UTF-8');
+        
+        $validTypes = [
+            'CAJAS', 'CAJA', 'BULTOS', 'BULTO', 'ESTIBAS', 'ESTIBA', 'CARGA ESTIBADA',
+            'PAQUETES', 'PAQUETE', 'BOLSAS', 'BOLSA', 'ROLLOS', 'ROLLO',
+            'CILINDROS', 'CILINDRO', 'GUACALES', 'GUACAL', 'TONEL', 'TONELES',
+            'GRANEL SOLIDO', 'GRANEL LIQUIDO', 'GRANEL', 'VARIOS', 'NO APLICA',
+            'CONTENEDOR 20', 'CONTENEDOR 40', 'CONTENEDOR (1) 20 PIES', 'CONTENEDOR (2) 20 PIES',
+            'CONTENEDOR 40 PIES', 'CONTENEDOR 20 PIES', 'PALLETS', 'PALLET',
+            'SACOS', 'SACO', 'CARGA SUELTA', 'TAMBORES', 'TAMBOR',
+            'BIDONES', 'BIDON', 'CANECAS', 'CANECA', 'IBC', 'BIG BAG', 'BIGBAG',
+            'SUPERSACOS', 'SUPERSACO'
+        ];
+        
+        // Coincidencia exacta
+        if (in_array($empaqueUpper, $validTypes)) {
+            return true;
+        }
+        
+        // Coincidencia parcial para variantes de contenedor
+        if (preg_match('/^CONTENEDOR\s*(\d+|DE\s+\d+)/i', $empaqueUpper)) {
+            return true;
+        }
+        
+        Log::warning('📦 Empaque NO válido detectado', ['empaque' => $empaque, 'upper' => $empaqueUpper]);
+        return false;
     }
 
     /**
@@ -1075,7 +1138,29 @@ EOT;
                 case 'empaque':
                     // Convertir a mayúsculas para estos campos críticos
                     $val = trim($value);
-                    $normalized[$key] = mb_strtoupper($val, 'UTF-8');
+                    $empaqueUpper = mb_strtoupper($val, 'UTF-8');
+                    
+                    // 🆕 FIX: Rechazar dimensiones físicas confundidas como empaque/contenedor
+                    // "550X46' GP" o "Largo 550 x 46" NO son empaques válidos
+                    if (preg_match('/^\d{3,}\s*[Xx]\s*\d+/i', $empaqueUpper)) {
+                        // Número de 3+ dígitos seguido de 'x' → es una dimensión, NO un contenedor
+                        Log::warning('📦 Empaque rechazado: parece ser dimensiones, no contenedor', [
+                            'empaque_recibido' => $val,
+                            'razon' => 'Patrón NNNxNN detectado como dimensión física'
+                        ]);
+                        // NO asignar empaque - dejarlo como faltante para que el asistente pregunte
+                        break;
+                    }
+                    
+                    // 🆕 Validar contra tipos conocidos
+                    if ($this->isValidEmpaque($empaqueUpper)) {
+                        $normalized[$key] = $empaqueUpper;
+                    } else {
+                        Log::warning('📦 Empaque no reconocido, se preguntará al usuario', [
+                            'empaque_recibido' => $val
+                        ]);
+                        // NO asignar empaque inválido - dejarlo para que el asistente pregunte
+                    }
                     break;
                 
                 case 'vehiculo':
@@ -1153,20 +1238,30 @@ EOT;
         
         // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" en el campo contenedor para extraer el empaque
         // Si el contenedor tiene formato NxTAMAÑO'TIPO, extraer el tamaño para el empaque
+        // 🆕 FIX: Solo matchear si el primer número es PEQUEÑO (1-9 contenedores), NO dimensiones grandes
         if (isset($normalized['contenedor'])) {
             $contenedorUpper = mb_strtoupper($normalized['contenedor']);
-            // Patrón: "1X40'HC", "2X20GP", "1X40 HC", etc.
-            if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/i', $contenedorUpper, $matches)) {
+            // Patrón: "1X40'HC", "2X20GP", "1X40 HC" — el primer número debe ser 1-2 dígitos (cantidad de contenedores)
+            if (preg_match('/^(\d{1,2})\s*[Xx]\s*(20|40|45)\s*[\'"\s]?\s*(HQ|HC|GP|RF|OT|FR)?/i', $contenedorUpper, $matches)) {
+                $cantidad = intval($matches[1]);
                 $tamaño = $matches[2];
-                if ($tamaño == '20') {
-                    $normalized['empaque'] = 'CONTENEDOR 20';
-                } elseif ($tamaño == '40' || $tamaño == '45') {
-                    $normalized['empaque'] = 'CONTENEDOR 40';
+                // Solo aceptar si la cantidad es razonable (1-20 contenedores)
+                if ($cantidad <= 20) {
+                    if ($tamaño == '20') {
+                        $normalized['empaque'] = 'CONTENEDOR 20';
+                    } elseif ($tamaño == '40' || $tamaño == '45') {
+                        $normalized['empaque'] = 'CONTENEDOR 40';
+                    }
+                    Log::info('📦 Empaque detectado de formato contenedor NxTAMAÑO', [
+                        'contenedor' => $normalized['contenedor'],
+                        'empaque_final' => $normalized['empaque']
+                    ]);
+                } else {
+                    Log::warning('📦 Formato NxTAMAÑO rechazado: cantidad demasiado alta, probablemente son dimensiones', [
+                        'contenedor' => $normalized['contenedor'],
+                        'cantidad_parseada' => $cantidad
+                    ]);
                 }
-                Log::info('📦 Empaque detectado de formato contenedor NxTAMAÑO', [
-                    'contenedor' => $normalized['contenedor'],
-                    'empaque_final' => $normalized['empaque']
-                ]);
             }
         }
 
@@ -1335,7 +1430,8 @@ EOT;
             'destino' => '¿Cuál es la **ciudad de destino**?',
             'peso' => '¿Cuál es el **peso total** de la mercancía? (en kg o toneladas)',
             'cantidad' => '¿Cuántas **unidades o bultos** comprende el envío?',
-            'contenedor' => '¿Qué tipo de **empaque o contenedor** se utilizará?',
+            'contenedor' => '¿Qué tipo de **contenedor** se utilizará? (contenedor de 20 pies, contenedor de 40 pies)',
+            'empaque' => '¿Cuál es el **tipo de embalaje/empaque**? (cajas, bultos, estibas, paquetes, bolsas, rollos, etc.)',
             'producto' => '¿Cuál es el **tipo de producto o mercancía** que se transportará?',
             'valor' => '¿Cuál es el **valor declarado** de la mercancía en **pesos colombianos (COP)**?',
             'valor_cop' => 'El valor fue indicado en dólares (USD). ¿Podrías indicarme el **valor declarado en pesos colombianos (COP)**?',
@@ -1484,6 +1580,18 @@ EOT;
             $origenAI = $extractedData['extracted']['origen'] ?? null;
             $destinoAI = $extractedData['extracted']['destino'] ?? null;
             
+            // 🆕 FIX: Rechazar "COLOMBIA" como ciudad (es el país, no una ciudad)
+            if ($origenAI && mb_strtoupper(trim($origenAI)) === 'COLOMBIA') {
+                Log::warning('🚨 DataExtractionService: AI puso "COLOMBIA" como origen - es el país, no una ciudad');
+                unset($extractedData['extracted']['origen']);
+                $origenAI = null;
+            }
+            if ($destinoAI && mb_strtoupper(trim($destinoAI)) === 'COLOMBIA') {
+                Log::warning('🚨 DataExtractionService: AI puso "COLOMBIA" como destino - es el país, no una ciudad');
+                unset($extractedData['extracted']['destino']);
+                $destinoAI = null;
+            }
+            
             // Si extrajimos ciudad válida de la dirección, usarla en vez de lo que la IA inventó
             if (isset($ciudadExtraidaOrigen) && $ciudadExtraidaOrigen) {
                 $extractedData['extracted']['origen'] = $ciudadExtraidaOrigen;
@@ -1518,7 +1626,20 @@ EOT;
         // Lo mismo para multi-ruta
         if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
             foreach ($extractedData['rutas'] as &$ruta) {
+                // 🆕 FIX: Rechazar "COLOMBIA" como ciudad en multi-ruta
+                if (isset($ruta['origen']) && mb_strtoupper(trim($ruta['origen'])) === 'COLOMBIA') {
+                    Log::warning('🚨 DataExtractionService: AI puso "COLOMBIA" como origen en multi-ruta');
+                    unset($ruta['origen']);
+                }
+                if (isset($ruta['destino']) && mb_strtoupper(trim($ruta['destino'])) === 'COLOMBIA') {
+                    Log::warning('🚨 DataExtractionService: AI puso "COLOMBIA" como destino en multi-ruta');
+                    unset($ruta['destino']);
+                }
+                
                 if (isset($ciudadExtraidaOrigen) && $ciudadExtraidaOrigen && isset($ruta['origen'])) {
+                    $ruta['origen'] = $ciudadExtraidaOrigen;
+                } elseif (isset($ciudadExtraidaOrigen) && $ciudadExtraidaOrigen && !isset($ruta['origen'])) {
+                    // Si el origen fue rechazado (COLOMBIA), usar la ciudad extraída de la dirección
                     $ruta['origen'] = $ciudadExtraidaOrigen;
                 } elseif ($tieneOrigenDireccion && isset($ruta['origen'])) {
                     Log::warning('🚨 DataExtractionService: AI inventó origen en multi-ruta', ['ai_origen' => $ruta['origen']]);
@@ -1526,12 +1647,59 @@ EOT;
                 }
                 if (isset($ciudadExtraidaDest) && $ciudadExtraidaDest && isset($ruta['destino'])) {
                     $ruta['destino'] = $ciudadExtraidaDest;
+                } elseif (isset($ciudadExtraidaDest) && $ciudadExtraidaDest && !isset($ruta['destino'])) {
+                    // Si el destino fue rechazado (COLOMBIA), usar la ciudad extraída
+                    $ruta['destino'] = $ciudadExtraidaDest;
                 } elseif ($tieneDestinoDireccion && isset($ruta['destino'])) {
                     Log::warning('🚨 DataExtractionService: AI inventó destino en multi-ruta', ['ai_destino' => $ruta['destino']]);
                     unset($ruta['destino']);
                 }
             }
             unset($ruta);
+            
+            // 🆕 FIX: Colapsar multi-rutas falsas (rutas con mismo origen y destino)
+            // Si después de normalizar, todas las rutas tienen el mismo origen y destino, fusionarlas en una sola
+            if (count($extractedData['rutas']) > 1) {
+                $allSameOriginDest = true;
+                $firstOrigen = $extractedData['rutas'][0]['origen'] ?? null;
+                $firstDestino = $extractedData['rutas'][0]['destino'] ?? null;
+                
+                foreach ($extractedData['rutas'] as $ruta) {
+                    $rutaOrigen = $ruta['origen'] ?? null;
+                    $rutaDestino = $ruta['destino'] ?? null;
+                    if ($rutaOrigen !== $firstOrigen || $rutaDestino !== $firstDestino) {
+                        $allSameOriginDest = false;
+                        break;
+                    }
+                }
+                
+                if ($allSameOriginDest) {
+                    Log::info('🔧 DataExtractionService: Colapsando multi-ruta falsa (todas con mismo origen/destino)', [
+                        'origen' => $firstOrigen,
+                        'destino' => $firstDestino,
+                        'total_rutas_antes' => count($extractedData['rutas'])
+                    ]);
+                    
+                    // Fusionar datos: tomar los datos más completos de la primera ruta
+                    $rutaMerged = $extractedData['rutas'][0];
+                    // Llenar campos vacíos con datos de otras rutas
+                    for ($i = 1; $i < count($extractedData['rutas']); $i++) {
+                        foreach ($extractedData['rutas'][$i] as $key => $val) {
+                            if ($val !== null && $val !== '' && (!isset($rutaMerged[$key]) || $rutaMerged[$key] === null || $rutaMerged[$key] === '')) {
+                                $rutaMerged[$key] = $val;
+                            }
+                        }
+                    }
+                    
+                    // Convertir a ruta única
+                    $extractedData['multi_ruta'] = false;
+                    $extractedData['total_rutas'] = 1;
+                    $extractedData['extracted'] = $rutaMerged;
+                    unset($extractedData['rutas']);
+                    
+                    Log::info('✅ Multi-ruta falsa colapsada a ruta única', $rutaMerged);
+                }
+            }
         }
         
         if ($requiereAclaracion) {
@@ -1684,14 +1852,58 @@ EOT;
     {
         $textoLower = mb_strtolower(trim($texto));
         
+        // Mapa de abreviaturas/códigos IATA → ciudad completa
+        $abreviaturasExpansion = [
+            'bog' => 'BOGOTA', 'med' => 'MEDELLIN', 'clo' => 'CALI',
+            'baq' => 'BARRANQUILLA', 'ctg' => 'CARTAGENA', 'bga' => 'BUCARAMANGA',
+            'cuc' => 'CUCUTA', 'pei' => 'PEREIRA', 'mzl' => 'MANIZALES',
+            'axm' => 'ARMENIA', 'ibe' => 'IBAGUE', 'nva' => 'NEIVA',
+            'vvc' => 'VILLAVICENCIO', 'pso' => 'PASTO', 'ppn' => 'POPAYAN',
+            'smr' => 'SANTA MARTA', 'mtr' => 'MONTERIA', 'vup' => 'VALLEDUPAR',
+            'rch' => 'RIOHACHA', 'uib' => 'QUIBDO', 'let' => 'LETICIA',
+            'adz' => 'SAN ANDRES', 'eyp' => 'YOPAL', 'auc' => 'ARAUCA',
+            'fla' => 'FLORENCIA', 'mco' => 'MOCOA', 'tun' => 'TUNJA',
+            'bun' => 'BUENAVENTURA', 'buenav' => 'BUENAVENTURA',
+            'bvtura' => 'BUENAVENTURA', 'btura' => 'BUENAVENTURA',
+            'bquilla' => 'BARRANQUILLA', 'bqlla' => 'BARRANQUILLA',
+            'bmanga' => 'BUCARAMANGA', 'bgt' => 'BUCARAMANGA',
+            'cart' => 'CARTAGENA', 'cgen' => 'CARTAGENA',
+            'barranca' => 'BARRANCABERMEJA', 'bmeja' => 'BARRANCABERMEJA',
+            'sta marta' => 'SANTA MARTA', 's marta' => 'SANTA MARTA',
+            'vvicencio' => 'VILLAVICENCIO', 'dosq' => 'DOSQUEBRADAS',
+        ];
+        
         // 1. Patrón "Aeropuerto CIUDAD" / "Puerto CIUDAD"
-        if (preg_match('/(?:aeropuerto|terminal\s+a[eé]re[oa])\s+(?:de\s+|el\s+)?([a-záéíóúñ\s]+)/ui', $texto, $m)) {
-            $candidato = trim($m[1]);
-            // Quitar "Colombia" u otros países
-            $candidato = preg_replace('/,?\s*(colombia|ecuador|venezuela|peru|perú|panama|panamá).*$/ui', '', $candidato);
-            $candidato = trim($candidato);
-            if ($this->esCiudadColombiana($candidato)) {
-                return mb_strtoupper($candidato);
+        // 🔧 FIX: Usar \S+ para capturar solo la primera palabra, luego verificar progresivamente
+        if (preg_match('/(?:aeropuerto|terminal\s+a[eé]re[oa])\s+(?:de\s+|el\s+)?(\S+)/ui', $texto, $m)) {
+            $primeraPalabra = trim($m[1]);
+            // Quitar comas, puntos al final
+            $primeraPalabra = rtrim($primeraPalabra, '.,;:');
+            
+            // 🆕 FIX: Primero verificar si es un código IATA/abreviatura 
+            $ppLower = mb_strtolower($primeraPalabra);
+            if (isset($abreviaturasExpansion[$ppLower])) {
+                $ciudadExpandida = $abreviaturasExpansion[$ppLower];
+                Log::info('✈️ Código IATA expandido en aeropuerto', [
+                    'codigo' => $primeraPalabra,
+                    'ciudad' => $ciudadExpandida
+                ]);
+                return $ciudadExpandida;
+            }
+            
+            // Luego verificar si es una ciudad conocida directamente
+            if ($this->esCiudadColombiana($primeraPalabra)) {
+                return mb_strtoupper($this->removeAccents($primeraPalabra));
+            }
+            
+            // Intentar con más palabras (ej: "Aeropuerto de Santa Marta")
+            if (preg_match('/(?:aeropuerto|terminal\s+a[eé]re[oa])\s+(?:de\s+|el\s+)?([a-záéíóúñ]+(?: [a-záéíóúñ]+){0,3})/ui', $texto, $m2)) {
+                $candidatoMulti = trim($m2[1]);
+                $candidatoMulti = preg_replace('/,?\s*(colombia|ecuador|venezuela|peru|perú|panama|panamá).*$/ui', '', $candidatoMulti);
+                $candidatoMulti = trim($candidatoMulti);
+                if ($this->esCiudadColombiana($candidatoMulti)) {
+                    return mb_strtoupper($this->removeAccents($candidatoMulti));
+                }
             }
         }
         
