@@ -83,7 +83,11 @@ class DataExtractionService
             // Parsear respuesta JSON
             $extractedData = $this->parseExtractionResponse($assistantMessage);
 
-            // 💵 DETECCIÓN USD EN MENSAJE ORIGINAL: Si el usuario mencionó USD/dólares en el
+            // � VALIDACIÓN DE CIUDADES: Verificar que origen/destino son ciudades colombianas reales
+            // La IA puede inventar ciudades basándose en nombres de empresas, aeropuertos, etc.
+            $this->validarCiudadesExtraidas($extractedData, $userMessage);
+
+            // �💵 DETECCIÓN USD EN MENSAJE ORIGINAL: Si el usuario mencionó USD/dólares en el
             // mensaje original, NO almacenar el valor numérico sin importar lo que la IA devuelva
             $tieneUSDenMensaje = preg_match('/\b(usd|dolar(?:es)?|d[oó]lar(?:es)?|us\$|u\.s\.|dollars?)\b/ui', $userMessage)
                 && preg_match('/\b(valor|precio|carga|mercanc[ií]a|declarado)\b/ui', $userMessage);
@@ -602,6 +606,17 @@ REGLAS IMPORTANTES:
 ✓ Origen y destino deben ser SOLO el nombre de la ciudad, sin verbos ni frases extra
   - "cartagena a bucaramanga se lleva 2 contenedores" → origen: "CARTAGENA", destino: "BUCARAMANGA" (NO "BUCARAMANGA SE LLEVA")
   - "bogotá hasta cali se envían 10 cajas" → origen: "BOGOTA", destino: "CALI" (NO "CALI SE ENVIAN")
+
+⚠️ REGLA CRÍTICA DE ORIGEN/DESTINO CON DIRECCIONES:
+- Si el campo "Recoleccion:", "Origen:" o "Destino:" contiene una DIRECCIÓN (Cra., Cl., Av., #, dirección con números), NO es una ciudad.
+- Si contiene el nombre de un AEROPUERTO, ZONA DE CARGA, EMPRESA, BODEGA, TERMINAL o cualquier otro lugar que NO sea una ciudad → origen/destino debe ser null.
+- NUNCA deduzcas o adivines la ciudad a partir de una dirección, nombre de empresa o aeropuerto.
+  - "Recoleccion: Cra. 50 #134 D 31" → origen: null (es una dirección, NO una ciudad)
+  - "Destino: Aeropuerto zona de carga Cargo Pack" → destino: null (es un lugar dentro de un aeropuerto, NO una ciudad)
+  - "Recoleccion: Bodega principal km 5 via Siberia" → origen: null (es una ubicación, NO una ciudad)
+  - "Destino: Terminal marítimo SPR Cartagena" → destino: null (es una terminal, NO solo la ciudad)
+- Solo extrae origen/destino si es EXPLÍCITAMENTE el nombre de una ciudad colombiana.
+
 ✓ IMPORTANTE: Si el origen o destino dice "PUERTO DE [CIUDAD]" o "PUERTO [CIUDAD]", extraer SOLO la ciudad:
   - "PUERTO BARRANQUILLA" → "BARRANQUILLA"
   - "PUERTO DE BUENAVENTURA" → "BUENAVENTURA"
@@ -1400,5 +1415,379 @@ EOT;
         }
         
         return mb_strtoupper($vehiculoLower, 'UTF-8');
+    }
+
+    /**
+     * 🚨 VALIDAR que las ciudades extraídas por la IA sean ciudades colombianas reales.
+     * Si no lo son (ej: direcciones, aeropuertos, nombres de empresas), se eliminan.
+     */
+    private function validarCiudadesExtraidas(array &$extractedData, string $userMessage): void
+    {
+        // Verificar si el prompt contiene "Recoleccion:/Origen:" con una DIRECCIÓN (no ciudad)
+        $tieneOrigenDireccion = false;
+        $tieneDestinoDireccion = false;
+        
+        // Detectar direcciones en Recoleccion/Origen
+        if (preg_match('/(?:Recoleccion|Origen)\s*:\s*([^\n]+?)(?=\n|Destino\s*:|DETALLES|$)/ui', $userMessage, $m)) {
+            $textoOrigen = trim($m[1]);
+            if (!empty($textoOrigen) && !$this->esCiudadColombiana($textoOrigen)) {
+                // 🆕 FIX: Intentar extraer ciudad de dirección compleja
+                $ciudadExtraidaOrigen = $this->extractCityFromAddress($textoOrigen);
+                if ($ciudadExtraidaOrigen) {
+                    Log::info('✅ DataExtractionService: Ciudad extraída de dirección origen', ['ciudad' => $ciudadExtraidaOrigen, 'texto' => $textoOrigen]);
+                } elseif ($this->looksLikeSimpleName($textoOrigen)) {
+                    // 🆕 FIX: Nombre simple (1-3 palabras sin números/dirección) = probablemente municipio
+                    Log::info('✅ DataExtractionService: Origen aceptado como nombre simple de municipio', ['texto' => $textoOrigen]);
+                } else {
+                    $tieneOrigenDireccion = true;
+                    Log::warning('🚨 DataExtractionService: Origen NO es ciudad colombiana válida', ['texto' => $textoOrigen]);
+                }
+            }
+        }
+        // También verificar siguiente línea
+        if (!$tieneOrigenDireccion && preg_match('/(?:Recoleccion|Origen)\s*:\s*\n\s*([^\n]+?)(?=\n|Destino\s*:|DETALLES|$)/ui', $userMessage, $m)) {
+            $textoOrigen = trim($m[1]);
+            if (!empty($textoOrigen) && !$this->esCiudadColombiana($textoOrigen)) {
+                $ciudadExtraidaOrigen = $this->extractCityFromAddress($textoOrigen);
+                if ($ciudadExtraidaOrigen) {
+                    Log::info('✅ DataExtractionService: Ciudad extraída de dirección origen (siguiente línea)', ['ciudad' => $ciudadExtraidaOrigen]);
+                } elseif ($this->looksLikeSimpleName($textoOrigen)) {
+                    Log::info('✅ DataExtractionService: Origen aceptado como nombre simple (siguiente línea)', ['texto' => $textoOrigen]);
+                } else {
+                    $tieneOrigenDireccion = true;
+                    Log::warning('🚨 DataExtractionService: Origen (siguiente línea) NO es ciudad colombiana válida', ['texto' => $textoOrigen]);
+                }
+            }
+        }
+        
+        // Detectar direcciones en Destino
+        if (preg_match('/Destino\s*:\s*([^\n]+?)(?=\n|DETALLES|Recoleccion|$)/ui', $userMessage, $m)) {
+            $textoDestino = trim($m[1]);
+            if (!empty($textoDestino) && !$this->esCiudadColombiana($textoDestino)) {
+                $ciudadExtraidaDest = $this->extractCityFromAddress($textoDestino);
+                if ($ciudadExtraidaDest) {
+                    Log::info('✅ DataExtractionService: Ciudad extraída de dirección destino', ['ciudad' => $ciudadExtraidaDest, 'texto' => $textoDestino]);
+                } elseif ($this->looksLikeSimpleName($textoDestino)) {
+                    // 🆕 FIX: Nombre simple = probablemente municipio, NO borrar
+                    Log::info('✅ DataExtractionService: Destino aceptado como nombre simple de municipio', ['texto' => $textoDestino]);
+                } else {
+                    $tieneDestinoDireccion = true;
+                    Log::warning('🚨 DataExtractionService: Destino NO es ciudad colombiana válida', ['texto' => $textoDestino]);
+                }
+            }
+        }
+        
+        $requiereAclaracion = $tieneOrigenDireccion || $tieneDestinoDireccion;
+        
+        // TAMBIÉN validar las ciudades que la IA extrajo (puede inventar desde su conocimiento)
+        if (isset($extractedData['extracted'])) {
+            $origenAI = $extractedData['extracted']['origen'] ?? null;
+            $destinoAI = $extractedData['extracted']['destino'] ?? null;
+            
+            // Si extrajimos ciudad válida de la dirección, usarla en vez de lo que la IA inventó
+            if (isset($ciudadExtraidaOrigen) && $ciudadExtraidaOrigen) {
+                $extractedData['extracted']['origen'] = $ciudadExtraidaOrigen;
+                Log::info('✅ DataExtractionService: Reemplazando origen AI con ciudad extraída', [
+                    'ai_origen' => $origenAI,
+                    'ciudad_correcta' => $ciudadExtraidaOrigen
+                ]);
+            } elseif ($tieneOrigenDireccion && $origenAI) {
+                // Si el texto original tiene dirección pero la IA puso una ciudad, fue INVENTADA
+                Log::warning('🚨 DataExtractionService: AI inventó origen', [
+                    'ai_origen' => $origenAI,
+                    'texto_real' => $textoOrigen ?? 'N/A'
+                ]);
+                unset($extractedData['extracted']['origen']);
+            }
+            
+            if (isset($ciudadExtraidaDest) && $ciudadExtraidaDest) {
+                $extractedData['extracted']['destino'] = $ciudadExtraidaDest;
+                Log::info('✅ DataExtractionService: Reemplazando destino AI con ciudad extraída', [
+                    'ai_destino' => $destinoAI,
+                    'ciudad_correcta' => $ciudadExtraidaDest
+                ]);
+            } elseif ($tieneDestinoDireccion && $destinoAI) {
+                Log::warning('🚨 DataExtractionService: AI inventó destino', [
+                    'ai_destino' => $destinoAI,
+                    'texto_real' => $textoDestino ?? 'N/A'
+                ]);
+                unset($extractedData['extracted']['destino']);
+            }
+        }
+        
+        // Lo mismo para multi-ruta
+        if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+            foreach ($extractedData['rutas'] as &$ruta) {
+                if (isset($ciudadExtraidaOrigen) && $ciudadExtraidaOrigen && isset($ruta['origen'])) {
+                    $ruta['origen'] = $ciudadExtraidaOrigen;
+                } elseif ($tieneOrigenDireccion && isset($ruta['origen'])) {
+                    Log::warning('🚨 DataExtractionService: AI inventó origen en multi-ruta', ['ai_origen' => $ruta['origen']]);
+                    unset($ruta['origen']);
+                }
+                if (isset($ciudadExtraidaDest) && $ciudadExtraidaDest && isset($ruta['destino'])) {
+                    $ruta['destino'] = $ciudadExtraidaDest;
+                } elseif ($tieneDestinoDireccion && isset($ruta['destino'])) {
+                    Log::warning('🚨 DataExtractionService: AI inventó destino en multi-ruta', ['ai_destino' => $ruta['destino']]);
+                    unset($ruta['destino']);
+                }
+            }
+            unset($ruta);
+        }
+        
+        if ($requiereAclaracion) {
+            Log::info('🚨 DataExtractionService: Ciudades eliminadas - se requiere aclaración del usuario');
+        }
+    }
+
+    /**
+     * 🏙️ Verificar si un texto es una ciudad colombiana conocida
+     */
+    private function esCiudadColombiana(string $texto): bool
+    {
+        $texto = mb_strtolower(trim($texto));
+        
+        // Lista de ciudades colombianas principales
+        $ciudadesValidas = [
+            'bogota', 'bogotá', 'medellin', 'medellín', 'cali', 'barranquilla', 'cartagena',
+            'bucaramanga', 'pereira', 'cucuta', 'cúcuta', 'ibague', 'ibagué', 'manizales',
+            'santa marta', 'villavicencio', 'pasto', 'monteria', 'montería', 'neiva',
+            'valledupar', 'armenia', 'popayan', 'popayán', 'sincelejo', 'tunja', 'riohacha',
+            'buenaventura', 'girardot', 'floridablanca', 'soacha', 'bello', 'soledad',
+            'palmira', 'envigado', 'itagui', 'itagüí', 'dosquebradas', 'tulua', 'tuluá',
+            'apartado', 'apartadó', 'cartago', 'barrancabermeja', 'yopal', 'florencia',
+            'funza', 'zipaquira', 'zipaquirá', 'chia', 'chía', 'sogamoso', 'duitama',
+            'ipiales', 'tumaco', 'quibdo', 'quibdó', 'leticia', 'mocoa', 'arauca',
+            'san andres', 'san andrés', 'providencia', 'puerto asis', 'puerto asís',
+            'puerto carreño', 'inírida', 'mitú', 'turbo', 'caucasia', 'rionegro',
+            'la dorada', 'honda', 'mariquita', 'espinal', 'melgar', 'fusagasuga',
+            'fusagasugá', 'facatativa', 'facatativá', 'madrid', 'mosquera', 'cajica',
+            'cajicá', 'tocancipá', 'tocancipa', 'cota', 'tenjo', 'tabio', 'la calera',
+            'sibate', 'sibaté', 'sopo', 'sopó', 'guatape', 'guatapé', 'santa rosa de cabal',
+            'la virginia', 'chinchina', 'chinchiná', 'yumbo', 'jamundí', 'jamundi',
+            'candelaria', 'puerto tejada', 'santander de quilichao', 'pradera',
+            'buga', 'guadalajara de buga', 'sevilla', 'andalucía', 'andalucia',
+            'turbaco', 'arjona', 'turbana', 'clemencia', 'san jacinto', 'carmen de bolivar',
+            'magangué', 'magangue', 'mompos', 'mompós', 'el banco', 'ciénaga', 'cienaga',
+            'fundación', 'fundacion', 'zona bananera', 'aracataca', 'plato',
+            'curumani', 'curumaní', 'aguachica', 'codazzi', 'agustin codazzi', 'agustín codazzi',
+            'la jagua de ibirico', 'chiriguana', 'chiriguaná', 'bosconia', 'san alberto',
+            'gamarra', 'pelaya', 'pailitas', 'tamalameque', 'rio de oro', 'río de oro',
+            'la gloria', 'gonzalez', 'gonzález', 'san martin', 'san martín',
+            'puerto berrio', 'puerto berrío', 'planeta rica',
+            'lorica', 'cereté', 'cerete', 'sahagún', 'sahagun', 'montelíbano', 'montelibano',
+            'tierralta', 'puerto escondido',
+            'ocaña', 'ocana', 'pamplona', 'los patios', 'villa del rosario',
+            'la plata', 'garzon', 'garzón', 'pitalito',
+            'puerto lopez', 'puerto lópez', 'acacias', 'acacías', 'granada',
+            'chaparral', 'líbano', 'libano', 'el espinal',
+            'cumaribo', 'puerto carreño', 'la primavera', 'santa rosalía', 'santa rosalia',
+            'san jose del guaviare', 'san josé del guaviare', 'calamar', 'el retorno', 'miraflores',
+            'puerto inirida', 'puerto inírida', 'mitú', 'mitu', 'caruru',
+            'san vicente del caguan', 'san vicente del caguán', 'el doncello', 'el paujil',
+            'sibundoy', 'villagarzon', 'villagarzón', 'orito', 'la hormiga',
+            'istmina', 'istmína', 'condoto', 'nuqui', 'nuquí', 'bahia solano', 'bahía solano',
+            'maicao', 'fonseca', 'san juan del cesar', 'uribia', 'manaure',
+            'aguazul', 'paz de ariporo', 'tauramena', 'maní', 'mani',
+            'saravena', 'tame', 'arauquita', 'fortul',
+            'corozal', 'since', 'sincé', 'ovejas',
+            'el carmen de viboral', 'la ceja', 'marinilla',
+            'la estrella', 'copacabana', 'barbosa', 'girardota'
+        ];
+        
+        // Coincidencia exacta
+        if (in_array($texto, $ciudadesValidas)) {
+            return true;
+        }
+        
+        // Sin acentos
+        $textoNorm = $this->removeAccents($texto);
+        foreach ($ciudadesValidas as $ciudad) {
+            if ($textoNorm === $this->removeAccents($ciudad)) {
+                return true;
+            }
+        }
+        
+        // 🆕 Verificar si es una abreviatura conocida de ciudad colombiana
+        $abreviaturas = [
+            'bog' => 'bogota', 'med' => 'medellin', 'clo' => 'cali',
+            'baq' => 'barranquilla', 'ctg' => 'cartagena', 'bga' => 'bucaramanga',
+            'cuc' => 'cucuta', 'pei' => 'pereira', 'mzl' => 'manizales',
+            'axm' => 'armenia', 'ibe' => 'ibague', 'nva' => 'neiva',
+            'vvc' => 'villavicencio', 'pso' => 'pasto', 'ppn' => 'popayan',
+            'smr' => 'santa marta', 'mtr' => 'monteria', 'vup' => 'valledupar',
+            'rch' => 'riohacha', 'uib' => 'quibdo', 'let' => 'leticia',
+            'adz' => 'san andres', 'eyp' => 'yopal', 'auc' => 'arauca',
+            'fla' => 'florencia', 'mco' => 'mocoa', 'tun' => 'tunja',
+            'dui' => 'duitama', 'sog' => 'sogamoso', 'gir' => 'girardot',
+            'bun' => 'buenaventura', 'buenav' => 'buenaventura',
+            'bvtura' => 'buenaventura', 'btura' => 'buenaventura',
+            'bquilla' => 'barranquilla', 'bqlla' => 'barranquilla',
+            'bquill' => 'barranquilla', 'bmanga' => 'bucaramanga',
+            'bmeja' => 'barrancabermeja', 'barranca' => 'barrancabermeja',
+            'bgt' => 'bucaramanga', 'cgen' => 'cartagena', 'cart' => 'cartagena',
+            'vvicencio' => 'villavicencio', 'sta marta' => 'santa marta',
+            's marta' => 'santa marta', 'apto' => 'apartado',
+            'dosq' => 'dosquebradas', 'floridab' => 'floridablanca',
+        ];
+        
+        if (isset($abreviaturas[$textoNorm])) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * 🆕 Verificar si un texto parece un nombre simple de municipio/ciudad
+     * (1-4 palabras, sin números, sin keywords de dirección)
+     * Ej: "Cumaribo" → true, "San José del Guaviare" → true
+     * Ej: "Calle 17 #23-45" → false, "Bodega 11 Autopista" → false
+     */
+    private function looksLikeSimpleName(string $texto): bool
+    {
+        $texto = trim($texto);
+        
+        // Quitar "/ Departamento" al final si existe (ej: "Cumaribo / Vichada" → "Cumaribo")
+        $texto = preg_replace('/\s*[\/]\s*\S+\s*$/', '', $texto);
+        $texto = trim($texto);
+        
+        // Máximo 4 palabras (para cubrir "San José del Guaviare", "Villa del Rosario", etc.)
+        $palabras = preg_split('/\s+/', $texto);
+        if (count($palabras) > 4 || count($palabras) < 1) {
+            return false;
+        }
+        
+        // No debe contener números
+        if (preg_match('/\d/', $texto)) {
+            return false;
+        }
+        
+        // No debe contener keywords de dirección
+        if (preg_match('/calle|carrera|cra|cll|autopista|km\b|bodega|avenida|transversal|diagonal|manzana|lote|entrada|parcela|zona\s+industrial|warehouse|bloque|piso|local|oficina|apartamento|edificio/ui', $texto)) {
+            return false;
+        }
+        
+        // Mínimo 3 caracteres
+        if (mb_strlen($texto) < 3) {
+            return false;
+        }
+        
+        return true;
+    }
+
+    /**
+     * 🆕 Extraer ciudad colombiana de una dirección o texto complejo
+     * Ej: "Lutransa Bodega 11 – Autopista Medellín Km. 2.5 – Cota – Cundinamarca" → "COTA"
+     * Ej: "Aeropuerto Bogotá, Colombia" → "BOGOTA"
+     */
+    private function extractCityFromAddress(string $texto): ?string
+    {
+        $textoLower = mb_strtolower(trim($texto));
+        
+        // 1. Patrón "Aeropuerto CIUDAD" / "Puerto CIUDAD"
+        if (preg_match('/(?:aeropuerto|terminal\s+a[eé]re[oa])\s+(?:de\s+|el\s+)?([a-záéíóúñ\s]+)/ui', $texto, $m)) {
+            $candidato = trim($m[1]);
+            // Quitar "Colombia" u otros países
+            $candidato = preg_replace('/,?\s*(colombia|ecuador|venezuela|peru|perú|panama|panamá).*$/ui', '', $candidato);
+            $candidato = trim($candidato);
+            if ($this->esCiudadColombiana($candidato)) {
+                return mb_strtoupper($candidato);
+            }
+        }
+        
+        // 2. Buscar ciudad antes de departamento con separadores (–, —, -, , /)
+        // 🆕 FIX: Incluir TODOS los 32 departamentos de Colombia
+        $departamentos = [
+            'cundinamarca', 'antioquia', 'valle del cauca', 'valle', 'atlantico', 'atlántico',
+            'bolivar', 'bolívar', 'santander', 'boyaca', 'boyacá', 'tolima', 'nariño', 'narino',
+            'cauca', 'cordoba', 'córdoba', 'magdalena', 'cesar', 'sucre', 'meta',
+            'risaralda', 'caldas', 'quindio', 'quindío', 'huila', 'norte de santander',
+            'vichada', 'guainia', 'guainía', 'vaupes', 'vaupés', 'amazonas', 'putumayo',
+            'arauca', 'casanare', 'guaviare', 'caqueta', 'caquetá', 'choco', 'chocó',
+            'la guajira', 'san andres', 'san andrés'
+        ];
+        
+        foreach ($departamentos as $depto) {
+            // 🔧 FIX: Incluir "/" como separador ("Cumaribo / Vichada")
+            $deptoPattern = preg_quote($depto, '/');
+            if (preg_match('/([a-záéíóúñ\s]+)\s*[–—\-,\/]\s*' . $deptoPattern . '/ui', $texto, $m)) {
+                $segmentoAntes = trim($m[1]);
+                // Tomar la última palabra/ciudad del segmento
+                $partes = preg_split('/\s*[–—\-,\/]\s*/', $segmentoAntes);
+                for ($i = count($partes) - 1; $i >= 0; $i--) {
+                    $parte = trim($partes[$i]);
+                    if (!empty($parte) && $this->esCiudadColombiana($parte)) {
+                        return mb_strtoupper($parte);
+                    }
+                }
+                // Si no se encontró en partes, probar el segmento completo
+                if ($this->esCiudadColombiana($segmentoAntes)) {
+                    return mb_strtoupper($segmentoAntes);
+                }
+                // 🆕 FIX: Si el texto antes del departamento parece un municipio (1-3 palabras, sin números/dirección), CONFIAR
+                $ultimaParte = trim(end($partes));
+                if (!empty($ultimaParte) && mb_strlen($ultimaParte) >= 3 && mb_strlen($ultimaParte) <= 40
+                    && !preg_match('/\d|calle|carrera|cra|cll|autopista|km|bodega|avenida|transversal|diagonal|manzana|lote/ui', $ultimaParte)) {
+                    Log::info('✅ DataExtractionService: Ciudad aceptada por estar antes de departamento', ['ciudad' => $ultimaParte, 'depto' => $depto]);
+                    return mb_strtoupper($ultimaParte);
+                }
+            }
+        }
+        
+        // 3. Buscar cualquier ciudad colombiana mencionada en el texto (preferir la última)
+        $ciudadesValidas = [
+            'bogota', 'bogotá', 'medellin', 'medellín', 'cali', 'barranquilla', 'cartagena',
+            'bucaramanga', 'pereira', 'cucuta', 'cúcuta', 'ibague', 'ibagué', 'manizales',
+            'santa marta', 'villavicencio', 'pasto', 'monteria', 'montería', 'neiva',
+            'valledupar', 'armenia', 'popayan', 'popayán', 'sincelejo', 'tunja', 'riohacha',
+            'buenaventura', 'girardot', 'floridablanca', 'soacha', 'bello', 'soledad',
+            'palmira', 'envigado', 'itagui', 'itagüí', 'dosquebradas', 'tulua', 'tuluá',
+            'apartado', 'apartadó', 'cartago', 'barrancabermeja', 'yopal', 'florencia',
+            'funza', 'zipaquira', 'zipaquirá', 'chia', 'chía', 'sogamoso', 'duitama',
+            'ipiales', 'tumaco', 'quibdo', 'quibdó', 'leticia', 'mocoa', 'arauca',
+            'turbo', 'caucasia', 'rionegro', 'la dorada', 'honda', 'mariquita', 'espinal',
+            'melgar', 'fusagasuga', 'fusagasugá', 'facatativa', 'facatativá', 'madrid',
+            'mosquera', 'cajica', 'cajicá', 'tocancipá', 'tocancipa', 'cota', 'tenjo',
+            'tabio', 'la calera', 'sibate', 'sibaté', 'sopo', 'sopó', 'yumbo',
+            'jamundí', 'jamundi', 'buga', 'sevilla', 'ciénaga', 'cienaga',
+            'fundación', 'fundacion', 'magangué', 'magangue', 'mompos', 'mompós',
+            'curumani', 'curumaní', 'aguachica', 'codazzi', 'bosconia', 'chiriguaná', 'chiriguana',
+            'san alberto', 'gamarra', 'pelaya', 'pailitas', 'la jagua de ibirico',
+            'ocaña', 'ocana', 'pamplona', 'villa del rosario', 'los patios',
+            'planeta rica', 'cereté', 'cerete', 'sahagún', 'sahagun', 'lorica',
+            'montelíbano', 'montelibano', 'tierralta',
+            'pitalito', 'garzón', 'garzon', 'la plata',
+            'puerto lópez', 'puerto lopez', 'acacías', 'acacias', 'granada',
+            'chaparral', 'líbano', 'libano', 'puerto berrío', 'puerto berrio',
+            'curumani', 'curumaní', 'cumaribo', 'maicao', 'aguazul', 'corozal',
+            'san jose del guaviare', 'san josé del guaviare',
+            'puerto inirida', 'puerto inírida', 'mitú', 'mitu',
+            'puerto carreño', 'saravena', 'tame'
+        ];
+        
+        $lastMatch = null;
+        foreach ($ciudadesValidas as $ciudad) {
+            // Buscar como palabra completa
+            $ciudadPattern = preg_quote($ciudad, '/');
+            if (preg_match('/\b' . $ciudadPattern . '\b/ui', $texto)) {
+                $lastMatch = mb_strtoupper($this->removeAccents($ciudad));
+            }
+        }
+        
+        if ($lastMatch) {
+            return $lastMatch;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Remover acentos para comparación flexible
+     */
+    private function removeAccents(string $str): string
+    {
+        $str = mb_strtolower($str);
+        $map = ['á'=>'a', 'é'=>'e', 'í'=>'i', 'ó'=>'o', 'ú'=>'u', 'ñ'=>'n'];
+        return strtr($str, $map);
     }
 }

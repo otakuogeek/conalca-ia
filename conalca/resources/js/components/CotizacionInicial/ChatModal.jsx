@@ -267,8 +267,9 @@ const ChatModal = ({
       
       return {
         id: r.id || null, // Importante: mantener el ID si existe
-        ciudad_origen: r.ciudadOrigen || r.ciudad_origen || r.origen,
-        ciudad_destino: r.ciudadDestino || r.ciudad_destino || r.destino,
+        // 🚨 FIX: Si _sinCiudadOrigen/_sinCiudadDestino, enviar null (no re-introducir de cache)
+        ciudad_origen: r._sinCiudadOrigen ? null : (r.ciudadOrigen || r.ciudad_origen || r.origen),
+        ciudad_destino: r._sinCiudadDestino ? null : (r.ciudadDestino || r.ciudad_destino || r.destino),
         tipo_embajale: r.empaque || r.tipo_embajale || r.tipo_embalaje,
         empaque_id: r.empaque_id || r.empaqueId,
         // 🔧 FIX BUG #1: Enviar peso_mercancia (que es lo que lee el backend)
@@ -999,6 +1000,9 @@ const ChatModal = ({
                   ruta_numero: route.ruta_numero || (idx + 1), // Asegurar ID
                   ciudadOrigen: route.ciudad_origen ?? route.origen ?? null,
                   ciudadDestino: route.ciudad_destino ?? route.destino ?? null,
+                  // 🚨 Flag: si no hay ciudad, marcar para NO re-introducir de BD
+                  _sinCiudadOrigen: !(route.ciudad_origen || route.origen),
+                  _sinCiudadDestino: !(route.ciudad_destino || route.destino),
                   // 🔧 FIX BUG #1: Asegurar que TODOS los campos de peso tengan el mismo valor
                   peso: pesoValue,
                   peso_kg: pesoValue,
@@ -1114,7 +1118,30 @@ const ChatModal = ({
                 // Los datos de BD son la FUENTE DE VERDAD (el backend ya los actualizó)
                 if (currentDataFromDB && currentDataFromDB.length > 0) {
                   console.log('✅ USANDO DATOS DE BD DIRECTAMENTE (fuente de verdad)', currentDataFromDB);
-                  return currentDataFromDB;
+                  
+                  // 🚨 FIX: Si processedRoutes indica que NO hay ciudades (backend las limpió),
+                  // también limpiar en los datos de BD para NO re-introducirlas
+                  const cleanedDbData = currentDataFromDB.map((dbRoute, idx) => {
+                    const processedRoute = processedRoutes[idx];
+                    let cleaned = { ...dbRoute };
+                    if (processedRoute) {
+                      if (processedRoute._sinCiudadOrigen) {
+                        console.log(`🚨 Ruta ${idx}: Limpiando ciudadOrigen de BD (backend sin origen)`);
+                        cleaned.ciudadOrigen = null;
+                        cleaned.ciudad_origen = null;
+                        cleaned.origen = null;
+                      }
+                      if (processedRoute._sinCiudadDestino) {
+                        console.log(`🚨 Ruta ${idx}: Limpiando ciudadDestino de BD (backend sin destino)`);
+                        cleaned.ciudadDestino = null;
+                        cleaned.ciudad_destino = null;
+                        cleaned.destino = null;
+                      }
+                    }
+                    return cleaned;
+                  });
+                  
+                  return cleanedDbData;
                 }
 
                 // 🔥 CASO ESPECIAL: Si processedRoutes tiene MÚLTIPLES rutas pero currentDataFromDB no,
@@ -1174,6 +1201,22 @@ const ChatModal = ({
                       const existingVal = existing[key];
                       
                       if (key === '_originalValues') return;
+                      if (key === '_sinCiudadOrigen' || key === '_sinCiudadDestino') return;
+                      
+                      // 🚨 FIX: Si backend envió sin ciudades, forzar null en campos de ciudad
+                      const cityOrigenFields = ['ciudadOrigen', 'ciudad_origen', 'origen'];
+                      const cityDestinoFields = ['ciudadDestino', 'ciudad_destino', 'destino'];
+                      
+                      if (newRoute._sinCiudadOrigen && cityOrigenFields.includes(key)) {
+                        console.log(`   🚨 FORZANDO ${key} a null (backend sin origen)`);
+                        merged[key] = null;
+                        return;
+                      }
+                      if (newRoute._sinCiudadDestino && cityDestinoFields.includes(key)) {
+                        console.log(`   🚨 FORZANDO ${key} a null (backend sin destino)`);
+                        merged[key] = null;
+                        return;
+                      }
                       
                       // 🔥 CAMBIO: Si el valor nuevo es null/undefined/vacío, NO actualizar
                       // Esto preserva los valores que YA están en BD (existing viene de BD)

@@ -558,6 +558,16 @@ class ChatController extends Controller
                 $extractedData = [];
             }
             
+            // 🚨 PRESERVAR flag requiere_aclaracion_ciudades ANTES de separar rutas/planos
+            $requiereAclaracionCiudades = false;
+            if (!empty($extractedData['requiere_aclaracion_ciudades'])) {
+                $requiereAclaracionCiudades = true;
+            }
+            // También verificar en el retorno directo del run (puede estar ahí y no en el grupo)
+            if (!empty($run['extracted_data']) && is_array($run['extracted_data']) && !empty($run['extracted_data']['requiere_aclaracion_ciudades'])) {
+                $requiereAclaracionCiudades = true;
+            }
+            
             // 🆕 CRÍTICO: Si es multi-ruta con claves numéricas (0, 1, 2...), 
             // convertir a array indexado para que JSON lo envíe como [...]  no como {"0": ..., "1": ...}
             // 🔧 FIX: Separar rutas (numéricas) de campos planos (strings) - solo enviar rutas
@@ -637,6 +647,44 @@ class ChatController extends Controller
                     unset($extractedData['valorMercancia']);
                     unset($extractedData['valor_mercancia']);
                 }
+            }
+            
+            // 🚨 FILTRO CRÍTICO: Si requiere aclaración de ciudades, NO enviar ciudad_origen ni ciudad_destino
+            // Usar flag preservado ANTES de la separación rutas/planos
+            if ($requiereAclaracionCiudades && !empty($extractedData)) {
+                Log::warning('🚨 REQUIERE ACLARACIÓN DE CIUDADES - Limpiando campos origen/destino', [
+                    'antes' => is_array($extractedData) ? array_keys($extractedData) : 'non-array',
+                    'es_multi_ruta' => isset($extractedData[0]) && is_array($extractedData[0])
+                ]);
+                
+                // Si es multi-ruta (array de rutas), limpiar DENTRO de cada ruta
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        unset($ruta['ciudad_origen']);
+                        unset($ruta['ciudad_destino']);
+                        unset($ruta['origen']);
+                        unset($ruta['destino']);
+                    }
+                    unset($ruta);
+                } else {
+                    // Ruta única: limpiar campos de nivel superior
+                    unset($extractedData['ciudad_origen']);
+                    unset($extractedData['ciudad_destino']);
+                    unset($extractedData['origen']);
+                    unset($extractedData['destino']);
+                }
+                
+                // Limpiar flags de diagnóstico (solo internos)
+                unset($extractedData['origen_texto_detectado']);
+                unset($extractedData['destino_texto_detectado']);
+                unset($extractedData['direccion_encontrada']);
+                unset($extractedData['mensaje_asistente']);
+                unset($extractedData['requiere_aclaracion_ciudades']);
+                unset($extractedData['direccion_detectada']);
+                
+                Log::info('✅ Campos origen/destino limpiados para frontend', [
+                    'despues' => is_array($extractedData) ? array_keys($extractedData) : 'cleaned'
+                ]);
             }
 
             Log::info('Respuesta final del chat', [

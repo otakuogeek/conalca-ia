@@ -2763,6 +2763,20 @@ class MCPAssistantService
                 $extractedData = $newExtractedData;
             }
             
+            // 🚨 FIX CRÍTICO: Si la nueva extracción detectó que las ciudades NO son válidas,
+            // limpiar cualquier ciudad que haya quedado de datos anteriores o del merge
+            if (!empty($newExtractedData['requiere_aclaracion_ciudades'])) {
+                unset($extractedData['ciudad_origen']);
+                unset($extractedData['ciudad_destino']);
+                unset($extractedData['origen']);
+                unset($extractedData['destino']);
+                $extractedData['requiere_aclaracion_ciudades'] = true;
+                Log::warning('🚨 MERGE: Ciudades limpiadas porque requiere_aclaracion_ciudades=true', [
+                    'origen_texto_detectado' => $newExtractedData['origen_texto_detectado'] ?? 'N/A',
+                    'destino_texto_detectado' => $newExtractedData['destino_texto_detectado'] ?? 'N/A',
+                ]);
+            }
+            
             Log::info('📊 Datos extraídos MERGEADOS', [
                 'thread_id' => $threadId,
                 'previous_count' => count($previousExtractedData),
@@ -3555,6 +3569,8 @@ class MCPAssistantService
             if ($groupId) {
                 $group = GroupCotization::find($groupId);
                 if ($group) {
+                    // 🚨 FIX: Limpiar ciudades antes de guardar
+                    self::limpiarCiudadesSiRequiereAclaracion($extractedData);
                     $group->extracted_data = json_encode($extractedData);
                     $group->save();
                     
@@ -3638,6 +3654,8 @@ class MCPAssistantService
             $metadata['last_run_id'] = $runId;
             $metadata['last_run_status'] = 'completed';
             // 🆕 SINCRONIZAR quote_data y extracted_data para evitar inconsistencias
+            // 🚨 FIX: Limpiar ciudades inventadas antes de guardar
+            self::limpiarCiudadesSiRequiereAclaracion($extractedData);
             $metadata['quote_data'] = $extractedData;
             $metadata['extracted_data'] = $extractedData;
             $session->metadata = json_encode($metadata);
@@ -3794,7 +3812,14 @@ class MCPAssistantService
                         $jsonData = json_decode($contenido, true);
                         if (json_last_error() === JSON_ERROR_NONE && is_array($jsonData)) {
                             // Extraer campos relevantes del JSON de OpenAI
-                            $camposRelevantes = ['origen', 'destino', 'peso', 'producto', 'valor', 'cantidad', 'contenedor', 'observaciones', 'vehiculo', 'empaque'];
+                            // 🚨 FIX: Si requiere_aclaracion_ciudades, NO permitir que la IA establezca origen/destino
+                            $skipCityFields = !empty($extractedData['requiere_aclaracion_ciudades']);
+                            if ($skipCityFields) {
+                                $camposRelevantes = ['peso', 'producto', 'valor', 'cantidad', 'contenedor', 'observaciones', 'vehiculo', 'empaque'];
+                                Log::warning('🚨 AI JSON: Bloqueando origen/destino porque requiere_aclaracion_ciudades=true');
+                            } else {
+                                $camposRelevantes = ['origen', 'destino', 'peso', 'producto', 'valor', 'cantidad', 'contenedor', 'observaciones', 'vehiculo', 'empaque'];
+                            }
                             $datosAI = [];
                             foreach ($camposRelevantes as $campo) {
                                 if (isset($jsonData[$campo]) && $jsonData[$campo] !== null && $jsonData[$campo] !== 'null') {
@@ -3852,6 +3877,10 @@ class MCPAssistantService
                                     $extractedData['pesoMercancia'] = $pesoBackup;
                                     $extractedData['peso_mercancia'] = $pesoBackup;
                                 }
+                                
+                                // 🚨 FIX POST-MERGE: Re-limpiar ciudades si requiere aclaración
+                                // La IA puede haber inventado ciudades en su respuesta JSON
+                                self::limpiarCiudadesSiRequiereAclaracion($extractedData);
                                 
                                 Log::info('📊 Datos adicionales extraídos de respuesta JSON de OpenAI', [
                                     'campos_agregados' => array_keys($datosAI),
@@ -4045,6 +4074,18 @@ class MCPAssistantService
                     // Combinar rutas + campos planos (si aplica)
                     $mergedData = $mergedRoutes + $mergedFlat;
                     
+                    // 🚨 FIX: Limpiar ciudades inventadas por la IA antes de guardar
+                    self::limpiarCiudadesSiRequiereAclaracion($mergedData);
+                    // También limpiar dentro de cada ruta individual
+                    if (!empty($extractedData['requiere_aclaracion_ciudades'])) {
+                        foreach ($mergedData as $key => &$val) {
+                            if (is_numeric($key) && is_array($val)) {
+                                unset($val['ciudad_origen'], $val['ciudad_destino'], $val['origen'], $val['destino']);
+                            }
+                        }
+                        unset($val);
+                    }
+                    
                     $group->extracted_data = json_encode($mergedData);
                     $group->save();
                     
@@ -4063,6 +4104,8 @@ class MCPAssistantService
                 $metadata['extracted_data_by_group'] = [];
             }
             if ($currentGroupId) {
+                // 🚨 FIX: Limpiar ciudades antes de guardar en metadata
+                self::limpiarCiudadesSiRequiereAclaracion($extractedData);
                 $metadata['extracted_data_by_group'][$currentGroupId] = $extractedData;
             }
             
@@ -4072,7 +4115,7 @@ class MCPAssistantService
             return [
                 'id' => $runId,
                 'status' => 'completed',
-                'extracted_data' => $extractedData  // NUEVO: enviar datos al frontend
+                'extracted_data' => $extractedData
             ];
 
         } catch (\Exception $e) {
@@ -4271,6 +4314,33 @@ class MCPAssistantService
                 ]);
                 
                 continue; // Saltar al siguiente tool call
+            }
+
+            // 🚨 FIX CRÍTICO: BLOQUEAR create_cotizacion si las ciudades no están confirmadas
+            if ($functionName === 'create_cotizacion' && !empty($extractedData['requiere_aclaracion_ciudades'])) {
+                Log::warning('🚫 BLOQUEADO: create_cotizacion porque requiere_aclaracion_ciudades=true - la IA debe preguntar primero');
+                
+                $result = [
+                    'error' => 'No se puede crear cotización sin ciudades válidas de origen y destino.',
+                    'message' => 'Las ciudades de origen y destino no han sido identificadas. El texto proporcionado contiene direcciones o nombres de lugares, NO ciudades. Debes preguntar al usuario cuál es la CIUDAD de origen y cuál es la CIUDAD de destino.',
+                    'blocked' => true
+                ];
+                
+                $toolResults[] = [
+                    'tool_call_id' => $toolCall['id'],
+                    'role' => 'tool',
+                    'name' => $functionName,
+                    'content' => json_encode($result)
+                ];
+                
+                $responseMessages[] = new Message([
+                    'group_cotization_id' => $groupCotizationId,
+                    'role' => 'tool',
+                    'content' => json_encode($result),
+                    'timestamp' => now()
+                ]);
+                
+                continue;
             }
 
             // 🆕 BLOQUEAR search_products si el mensaje es una corrección de campo no-producto
@@ -4783,6 +4853,9 @@ class MCPAssistantService
                     $mergedGroupData = array_merge($existingGroupData, $dataToSave);
                 }
                 
+                // 🚨 FIX: Limpiar ciudades inventadas por la IA si requiere aclaración
+                self::limpiarCiudadesSiRequiereAclaracion($mergedGroupData);
+                
                 $group->extracted_data = json_encode($mergedGroupData);
                 $group->save();
                 
@@ -4842,7 +4915,12 @@ class MCPAssistantService
             'id' => $runId,
             'status' => $hasData ? 'completed_with_data' : 'completed',
             'quote_data' => $mergedData,
-            'extracted_data' => $extractedData  // NUEVO: incluir datos extraídos por regex
+            'extracted_data' => (function() use ($extractedData) {
+                // 🚨 Última protección: limpiar ciudades si requiere aclaración
+                $data = $extractedData;
+                self::limpiarCiudadesSiRequiereAclaracion($data);
+                return $data;
+            })()
         ];
     }
 
@@ -7589,7 +7667,101 @@ class MCPAssistantService
             // 🆕 NO sobrescribir cantidad si ya viene explícito de la ruta
             // 🆕 NO sobrescribir producto si ya viene explícito de la ruta
             
-            // Sugerir vehículo según peso si no existe
+            // 🆕 TARA: Aplicar tara si hay contenedor y texto indica "sin tara" o no menciona tara
+            $hayContenedorRuta = preg_match('/CONTENEDOR/i', $completeRoute['empaque'] ?? '') || isset($completeRoute['tamano_contenedor']);
+            if (!$hayContenedorRuta) {
+                $hayContenedorRuta = self::hayContenedorEnTexto($fullText);
+            }
+            
+            if ($hayContenedorRuta && isset($completeRoute['peso_kg']) && $completeRoute['peso_kg'] > 0) {
+                // Detectar patrones de tara en el texto
+                $noIncluyeTaraPatterns = [
+                    'no incluye tara', 'no incluye la tara', 'sin tara', 'peso neto',
+                    'el peso no incluye tara', 'el peso no incluye la tara',
+                    'peso no incluye tara', 'peso no incluye la tara',
+                    '+ tara', 'más tara', 'mas tara'
+                ];
+                $yaIncluyeTaraPatterns = [
+                    'ya incluye tara', 'ya incluye la tara', 'incluye la tara',
+                    'con tara', 'peso con tara', 'peso bruto', 'tara incluida',
+                    'el peso ya incluye la tara', 'el peso ya incluye tara'
+                ];
+                
+                $detectoNoIncluyeTara = false;
+                $detectoYaIncluyeTara = false;
+                
+                foreach ($noIncluyeTaraPatterns as $pattern) {
+                    if (strpos($lowerText, $pattern) !== false) {
+                        $detectoNoIncluyeTara = true;
+                        break;
+                    }
+                }
+                if (!$detectoNoIncluyeTara) {
+                    foreach ($yaIncluyeTaraPatterns as $pattern) {
+                        if (strpos($lowerText, $pattern) !== false) {
+                            $detectoYaIncluyeTara = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Aplicar tara si "sin tara" o si no se menciona tara (default: agregar)
+                if (!$detectoYaIncluyeTara) {
+                    $pesoOriginal = $completeRoute['peso_kg'];
+                    if (isset($completeRoute['tamano_contenedor'])) {
+                        $taraAplicar = ($completeRoute['tamano_contenedor'] == 20) ? 2300 : 3400;
+                    } else {
+                        $taraAplicar = self::getTaraByContenedor($fullText);
+                    }
+                    $completeRoute['peso_kg'] = $pesoOriginal + $taraAplicar;
+                    $completeRoute['tara'] = $taraAplicar;
+                    $completeRoute['incluye_tara'] = false;
+                    Log::info("📦 TARA SUMADA en processMultipleRoutes (ruta #{$completeRoute['ruta_numero']})", [
+                        'peso_original' => $pesoOriginal,
+                        'tara' => $taraAplicar,
+                        'peso_con_tara' => $completeRoute['peso_kg'],
+                        'razon' => $detectoNoIncluyeTara ? 'sin tara detectado' : 'default - contenedor sin mención'
+                    ]);
+                } else {
+                    $completeRoute['incluye_tara'] = true;
+                    Log::info("📦 TARA ya incluida en processMultipleRoutes (ruta #{$completeRoute['ruta_numero']})");
+                }
+            }
+            
+            // 🆕 FIX: Contenedores SIEMPRE requieren TRACTOCAMION
+            if (isset($completeRoute['empaque']) && preg_match('/CONTENEDOR/i', $completeRoute['empaque'])) {
+                if (($completeRoute['vehiculo'] ?? '') !== 'TRACTOCAMION') {
+                    Log::info("🚛 Vehículo forzado a TRACTOCAMION por contenedor (ruta #{$completeRoute['ruta_numero']})", [
+                        'vehiculo_anterior' => $completeRoute['vehiculo'] ?? 'null'
+                    ]);
+                    $completeRoute['vehiculo'] = 'TRACTOCAMION';
+                }
+            }
+            
+            // 🆕 FIX: Extraer vehículo explícito del texto ANTES de sugerir por peso
+            if (!isset($completeRoute['vehiculo'])) {
+                // Buscar mención explícita de vehículo en el texto
+                $vehiculoPatterns = [
+                    '/tractocami[oó]n|tractomula/ui' => 'TRACTOCAMION',
+                    '/doble\s*troque/ui' => 'DOBLETROQUE',
+                    '/sencillo/ui' => 'SENCILLO',
+                    '/turbo/ui' => 'TURBO',
+                    '/minimula/ui' => 'MINIMULA',
+                    '/camioneta/ui' => 'CAMIONETA',
+                    '/patineta/ui' => 'PATINETA',
+                ];
+                foreach ($vehiculoPatterns as $pattern => $vehiculoNombre) {
+                    if (preg_match($pattern, $fullText)) {
+                        $completeRoute['vehiculo'] = $vehiculoNombre;
+                        Log::info("🚛 Vehículo detectado del texto (ruta #{$completeRoute['ruta_numero']})", [
+                            'vehiculo' => $vehiculoNombre
+                        ]);
+                        break;
+                    }
+                }
+            }
+            
+            // Sugerir vehículo según peso si aún no existe
             if (isset($completeRoute['peso_kg']) && !isset($completeRoute['vehiculo'])) {
                 $vehiculo = self::suggestVehicleByWeight($completeRoute['peso_kg']);
                 if ($vehiculo) {
@@ -7638,7 +7810,31 @@ class MCPAssistantService
             'ciudades_result' => $ciudades
         ]);
         if ($ciudades) {
-            $data = array_merge($data, $ciudades);
+            // 🆕 Si requiere aclaración de ciudades, marcar pero NO llenar origen/destino
+            if (isset($ciudades['requiere_aclaracion_ciudades']) && $ciudades['requiere_aclaracion_ciudades']) {
+                $data['requiere_aclaracion_ciudades'] = true;
+                $data['direccion_detectada'] = $ciudades['direccion_detectada'] ?? false;
+                $data['mensaje_asistente'] = $ciudades['mensaje_asistente'] ?? '';
+                
+                // 🚨 IMPORTANTE: Pasar los textos detectados para el contexto del prompt
+                if (isset($ciudades['origen_texto_detectado'])) {
+                    $data['origen_texto_detectado'] = $ciudades['origen_texto_detectado'];
+                }
+                if (isset($ciudades['destino_texto_detectado'])) {
+                    $data['destino_texto_detectado'] = $ciudades['destino_texto_detectado'];
+                }
+                if (isset($ciudades['direccion_encontrada'])) {
+                    $data['direccion_encontrada'] = $ciudades['direccion_encontrada'];
+                }
+                
+                // 🚨 NO agregar ciudad_origen ni ciudad_destino - deben quedar vacíos
+                Log::info('⚠️ Marcando datos como requieren aclaración de ciudades - campos origen/destino quedarán vacíos', [
+                    'mensaje' => $data['mensaje_asistente']
+                ]);
+            } else {
+                // Caso normal: ciudades detectadas correctamente
+                $data = array_merge($data, $ciudades);
+            }
         }
 
         // Peso
@@ -7828,6 +8024,137 @@ class MCPAssistantService
     }
 
     /**
+    /**
+     * 🚨 LIMPIAR CAMPOS DE CIUDADES SI REQUIERE ACLARACIÓN
+     * Llamar antes de guardar extracted_data o retornarlo al frontend
+     */
+    private static function limpiarCiudadesSiRequiereAclaracion(&$data)
+    {
+        if (!is_array($data)) return;
+        
+        if (!empty($data['requiere_aclaracion_ciudades'])) {
+            unset($data['ciudad_origen']);
+            unset($data['ciudad_destino']);
+            unset($data['origen']);
+            unset($data['destino']);
+            Log::info('🚨 limpiarCiudadesSiRequiereAclaracion: Campos limpiados');
+        }
+    }
+
+    /**
+     * 🏙️ VALIDAR SI UN TEXTO ES UNA CIUDAD COLOMBIANA CONOCIDA
+     * Retorna true solo si el texto es una ciudad reconocida
+     */
+    private static function esCiudadColombiana($texto)
+    {
+        $texto = mb_strtolower(trim($texto));
+        
+        // Lista completa de ciudades colombianas principales y municipios importantes
+        $ciudadesValidas = [
+            'bogota', 'bogotá', 'medellin', 'medellín', 'cali', 'barranquilla', 'cartagena',
+            'bucaramanga', 'pereira', 'cucuta', 'cúcuta', 'ibague', 'ibagué', 'manizales',
+            'santa marta', 'villavicencio', 'pasto', 'monteria', 'montería', 'neiva',
+            'valledupar', 'armenia', 'popayan', 'popayán', 'sincelejo', 'tunja', 'riohacha',
+            'buenaventura', 'girardot', 'floridablanca', 'soacha', 'bello', 'soledad',
+            'palmira', 'envigado', 'itagui', 'itagüí', 'dosquebradas', 'tulua', 'tuluá',
+            'apartado', 'apartadó', 'cartago', 'barrancabermeja', 'yopal', 'florencia',
+            'funza', 'zipaquira', 'zipaquirá', 'chia', 'chía', 'sogamoso', 'duitama',
+            'ipiales', 'tumaco', 'quibdo', 'quibdó', 'leticia', 'mocoa', 'arauca',
+            'san andres', 'san andrés', 'providencia', 'puerto asis', 'puerto asís',
+            'puerto carreño', 'inírida', 'mitú', 'turbo', 'caucasia', 'rionegro',
+            'la dorada', 'honda', 'mariquita', 'espinal', 'melgar', 'fusagasuga',
+            'fusagasugá', 'facatativa', 'facatativá', 'madrid', 'mosquera', 'cajica',
+            'cajicá', 'tocancipá', 'tocancipa', 'cota', 'tenjo', 'tabio', 'la calera',
+            'sibate', 'sibaté', 'sopo', 'sopó', 'guatape', 'guatapé', 'santa rosa de cabal',
+            'la virginia', 'chinchina', 'chinchiná', 'yumbo', 'jamundí', 'jamundi',
+            'candelaria', 'puerto tejada', 'santander de quilichao', 'pradera',
+            'buga', 'guadalajara de buga', 'sevilla', 'andalucía', 'andalucia',
+            'turbaco', 'arjona', 'turbana', 'clemencia', 'san jacinto', 'carmen de bolivar',
+            'magangué', 'magangue', 'mompos', 'mompós', 'el banco', 'ciénaga', 'cienaga',
+            'fundación', 'fundacion', 'zona bananera', 'aracataca', 'plato',
+            'curumani', 'curumaní', 'aguachica', 'codazzi', 'agustin codazzi', 'agustín codazzi',
+            'la jagua de ibirico', 'chiriguana', 'chiriguaná', 'bosconia', 'san alberto',
+            'gamarra', 'pelaya', 'pailitas', 'tamalameque', 'rio de oro', 'río de oro',
+            'la gloria', 'gonzalez', 'gonzález', 'san martin', 'san martín',
+            'puerto berrio', 'puerto berrío', 'caucasia', 'planeta rica',
+            'lorica', 'cereté', 'cerete', 'sahagún', 'sahagun', 'montelíbano', 'montelibano',
+            'tierralta', 'puerto escondido',
+            'ocaña', 'ocana', 'pamplona', 'los patios', 'villa del rosario',
+            'san jose de cucuta', 'san josé de cúcuta',
+            'la plata', 'garzon', 'garzón', 'pitalito',
+            'puerto lopez', 'puerto lópez', 'acacias', 'acacías', 'granada',
+            'chaparral', 'líbano', 'libano', 'el espinal',
+            'cumaribo', 'puerto carreño', 'la primavera', 'santa rosalía', 'santa rosalia',
+            'san jose del guaviare', 'san josé del guaviare', 'calamar', 'el retorno', 'miraflores',
+            'puerto inírida', 'puerto inirida', 'mitú', 'mitu', 'caruru',
+            'san vicente del caguan', 'san vicente del caguán', 'el doncello', 'el paujil',
+            'puerto rico', 'belen de los andaquies', 'belén de los andaquíes',
+            'sibundoy', 'villagarzon', 'villagarzón', 'orito', 'puerto asis', 'puerto asís', 'la hormiga',
+            'agua de dios', 'san juan de pasto', 'la unión', 'la union', 'samaniego',
+            'istmina', 'istmína', 'condoto', 'tado', 'tadó', 'nuqui', 'nuquí', 'bahia solano', 'bahía solano',
+            'maicao', 'fonseca', 'san juan del cesar', 'villanueva', 'uribia', 'manaure',
+            'aguazul', 'paz de ariporo', 'tauramena', 'villanueva', 'maní', 'mani',
+            'saravena', 'tame', 'arauquita', 'fortul',
+            'ricaurte', 'san marcos', 'since', 'sincé', 'ovejas', 'corozal',
+            'el carmen de viboral', 'la ceja', 'marinilla', 'el peñol', 'el penol',
+            'san pedro de los milagros', 'santa rosa de osos', 'yarumal', 'don matias', 'don matías',
+            'la estrella', 'caldas', 'copacabana', 'barbosa', 'girardota'
+        ];
+        
+        // Verificar coincidencia exacta
+        if (in_array($texto, $ciudadesValidas)) {
+            return true;
+        }
+        
+        // Permitir pequeñas variaciones (sin acentos, etc.)
+        $textoNormalizado = self::removeAccents($texto);
+        foreach ($ciudadesValidas as $ciudad) {
+            if ($textoNormalizado === self::removeAccents($ciudad)) {
+                return true;
+            }
+        }
+        
+        // 🆕 Verificar si es una abreviatura conocida de ciudad colombiana
+        $abreviaturas = [
+            'bog' => 'bogota', 'med' => 'medellin', 'clo' => 'cali',
+            'baq' => 'barranquilla', 'ctg' => 'cartagena', 'bga' => 'bucaramanga',
+            'cuc' => 'cucuta', 'pei' => 'pereira', 'mzl' => 'manizales',
+            'axm' => 'armenia', 'ibe' => 'ibague', 'nva' => 'neiva',
+            'vvc' => 'villavicencio', 'pso' => 'pasto', 'ppn' => 'popayan',
+            'smr' => 'santa marta', 'mtr' => 'monteria', 'vup' => 'valledupar',
+            'rch' => 'riohacha', 'uib' => 'quibdo', 'let' => 'leticia',
+            'adz' => 'san andres', 'eyp' => 'yopal', 'auc' => 'arauca',
+            'fla' => 'florencia', 'mco' => 'mocoa', 'tun' => 'tunja',
+            'dui' => 'duitama', 'sog' => 'sogamoso', 'gir' => 'girardot',
+            'bun' => 'buenaventura', 'buenav' => 'buenaventura',
+            'bvtura' => 'buenaventura', 'btura' => 'buenaventura',
+            'bquilla' => 'barranquilla', 'bqlla' => 'barranquilla',
+            'bquill' => 'barranquilla', 'bmanga' => 'bucaramanga',
+            'bmeja' => 'barrancabermeja', 'barranca' => 'barrancabermeja',
+            'bgt' => 'bucaramanga', 'cgen' => 'cartagena', 'cart' => 'cartagena',
+            'vvicencio' => 'villavicencio', 'sta marta' => 'santa marta',
+            's marta' => 'santa marta', 'apto' => 'apartado',
+            'dosq' => 'dosquebradas', 'floridab' => 'floridablanca',
+        ];
+        
+        if (isset($abreviaturas[$textoNormalizado])) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 🔧 Remover acentos para comparación flexible
+     */
+    private static function removeAccents($str)
+    {
+        $str = mb_strtolower($str);
+        $unwanted_array = ['á'=>'a', 'é'=>'e', 'í'=>'i', 'ó'=>'o', 'ú'=>'u', 'ñ'=>'n'];
+        return strtr($str, $unwanted_array);
+    }
+
+    /**
      * 🏙️ EXTRAER CIUDADES (origen y destino)
      */
     private static function extractCiudades($text)
@@ -7836,11 +8163,16 @@ class MCPAssistantService
         
         // 🚫 IGNORAR si el texto es una corrección de otro campo (producto, peso, valor, empaque, vehículo)
         // Esto evita que "producto cambia a tomates" se interprete como "de producto a tomates"
-        $esCorreccionOtroCampo = preg_match('/(?:cambia|cambiar|cambialo)(?:\s+el)?\s+(?:producto|peso|valor|empaque|embalaje|veh[ií]culo)\s+(?:a|por)/ui', $text) ||
-                                 preg_match('/(?:producto|peso|valor|empaque|embalaje|veh[ií]culo)\s*(?:es|será|sea|queda|:)\s+/ui', $text) ||
-                                 preg_match('/(?:producto|peso|valor|empaque|veh[ií]culo).*?(?:cambia|deja)\s+/ui', $text);
+        // 🔧 FIX: NO aplicar si el texto contiene ORIGEN/DESTINO (es una cotización estructurada, no corrección)
+        $tieneOrigenDestino = preg_match('/\b(?:ORIGEN|DESTINO)\b/ui', $text);
+        $esCorreccionOtroCampo = false;
+        if (!$tieneOrigenDestino) {
+            $esCorreccionOtroCampo = preg_match('/(?:cambia|cambiar|cambialo)(?:\s+el)?\s+(?:producto|peso|valor|empaque|embalaje|veh[ií]culo)\s+(?:a|por)/ui', $text) ||
+                                     preg_match('/(?:producto|peso|valor|empaque|embalaje|veh[ií]culo)\s*(?:es|será|sea|queda|:)\s+/ui', $text) ||
+                                     preg_match('/(?:producto|peso|valor|empaque|veh[ií]culo).*?(?:cambia|deja)\s+/ui', $text);
+        }
         
-        Log::info('🏙️ extractCiudades filtro campo', ['esCorreccionOtroCampo' => $esCorreccionOtroCampo]);
+        Log::info('🏙️ extractCiudades filtro campo', ['esCorreccionOtroCampo' => $esCorreccionOtroCampo, 'tieneOrigenDestino' => $tieneOrigenDestino]);
         
         if ($esCorreccionOtroCampo) {
             Log::info('🏙️ Ignorando extracción de ciudades - es corrección de otro campo', ['text' => substr($text, 0, 100)]);
@@ -7854,8 +8186,8 @@ class MCPAssistantService
         Log::info('🏙️ Testeando patterns de ORIGEN');
         
         // 🔧 Terminador común para todos los patrones de ciudades
-        // Acepta: punto, coma, salto de línea, "NOTA", "y", "destino", espacios múltiples o fin de string
-        $terminadorOrigen = '(?:\s*[.,;\n]|\s+y\s+|\s+destino|\s+NOTA|\s{2,}|$)';
+        // Acepta: punto, coma, salto de línea, "NOTA", "y", "destino", PESO, CANTIDAD, espacios múltiples o fin de string
+        $terminadorOrigen = '(?:\s*[.,;\n]|\s+y\s+|\s+destino|\s+NOTA|\s+PESO|\s+CANTIDAD|\s+DETALLES|\s+DIME[NS]SION|\s+EMPAQUE|\s+ORIGEN\s*\d|\s{2,}|$)';
         
         // Patrón: "cambia el origen a X" o "origen cambialo a X" o "origen cambia y ponga X" o "origen cambia a X"
         // 🔧 FIX: Permitir texto intermedio como "de la ruta 1" o "de la ruta 2" entre "origen" y "a/por"
@@ -7891,7 +8223,7 @@ class MCPAssistantService
         Log::info('🏙️ Testeando patterns de DESTINO');
         
         // 🔧 Terminador común para patrones de destino
-        $terminadorDestino = '(?:\s*[.,;\n]|\s+y\s+|\s+origen|\s+NOTA|\s{2,}|$)';
+        $terminadorDestino = '(?:\s*[.,;\n]|\s+y\s+|\s+origen|\s+NOTA|\s+PESO|\s+CANTIDAD|\s+DETALLES|\s+DIME[NS]SION|\s+EMPAQUE|\s{2,}|$)';
         
         // Patrón: "cambia el destino a X" o "destino cambialo a X" o "destino cambia y ponga X" o "destino cambia a X"
         // 🔧 FIX: Permitir texto intermedio como "de la ruta 1" o "de la ruta 2" entre "destino" y "a/por"
@@ -7932,26 +8264,107 @@ class MCPAssistantService
         // NOTA: Incluir soporte para emojis (📍, 🏠, etc.) que pueden preceder el texto
         $origenSimple = null;
         $destinoSimple = null;
+        $origenTextoRaw = null;
+        $destinoTextoRaw = null;
         
-        // Patrón: "📍 Origen: Puerto de Cartagena" o "Origen: Bogotá" - con soporte para emojis
-        if (preg_match('/Origen\s*:\s*([A-Za-záéíóúñÁÉÍÓÚÑ\s]+?)(?:\s*\n|$)/ui', $text, $origenMatch)) {
-            $origenSimple = self::normalizeCityName(trim($origenMatch[1]));
-            Log::info('📍 Origen detectado (formato simple)', ['origen' => $origenSimple, 'raw' => $origenMatch[1]]);
+        // Patrón: "📍 Origen: Puerto de Cartagena" o "Origen: Bogotá" o "Recoleccion:\nCra. 50..."
+        // 🆕 Capturar incluso si la dirección está en la SIGUIENTE línea (después de salto)
+        // 🔧 FIX: Soportar "ORIGEN N :" (con número) y más terminadores
+        // Primero intentar capturar en la misma línea, luego en la siguiente línea
+        if (preg_match('/(?:Recoleccion|Origen)\s*(?:\d+\s*)?:\s*([^\n]+?)(?=\n|Destino\s*:|DETALLES|ORIGEN\s*\d|PESO\s*:|CANTIDAD|$)/ui', $text, $origenMatch) && strlen(trim($origenMatch[1])) > 0) {
+            $origenTextoRaw = trim($origenMatch[1]);
+            Log::info('📍 Texto origen capturado (sin validar)', ['raw' => $origenTextoRaw]);
+            
+            // 🚨 VALIDAR que sea una ciudad colombiana conocida
+            if (self::esCiudadColombiana($origenTextoRaw)) {
+                $origenSimple = self::normalizeCityName($origenTextoRaw);
+                Log::info('✅ Origen validado como ciudad colombiana', ['origen' => $origenSimple]);
+            } else {
+                // 🆕 FIX: Intentar extraer ciudad de dirección/texto complejo
+                $ciudadExtraida = self::extractCityFromSegment($origenTextoRaw);
+                if ($ciudadExtraida) {
+                    $origenSimple = $ciudadExtraida;
+                    Log::info('✅ Origen: ciudad extraída de dirección', ['ciudad' => $ciudadExtraida, 'texto_original' => $origenTextoRaw]);
+                } else {
+                    Log::warning('⚠️ Origen NO es ciudad colombiana conocida', ['texto' => $origenTextoRaw]);
+                }
+            }
+        }
+        // 🆕 Si NO capturó nada en la misma línea, intentar capturar de la SIGUIENTE línea
+        // Esto maneja: "Recoleccion:\n Cra. 50 #134 D 31"
+        elseif (preg_match('/(?:Recoleccion|Origen)\s*:\s*\n\s*([^\n]+?)(?=\n|Destino\s*:|DETALLES|$)/ui', $text, $origenMatch)) {
+            $origenTextoRaw = trim($origenMatch[1]);
+            Log::info('📍 Texto origen capturado de SIGUIENTE LÍNEA (sin validar)', ['raw' => $origenTextoRaw]);
+            
+            if (self::esCiudadColombiana($origenTextoRaw)) {
+                $origenSimple = self::normalizeCityName($origenTextoRaw);
+                Log::info('✅ Origen (siguiente línea) validado como ciudad colombiana', ['origen' => $origenSimple]);
+            } else {
+                // 🆕 FIX: Intentar extraer ciudad de dirección
+                $ciudadExtraida = self::extractCityFromSegment($origenTextoRaw);
+                if ($ciudadExtraida) {
+                    $origenSimple = $ciudadExtraida;
+                    Log::info('✅ Origen (siguiente línea): ciudad extraída de dirección', ['ciudad' => $ciudadExtraida]);
+                } else {
+                    Log::warning('⚠️ Origen (siguiente línea) NO es ciudad colombiana conocida', ['texto' => $origenTextoRaw]);
+                }
+            }
         }
         
         // Patrón: "📍 Destino: Medellín" - con soporte para emojis
-        if (preg_match('/Destino\s*:\s*([A-Za-záéíóúñÁÉÍÓÚÑ\s]+?)(?:\s*\n|$)/ui', $text, $destinoMatch)) {
-            $destinoSimple = self::normalizeCityName(trim($destinoMatch[1]));
-            Log::info('📍 Destino detectado (formato simple)', ['destino' => $destinoSimple, 'raw' => $destinoMatch[1]]);
+        // 🔧 FIX: Agregar más terminadores (PESO, CANTIDAD, etc.) para no capturar datos extra
+        if (preg_match('/Destino\s*:\s*([^\n]+?)(?=\n|DETALLES|Recoleccion|PESO\s*:|CANTIDAD|DIMENSI[OÓ]N|DIMESI[OÓ]N|EMPAQUE|EMBALAJE|ORIGEN\s*\d|$)/ui', $text, $destinoMatch)) {
+            $destinoTextoRaw = trim($destinoMatch[1]);
+            // 🔧 FIX: Si captura "bogotá a este dirección: ...", extraer solo la ciudad
+            if (!self::esCiudadColombiana($destinoTextoRaw)) {
+                if (preg_match('/^([a-záéíóúñ\s]+?)\s+(?:a\s+est[ea]|direcci[oó]n|calle|carrera|cra|cll|av|transversal|diagonal|kr)/ui', $destinoTextoRaw, $mCiudadDest)) {
+                    $posibleCiudad = trim($mCiudadDest[1]);
+                    if (self::esCiudadColombiana($posibleCiudad)) {
+                        $destinoTextoRaw = $posibleCiudad;
+                    }
+                }
+            }
+            Log::info('📍 Texto destino capturado (sin validar)', ['raw' => $destinoTextoRaw]);
+            
+            // 🚨 VALIDAR que sea una ciudad colombiana conocida
+            if (self::esCiudadColombiana($destinoTextoRaw)) {
+                $destinoSimple = self::normalizeCityName($destinoTextoRaw);
+                Log::info('✅ Destino validado como ciudad colombiana', ['destino' => $destinoSimple]);
+            } else {
+                // 🆕 FIX: Intentar extraer ciudad de dirección/texto complejo
+                $ciudadExtraida = self::extractCityFromSegment($destinoTextoRaw);
+                if ($ciudadExtraida) {
+                    $destinoSimple = $ciudadExtraida;
+                    Log::info('✅ Destino: ciudad extraída de dirección', ['ciudad' => $ciudadExtraida, 'texto_original' => $destinoTextoRaw]);
+                } else {
+                    Log::warning('⚠️ Destino NO es ciudad colombiana conocida', ['texto' => $destinoTextoRaw]);
+                }
+            }
         }
         
-        // Si encontramos Origen/Destino simple, devolverlo
+        // Si encontramos Origen/Destino válidos, devolverlos
         if ($origenSimple || $destinoSimple) {
             $result = [];
             if ($origenSimple) $result['ciudad_origen'] = $origenSimple;
             if ($destinoSimple) $result['ciudad_destino'] = $destinoSimple;
-            Log::info('📍 Usando Origen/Destino formato simple', $result);
+            Log::info('📍 Usando Origen/Destino formato simple validado', $result);
             return $result;
+        }
+        
+        // 🆕 Si capturamos texto en origen/destino pero NO son ciudades válidas, activar flag
+        if ($origenTextoRaw || $destinoTextoRaw) {
+            Log::warning('🚨 Se detectó texto en Origen/Destino pero NO son ciudades válidas', [
+                'origen_raw' => $origenTextoRaw,
+                'destino_raw' => $destinoTextoRaw
+            ]);
+            
+            return [
+                'requiere_aclaracion_ciudades' => true,
+                'direccion_detectada' => true,
+                'origen_texto_detectado' => $origenTextoRaw,
+                'destino_texto_detectado' => $destinoTextoRaw,
+                'mensaje_asistente' => 'He detectado información de ubicación pero necesito que me confirmes las ciudades específicas. ¿Cuál es la ciudad de ORIGEN y la ciudad de DESTINO?'
+            ];
         }
         
         // 🆕 NUEVO PATRÓN PRIORITARIO: "RUTA: X destino: Y" (puede tener salto de línea después)
@@ -8331,6 +8744,49 @@ class MCPAssistantService
             }
         }
 
+        // 🆕 DETECTAR SI HAY DIRECCIONES SIN CIUDAD IDENTIFICABLE
+        // Patrones de direcciones colombianas: Cra, Calle, Carrera, Cl, Kr, Transversal, Diagonal, etc.
+        $patronesDireccion = [
+            '/(?:calle|cll?|kalma)\s*\.?\s*#?\s*\d+/ui',
+            '/(?:carrera|cra|kr|krra)\s*\.?\s*#?\s*\d+/ui',
+            '/(?:transversal|tv|trans|trv)\s*\.?\s*#?\s*\d+/ui',
+            '/(?:diagonal|dg|diag)\s*\.?\s*#?\s*\d+/ui',
+            '/(?:avenida|av|avda)\s*\.?\s*#?\s*\d+/ui',
+            '/(?:autopista|aut)\s+/ui',
+            '/(?:via|vía)\s+/ui',
+            '/(?:kilometro|km)\s+\d+/ui',
+        ];
+        
+        $tieneDireccion = false;
+        $direccionEncontrada = '';
+        foreach ($patronesDireccion as $patron) {
+            if (preg_match($patron, $text, $matchDir)) {
+                $tieneDireccion = true;
+                $direccionEncontrada = $matchDir[0];
+                Log::info('📍 Detectada dirección sin ciudad identificable', [
+                    'patron_matched' => $patron,
+                    'direccion' => $direccionEncontrada,
+                    'texto' => substr($text, 0, 150)
+                ]);
+                break;
+            }
+        }
+        
+        // Si hay direcciones pero no ciudades, marcar para que el asistente pregunte
+        if ($tieneDireccion) {
+            Log::warning('⚠️ DIRECCIONES DETECTADAS SIN CIUDAD - Asistente debe preguntar', [
+                'direccion' => $direccionEncontrada,
+                'texto' => substr($text, 0, 200)
+            ]);
+            
+            return [
+                'requiere_aclaracion_ciudades' => true,
+                'direccion_detectada' => true,
+                'direccion_encontrada' => $direccionEncontrada,
+                'mensaje_asistente' => 'He detectado direcciones en tu solicitud, pero necesito que me confirmes las ciudades. ¿Cuál es la ciudad de origen y la ciudad de destino?'
+            ];
+        }
+        
         Log::warning('⚠️ No se detectaron ciudades en el texto', [
             'texto' => substr($text, 0, 200)
         ]);
@@ -8839,7 +9295,7 @@ class MCPAssistantService
     private static function extractCityFromSegment($segmento)
     {
         // Lista de ciudades colombianas principales
-        $ciudades = 'CARTAGENA|BARRANQUILLA|BOGOT[AÁ]|MEDELL[IÍ]N|CALI|BUCARAMANGA|SANTA\s+MARTA|BUENAVENTURA|PEREIRA|MANIZALES|IBAGU[EÉ]|C[UÚ]CUTA|VILLAVICENCIO|PASTO|ARMENIA|NEIVA|MONTER[IÍ]A|SINCELEJO|POPAY[AÁ]N|TUNJA|VALLEDUPAR|RIOHACHA|QUIBD[OÓ]|FLORENCIA|MOCOA|LETICIA|YOPAL|SAN\s+ANDR[EÉ]S|FUNZA|COTA|MADRID|SOACHA|ZIPAQUIR[AÁ]|GIRARDOT|PALMIRA|YUMBO|TURBACO|SOLEDAD|MALAMBO|BARRANCABERMEJA|DUITAMA|SOGAMOSO|BUGA|CARTAGO|DOSQUEBRADAS|ENVIGADO|BELLO|SABANETA|RIONEGRO|ITAG[UÜ][IÍ]';
+        $ciudades = 'CARTAGENA|BARRANQUILLA|BOGOT[AÁ]|MEDELL[IÍ]N|CALI|BUCARAMANGA|SANTA\s+MARTA|BUENAVENTURA|PEREIRA|MANIZALES|IBAGU[EÉ]|C[UÚ]CUTA|VILLAVICENCIO|PASTO|ARMENIA|NEIVA|MONTER[IÍ]A|SINCELEJO|POPAY[AÁ]N|TUNJA|VALLEDUPAR|RIOHACHA|QUIBD[OÓ]|FLORENCIA|MOCOA|LETICIA|YOPAL|SAN\s+ANDR[EÉ]S|FUNZA|COTA|MADRID|SOACHA|ZIPAQUIR[AÁ]|GIRARDOT|PALMIRA|YUMBO|TURBACO|SOLEDAD|MALAMBO|BARRANCABERMEJA|DUITAMA|SOGAMOSO|BUGA|CARTAGO|DOSQUEBRADAS|ENVIGADO|BELLO|SABANETA|RIONEGRO|ITAG[UÜ][IÍ]|CURUMAN[IÍ]|AGUACHICA|CODAZZI|BOSCONIA|CHIRIGUAN[AÁ]|OCA[ÑN]A|PAMPLONA|PITALITO|GARZ[OÓ]N|ACAC[IÍ]AS|GRANADA|PLANETA\s+RICA|CERET[EÉ]|SAHAG[UÚ]N|LORICA|MONTEL[IÍ]BANO|TIERRALTA|PUERTO\s+BERR[IÍ]O|L[IÍ]BANO|CHAPARRAL|LA\s+PLATA|IPIALES|TUMACO|CUMARIBO|MAICAO|AGUAZUL|COROZAL|PUERTO\s+CARRE[NÑ]O|SAN\s+JOS[EÉ]\s+DEL\s+GUAVIARE|PUERTO\s+IN[IÍ]RIDA|MIT[UÚ]';
         
         // 🆕 Mapeo de nombres de aeropuertos/puertos conocidos → ciudad
         $aeropuertoPuerto = [
@@ -8869,16 +9325,35 @@ class MCPAssistantService
         }
         
         // Buscar mención directa de ciudad tras departamento
-        if (preg_match('/,\s*([^,]+?),?\s*(?:Atl[aá]ntico|Bol[ií]var|Cundinamarca|Antioquia|Valle|Santander)/ui', $segmento, $mDepto)) {
+        // 🔧 FIX: Soportar separadores como coma, guión, dash (–, —, -) y barra (/)
+        // 🆕 FIX: Incluir TODOS los 32 departamentos de Colombia
+        $departamentosPattern = 'Atl[aá]ntico|Bol[ií]var|Cundinamarca|Antioquia|Valle(?:\s+del\s+Cauca)?|Santander|Boyac[aá]|Tolima|Nari[ñn]o|Cauca|C[oó]rdoba|Magdalena|Cesar|Sucre|Meta|Risaralda|Caldas|Quind[ií]o|Huila|Norte\s+de\s+Santander|Vichada|Guain[ií]a|Vaup[eé]s|Amazonas|Putumayo|Arauca|Casanare|Guaviare|Caquet[aá]|Choc[oó]|La\s+Guajira|San\s+Andr[eé]s';
+        if (preg_match('/([^,\-–—\/]+?)\s*[,\-–—\/]\s*(?:' . $departamentosPattern . ')\s*$/ui', $segmento, $mDepto)) {
             $posibleCiudad = trim($mDepto[1]);
+            // Primero intentar con lista conocida
             if (preg_match('/\b(' . $ciudades . ')\b/ui', $posibleCiudad, $m)) {
                 return mb_strtoupper(trim($m[1]));
             }
+            // 🆕 FIX: Si el texto antes del departamento parece un nombre de municipio (1-3 palabras, sin números ni keywords de dirección), CONFIAR en él
+            $posibleCiudad = preg_replace('/^.*[,\-–—\/]\s*/', '', $posibleCiudad); // Tomar última parte
+            $posibleCiudad = trim($posibleCiudad);
+            if (!empty($posibleCiudad) && mb_strlen($posibleCiudad) >= 3 && mb_strlen($posibleCiudad) <= 40
+                && !preg_match('/\d|calle|carrera|cra|cll|autopista|km|bodega|avenida|transversal|diagonal|manzana|lote/ui', $posibleCiudad)) {
+                Log::info('🏙️ extractCityFromSegment: Ciudad aceptada por estar antes de departamento', ['ciudad' => $posibleCiudad]);
+                return mb_strtoupper(trim($posibleCiudad));
+            }
         }
         
-        // Buscar cualquier ciudad conocida en el texto
-        if (preg_match('/\b(' . $ciudades . ')\b/ui', $segmento, $m)) {
-            return mb_strtoupper(trim($m[1]));
+        // 🆕 FIX: Buscar "Aeropuerto CIUDAD" o "Puerto CIUDAD"
+        if (preg_match('/(?:Aeropuerto|Puerto)\s+(?:de\s+)?(' . $ciudades . ')/ui', $segmento, $mAero)) {
+            return mb_strtoupper(trim($mAero[1]));
+        }
+        
+        // 🆕 FIX: Si hay múltiples ciudades en el texto, preferir la ÚLTIMA (más específica / cercana al departamento)
+        if (preg_match_all('/\b(' . $ciudades . ')\b/ui', $segmento, $mAll)) {
+            // Retornar la última ciudad encontrada (más específica en dirección)
+            $lastCity = end($mAll[1]);
+            return mb_strtoupper(trim($lastCity));
         }
         
         return null;
@@ -9238,6 +9713,64 @@ class MCPAssistantService
         
         $origenes = [];
         $destinos = [];
+        
+        // 🆕 Patrón -2: "ORIGEN 1 : X ORIGEN 2 : Y ... DESTINO : Z" (orígenes numerados con destino común)
+        // Ejemplo: "ORIGEN 1 : bogotá ORIGEN 2 : cartagena DESTINO : bogotá"
+        if (preg_match_all('/ORIGEN\s*\d*\s*:\s*([^\n]+?)(?=ORIGEN\s*\d|DESTINO|DETALLES|$)/ui', $mensaje, $mOrigenesNum)) {
+            $origenesNum = [];
+            foreach ($mOrigenesNum[1] as $origenRaw) {
+                $origenTrim = trim($origenRaw);
+                // Limpiar trailing whitespace, commas etc.
+                $origenTrim = preg_replace('/[\s,;]+$/', '', $origenTrim);
+                if (!empty($origenTrim)) {
+                    // Extraer solo la ciudad (primera palabra significativa)
+                    $ciudadOrigen = self::normalizeCityName($origenTrim);
+                    if ($ciudadOrigen && self::esCiudadColombiana($ciudadOrigen)) {
+                        $origenesNum[] = $ciudadOrigen;
+                    } elseif ($ciudadOrigen) {
+                        // Intentar extraer ciudad del segmento
+                        $ciudadExtraida = self::extractCityFromSegment($origenTrim);
+                        if ($ciudadExtraida) {
+                            $origenesNum[] = $ciudadExtraida;
+                        }
+                    }
+                }
+            }
+            
+            // Detectar destino común
+            $destinoComun = null;
+            if (preg_match('/DESTINO\s*:\s*([^\n]+?)(?=DETALLES|ORIGEN|$)/ui', $mensaje, $mDestinoComun)) {
+                $destinoRaw = trim($mDestinoComun[1]);
+                // El destino puede tener dirección adjunta: "bogotá a este dirección: Calle 17..."
+                // Extraer solo la ciudad (primera parte antes de "a este", "direccion", etc.)
+                if (preg_match('/^([a-záéíóúñ\s]+?)\s+(?:a\s+est[ea]|direcci[oó]n|calle|carrera|cra|cll|av|transversal|diagonal|kr)/ui', $destinoRaw, $mCiudadDest)) {
+                    $destinoComun = self::normalizeCityName(trim($mCiudadDest[1]));
+                } else {
+                    $destinoComun = self::normalizeCityName($destinoRaw);
+                }
+                // Validar que sea ciudad
+                if ($destinoComun && !self::esCiudadColombiana($destinoComun)) {
+                    $ciudadExtraida = self::extractCityFromSegment($destinoRaw);
+                    if ($ciudadExtraida) {
+                        $destinoComun = $ciudadExtraida;
+                    }
+                }
+            }
+            
+            if (count($origenesNum) >= 2 && $destinoComun) {
+                Log::info('🌍 Múltiples orígenes numerados detectados (ORIGEN 1/2/N)', [
+                    'origenes' => $origenesNum,
+                    'destino' => $destinoComun,
+                    'total_rutas' => count($origenesNum)
+                ]);
+                
+                return [
+                    'origenes' => $origenesNum,
+                    'destinos' => [$destinoComun],
+                ];
+            }
+            // También: 1 origen numerado + destino = ruta única, no multi
+        }
         
         // 🆕 Patrón -1: "ORIGEN: X ... PRIMER DESTINO: Y ... SEGUNDO DESTINO: Z"
         // Es un patrón de ENTREGA DIVIDIDA (split delivery): un solo origen con múltiples destinos numerados
@@ -9655,6 +10188,36 @@ class MCPAssistantService
         
         // Patrón 3: Buscar múltiples orígenes/destinos de forma independiente
         // "origen cali, cartagena y bogota, destino medellin"
+        // 🆕 Patrón 3B: "origen X, origen Y, destino Z" (palabra "origen" repetida antes de cada ciudad)
+        $origenesDetectados = [];
+        $destinosDetectados = [];
+        
+        // 🆕 PRIMERO: Detectar patrón con "origen" repetido: "origen cali, origen medellin, destino ipiales"
+        if (preg_match_all('/\borigen\s+([a-záéíóúñ]+(?:\s+(?!y\s|destino\b)[a-záéíóúñ]+){0,2})/ui', $mensaje, $mOrigenesRepetidos)) {
+            foreach ($mOrigenesRepetidos[1] as $origenRaw) {
+                $origen = self::normalizeCityName(trim($origenRaw));
+                if ($origen && self::isValidCityFragment($origenRaw)) {
+                    $origenesDetectados[] = $origen;
+                }
+            }
+        }
+        
+        if (count($origenesDetectados) >= 2 && preg_match('/destino\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/ui', $mensaje, $mDestinoRep)) {
+            $destino = self::normalizeCityName(trim($mDestinoRep[1]));
+            if ($destino && self::isValidCityFragment(trim($mDestinoRep[1]))) {
+                $destinosDetectados = [$destino];
+                
+                Log::info('🌍 Múltiples orígenes detectados (patrón 3B - origen repetido)', [
+                    'origenes' => $origenesDetectados,
+                    'destinos' => $destinosDetectados,
+                    'total_rutas' => count($origenesDetectados)
+                ]);
+                
+                return ['origenes' => $origenesDetectados, 'destinos' => $destinosDetectados];
+            }
+        }
+        
+        // Patrón 3 original: "origen cali, cartagena y bogota, destino medellin"
         $origenesDetectados = [];
         $destinosDetectados = [];
         
@@ -11030,6 +11593,47 @@ class MCPAssistantService
             $empaqueInstruction .= "✓ Llama get_empaques() para validar y obtener ID\n";
         }
 
+        // 🆕 INSTRUCCIÓN ESPECIAL: Cuando solo hay direcciones sin ciudades identificables
+        $ciudadesAclaracionInstruction = '';
+        if (isset($extractedData['requiere_aclaracion_ciudades']) && $extractedData['requiere_aclaracion_ciudades']) {
+            $ciudadesAclaracionInstruction = "\n\n⚠️ ATENCIÓN - CIUDADES NO DETECTADAS:\n";
+            $ciudadesAclaracionInstruction .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+            $ciudadesAclaracionInstruction .= "El usuario proporcionó direcciones/ubicaciones pero NO se identificaron las CIUDADES.\n\n";
+            
+            // Agregar contexto de lo que se detectó
+            if (!empty($extractedData['origen_texto_detectado'])) {
+                $ciudadesAclaracionInstruction .= "📍 Se detectó en Origen: \"{$extractedData['origen_texto_detectado']}\"\n";
+            }
+            if (!empty($extractedData['destino_texto_detectado'])) {
+                $ciudadesAclaracionInstruction .= "📍 Se detectó en Destino: \"{$extractedData['destino_texto_detectado']}\"\n";
+            }
+            if (!empty($extractedData['direccion_encontrada'])) {
+                $ciudadesAclaracionInstruction .= "📍 Dirección encontrada: \"{$extractedData['direccion_encontrada']}\"\n";
+            }
+            
+            $ciudadesAclaracionInstruction .= "\nDEBES preguntar al usuario:\n\n";
+            $ciudadesAclaracionInstruction .= "🔴 PREGUNTA OBLIGATORIA (copia exactamente):\n";
+            $ciudadesAclaracionInstruction .= "\"He detectado información de ubicación en tu solicitud. Para continuar, necesito que me confirmes las ciudades específicas:\n\n";
+            $ciudadesAclaracionInstruction .= "¿Cuál es la **ciudad de ORIGEN**?\n";
+            $ciudadesAclaracionInstruction .= "¿Cuál es la **ciudad de DESTINO**?\"\n\n";
+            $ciudadesAclaracionInstruction .= "⚠️ IMPORTANTE - REGLAS ABSOLUTAS:\n";
+            $ciudadesAclaracionInstruction .= "- NUNCA llames a create_cotizacion sin tener ciudades confirmadas por el usuario\n";
+            $ciudadesAclaracionInstruction .= "- NUNCA inventes o adivines ciudades (NO uses aeropuertos, nombres de empresas o direcciones como ciudades)\n";
+            $ciudadesAclaracionInstruction .= "- NUNCA pongas origen ni destino en tu respuesta JSON\n";
+            $ciudadesAclaracionInstruction .= "- NO proceses la cotización hasta obtener las ciudades\n";
+            $ciudadesAclaracionInstruction .= "- NO llenes los campos de origen/destino con direcciones, nombres de empresas o aeropuertos\n";
+            $ciudadesAclaracionInstruction .= "- ESPERA que el usuario responda con los nombres de las ciudades\n";
+            $ciudadesAclaracionInstruction .= "- Los campos origen y destino deben quedar EN BLANCO en el formulario\n";
+            $ciudadesAclaracionInstruction .= "- NO uses búsqueda de productos ni otros servicios hasta tener las ciudades\n";
+            $ciudadesAclaracionInstruction .= "- Tu ÚNICA acción es preguntar las ciudades al usuario\n";
+            $ciudadesAclaracionInstruction .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+            
+            Log::info('🚨 Prompt con instrucción de aclaración de ciudades activado', [
+                'origen_detectado' => $extractedData['origen_texto_detectado'] ?? 'N/A',
+                'destino_detectado' => $extractedData['destino_texto_detectado'] ?? 'N/A'
+            ]);
+        }
+
         // Construir instrucción con datos pre-extraídos
         $dataInstruction = '';
         $missingFields = []; // 🆕 Track de campos faltantes
@@ -11103,11 +11707,19 @@ class MCPAssistantService
                 'producto' => 'Producto'
             ];
             
+            // 🚨 FIX: Si requiere_aclaracion_ciudades, NO mostrar origen/destino como datos capturados
+            $skipCityKeysInPrompt = !empty($data['requiere_aclaracion_ciudades']) 
+                ? ['origen', 'destino', 'ciudad_origen', 'ciudad_destino', 'requiere_aclaracion_ciudades', 'origen_texto_detectado', 'destino_texto_detectado', 'direccion_encontrada', 'mensaje_asistente']
+                : [];
+            
             foreach ($data as $key => $value) {
                 if ($key === 'empaque_id') continue; // Ya mostrado arriba
                 
                 // 💵 No mostrar flag valor_en_usd como dato capturado
                 if ($key === 'valor_en_usd') continue;
+                
+                // 🚨 FIX: Saltar campos de ciudades si requiere aclaración
+                if (in_array($key, $skipCityKeysInPrompt)) continue;
                 
                 // Convertir valores a string de forma segura
                 if (is_array($value)) {
@@ -11179,7 +11791,7 @@ class MCPAssistantService
 🤖 AGENTE INTELIGENTE CONALCA - SISTEMA EN PRODUCCIÓN
 Eres un agente autónomo especializado en logística de transporte de carga en Colombia.
 ESTÁS CONECTADO A BASE DE DATOS REAL - PUEDES CREAR COTIZACIONES REALES.
-{$empaqueInstruction}{$multiRouteInstruction}{$dataInstruction}
+{$empaqueInstruction}{$ciudadesAclaracionInstruction}{$multiRouteInstruction}{$dataInstruction}
 
 🚨 REGLAS CRÍTICAS - NUNCA VIOLAR:
 1. ⛔ NUNCA digas "no puedo generar cotizaciones" - SÍ PUEDES, estás en producción
@@ -11489,21 +12101,6 @@ Falta: cantidad y valor declarado. ¿Cuántas unidades y valor?"
 EOT;
 
         return $basePrompt;
-    }
-    
-    /**
-     * Eliminar acentos de una cadena
-     * @param string $str
-     * @return string
-     */
-    private static function removeAccents($str)
-    {
-        $replacements = [
-            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
-            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
-            'ñ' => 'n', 'Ñ' => 'N'
-        ];
-        return strtr($str, $replacements);
     }
 }
  
