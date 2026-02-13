@@ -475,6 +475,22 @@ ANTES de extraer datos, verifica si el mensaje solicita MÚLTIPLES RUTAS:
   → Ruta 1: origen=Cartagena, destino=Cartagena, cantidad=5
   → Ruta 2: origen=Cartagena, destino=Barranquilla, cantidad=7
   ⚠️ IMPORTANTE: El origen y primer destino PUEDEN ser la misma ciudad (entrega local)
+- MÚLTIPLES ORÍGENES SEPARADOS: Si el campo ORIGEN contiene VARIAS ciudades separadas por " - ", " / ", " Y ", " y " o enumeradas, 
+  crear UNA RUTA POR CADA ORIGEN, todas con el mismo destino y mismos datos de carga.
+  Patrones:
+  - "ORIGEN: CTG - BAQ" → 2 orígenes: CARTAGENA y BARRANQUILLA → 2 rutas
+  - "ORIGEN: BOG / MED / CLO" → 3 orígenes: BOGOTA, MEDELLIN, CALI → 3 rutas
+  - "ORIGEN: CARTAGENA - BARRANQUILLA" → 2 orígenes → 2 rutas
+  - "VALIDAR LOS DOS PUERTOS" o "(VALIDAR AMBOS)" son indicaciones de que AMBOS orígenes son válidos → crear ambas rutas
+  ⚠️ Si dice "ORIGEN: CTG - BAQ (VALIDAR LOS DOS PUERTOS)" → SON DOS ORÍGENES SEPARADOS, NO una sola ruta CTG→BAQ
+  ⚠️ Expandir las abreviaturas: CTG=CARTAGENA, BAQ=BARRANQUILLA, BOG=BOGOTA, etc.
+  Ejemplo completo:
+  "ORIGEN : CTG - BAQ (VALIDAR LOS DOS PUERTOS) DESTINO : Barranquilla"
+  → multi_ruta: true, total_rutas: 2
+  → Ruta 1: origen=CARTAGENA, destino=BARRANQUILLA
+  → Ruta 2: origen=BARRANQUILLA, destino=BARRANQUILLA
+- MÚLTIPLES DESTINOS SEPARADOS: Lo mismo aplica si el campo DESTINO contiene varias ciudades separadas.
+  - "DESTINO: MED - CLO" → 2 destinos: MEDELLIN y CALI → 2 rutas con el mismo origen
 
 ⚠️ CUÁNDO NO ES MULTI-RUTA (CRÍTICO - LEER PRIMERO):
 - Una dirección con "Ciudad, País" (ej: "Bogotá, Colombia") es UN SOLO origen, NO dos rutas
@@ -720,6 +736,30 @@ Output: {"multi_ruta":false,"origen":"CARTAGENA","destino":"BUCARAMANGA","peso":
 
 Input: "3 contenedores de 40 pies con 18.000 kg sin tara de Bogotá a Cartagena, maquinaria, valor $120.000.000"
 Output: {"multi_ruta":false,"origen":"BOGOTA","destino":"CARTAGENA","peso":18000,"cantidad":3,"empaque":"CONTENEDOR 40","producto":"maquinaria","vehiculo":"TRACTOCAMION","contenedor":"3X40' GP","valor":120000000,"incluye_tara":false,"confidence":0.95}
+
+EJEMPLO MULTI-RUTA POR MÚLTIPLES ORÍGENES SEPARADOS:
+Input: "ORIGEN : CTG - BAQ (VALIDAR LOS DOS PUERTOS) DESTINO : Boris Urrego Bolivar Nuvia Smiles Colombia SAS ZONA FRANCA ZOFIA CL 3 MZ 13, BODEGA 92B-07 CARRT LA CORDIALIDAD- ZONA FRANCA, ZOFIA BARRANQUILLA DETALLES DE LA CARGA CNT: 1x20'ST PESO : 2000 kilogramos +TARA VOLUMEN : 11.37 cbm MERCANCIA Líquido adhesivo"
+Output: {
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {"origen":"CARTAGENA","destino":"BARRANQUILLA","peso":2000,"cantidad":1,"empaque":"CONTENEDOR 20","producto":"Líquido adhesivo","vehiculo":"TRACTOCAMION","contenedor":"1X20' ST","valor":null,"incluye_tara":false},
+    {"origen":"BARRANQUILLA","destino":"BARRANQUILLA","peso":2000,"cantidad":1,"empaque":"CONTENEDOR 20","producto":"Líquido adhesivo","vehiculo":"TRACTOCAMION","contenedor":"1X20' ST","valor":null,"incluye_tara":false}
+  ],
+  "confidence": 0.9
+}
+
+EJEMPLO MULTI-RUTA POR MÚLTIPLES ORÍGENES (OTRO FORMATO):
+Input: "ORIGEN: BOG / MED DESTINO: BUENAVENTURA PESO: 5000 kg 100 cajas de textiles"
+Output: {
+  "multi_ruta": true,
+  "total_rutas": 2,
+  "rutas": [
+    {"origen":"BOGOTA","destino":"BUENAVENTURA","peso":5000,"cantidad":100,"empaque":"cajas","producto":"textiles","vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":false},
+    {"origen":"MEDELLIN","destino":"BUENAVENTURA","peso":5000,"cantidad":100,"empaque":"cajas","producto":"textiles","vehiculo":null,"contenedor":null,"valor":null,"incluye_tara":false}
+  ],
+  "confidence": 0.9
+}
 EOT;
     }
 

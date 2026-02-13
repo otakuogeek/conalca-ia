@@ -1402,7 +1402,7 @@ const ChatModal = ({
             tipo_contenedor: rutaNormalizada.contenedor || null,
             producto: rutaNormalizada.producto || null,
             tipo_producto: rutaNormalizada.producto || null,
-            tipo_embajale: rutaNormalizada.empaque || rutaNormalizada.contenedor || null,
+            tipo_embajale: rutaNormalizada.empaque || null,
             empaque: rutaNormalizada.empaque || null,
             valorMercancia: rutaNormalizada.valor_en_usd ? null : (rutaNormalizada.valor || null),
             valor_declarado: rutaNormalizada.valor_en_usd ? null : (rutaNormalizada.valor || null),
@@ -1452,6 +1452,11 @@ const ChatModal = ({
       if (result.data?.extracted && Object.keys(result.data.extracted).length > 0) {
         const extractedData = result.data.extracted;
         
+        // 🔧 FIX: Obtener campos faltantes para NO mostrarlos en el panel izquierdo
+        // Si un campo está en "missing", no se debe poblar en el formulario hasta que el usuario responda
+        const missingFields = result.data?.missing || [];
+        console.log('📋 Campos faltantes (missing):', missingFields);
+        
         // 🔧 FIX: Normalizar datos (ciudades a MAYÚSCULAS, aplicar tara si necesario)
         const datosNormalizados = normalizeRouteData(extractedData, messageText);
         
@@ -1461,6 +1466,20 @@ const ChatModal = ({
         // Normalizar ciudades a MAYÚSCULAS
         const origenNorm = normalizeCiudad(datosNormalizados.origen || currentData.ciudadOrigen || currentData.ciudad_origen);
         const destinoNorm = normalizeCiudad(datosNormalizados.destino || currentData.ciudadDestino || currentData.ciudad_destino);
+
+        // 🔧 FIX: Si empaque está en los campos faltantes, NO usar contenedor como fallback para embalaje
+        const empaqueIsMissing = missingFields.includes('empaque');
+        const productoIsMissing = missingFields.includes('producto');
+        
+        // Solo usar empaque/contenedor si NO están marcados como faltantes
+        const empaqueValue = empaqueIsMissing ? null : (datosNormalizados.empaque || currentData.empaque || null);
+        const contenedorValue = datosNormalizados.contenedor || currentData.contenedor || null;
+        const embalaje = empaqueIsMissing ? null : (datosNormalizados.empaque || currentData.empaque || null);
+        const productoValue = productoIsMissing ? null : (datosNormalizados.producto || currentData.producto || null);
+        
+        if (empaqueIsMissing) {
+          console.log('📦 Empaque está en campos faltantes → NO se muestra en el panel hasta que el usuario responda');
+        }
 
         const mappedData = {
           ciudadOrigen: origenNorm,
@@ -1473,12 +1492,12 @@ const ChatModal = ({
           peso_kg: pesoValue,
           cantidadMercancia: datosNormalizados.cantidad || currentData.cantidadMercancia || currentData.cantidad_unidades || null,
           cantidad: datosNormalizados.cantidad || currentData.cantidadMercancia || currentData.cantidad || null,
-          contenedor: datosNormalizados.contenedor || currentData.contenedor || null,
-          producto: datosNormalizados.producto || currentData.producto || null,
-          tipo_producto: datosNormalizados.producto || currentData.tipo_producto || null,
-          tipo_embajale: datosNormalizados.contenedor || currentData.tipo_embajale || currentData.empaque || null,
-          tipo_embalaje: datosNormalizados.contenedor || currentData.tipo_embalaje || currentData.empaque || null,
-          empaque: datosNormalizados.empaque || currentData.empaque || null,
+          contenedor: contenedorValue,
+          producto: productoValue,
+          tipo_producto: productoValue,
+          tipo_embajale: embalaje,
+          tipo_embalaje: embalaje,
+          empaque: empaqueValue,
           // 💵 Si valor_en_usd, NO mapear el valor
           valorMercancia: extractedData.valor_en_usd ? null : (datosNormalizados.valor || currentData.valorMercancia || currentData.valor_mercancia || null),
           valor_declarado: extractedData.valor_en_usd ? null : (datosNormalizados.valor || currentData.valorMercancia || currentData.valor_declarado || null),
@@ -2094,9 +2113,9 @@ const ChatModal = ({
               peso_kg: pesoValue,
               cantidadMercancia: route.cantidad || route.cantidad_unidades || null,
               cantidad: route.cantidad || route.cantidad_unidades || null,
-              contenedor: route.contenedor || route.tipo_contenedor || route.empaque || null,
-              tipo_embajale: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embajale || null,
-              tipo_embalaje: route.contenedor || route.tipo_contenedor || route.empaque || route.tipo_embalaje || null,
+              contenedor: route.contenedor || route.tipo_contenedor || null,
+              tipo_embajale: route.empaque || route.tipo_embajale || null,
+              tipo_embalaje: route.empaque || route.tipo_embalaje || null,
               producto: route.producto_mencionado || route.producto || route.tipo_producto || null, // 🔥 Priorizar producto_mencionado (usuario) NUNCA producto_nombre (BD)
               tipo_producto: route.producto_mencionado || route.producto || route.tipo_producto || null,
               producto_codigo: route.producto_codigo || null,

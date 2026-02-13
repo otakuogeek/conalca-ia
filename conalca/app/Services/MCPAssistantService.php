@@ -9787,6 +9787,97 @@ class MCPAssistantService
             // También: 1 origen numerado + destino = ruta única, no multi
         }
         
+        // 🆕 Patrón -1.5: "ORIGEN : CTG - BAQ" (múltiples ciudades/códigos separados por guión, barra o "y" en un solo campo ORIGEN)
+        // Ejemplo: "ORIGEN : CTG - BAQ (VALIDAR LOS DOS PUERTOS) DESTINO : ... BARRANQUILLA"
+        // Ejemplo: "ORIGEN: BOG / MED DESTINO: BUENAVENTURA"
+        // Ejemplo: "ORIGEN: CARTAGENA - BARRANQUILLA DESTINO: BOGOTA"
+        if (preg_match('/ORIGEN\s*:\s*(.+?)(?=DESTINO|DETALLES|MERCANCIA|PESO|CNT|$)/uis', $mensaje, $mOrigenMulti)) {
+            $origenTexto = trim($mOrigenMulti[1]);
+            
+            // Limpiar indicaciones como "(VALIDAR LOS DOS PUERTOS)", "(AMBOS)", etc.
+            $origenTextoLimpio = preg_replace('/\(.*?\)/', '', $origenTexto);
+            $origenTextoLimpio = trim($origenTextoLimpio);
+            
+            // Verificar si contiene separadores de múltiples ciudades: " - ", " / ", " Y " (pero NO si es dirección)
+            $esOrigenDireccion = preg_match('/(?:Cra|Cll|Carrera|Calle|Av|Avenida|Diagonal|Transversal|#|\d+\s*-\s*\d+|Km\s*\.?\s*\d)/ui', $origenTextoLimpio);
+            
+            if (!$esOrigenDireccion && preg_match('/^([A-Za-záéíóúñÁÉÍÓÚÑ\s]+?)\s*(?:\s-\s|\s\/\s|\s[yY]\s)\s*([A-Za-záéíóúñÁÉÍÓÚÑ\s]+?)$/u', $origenTextoLimpio, $mMultiOrigen)) {
+                $origen1Raw = trim($mMultiOrigen[1]);
+                $origen2Raw = trim($mMultiOrigen[2]);
+                
+                $origen1 = self::normalizeCityName($origen1Raw);
+                $origen2 = self::normalizeCityName($origen2Raw);
+                
+                // Validar que ambos son ciudades colombianas conocidas o códigos válidos
+                $origen1EsCiudad = $origen1 && self::esCiudadColombiana($origen1);
+                $origen2EsCiudad = $origen2 && self::esCiudadColombiana($origen2);
+                
+                if ($origen1EsCiudad && $origen2EsCiudad) {
+                    // Ahora extraer el destino
+                    $destinoMulti = null;
+                    if (preg_match('/DESTINO\s*:\s*(.+?)(?=DETALLES|ORIGEN|PESO|CNT|MERCANCIA|$)/uis', $mensaje, $mDestinoMulti)) {
+                        $destinoRaw = trim($mDestinoMulti[1]);
+                        $destinoMulti = self::extractCityFromSegment($destinoRaw);
+                        if (!$destinoMulti) {
+                            $destinoMulti = self::normalizeCityName($destinoRaw);
+                        }
+                    }
+                    
+                    if ($destinoMulti) {
+                        Log::info('🌍 Múltiples orígenes en un solo campo ORIGEN detectados (patrón -1.5)', [
+                            'origenes' => [$origen1, $origen2],
+                            'destino' => $destinoMulti,
+                            'texto_original' => $origenTexto,
+                            'total_rutas' => 2
+                        ]);
+                        
+                        return [
+                            'origenes' => [$origen1, $origen2],
+                            'destinos' => [$destinoMulti],
+                        ];
+                    }
+                }
+            }
+            
+            // También manejar 3+ orígenes: "ORIGEN: CTG / BAQ / BOG"
+            if (!$esOrigenDireccion) {
+                $partes = preg_split('/\s*(?:\s-\s|\s\/\s|\s[yY]\s)\s*/', $origenTextoLimpio);
+                if (count($partes) >= 3) {
+                    $origenesMulti = [];
+                    foreach ($partes as $parte) {
+                        $ciudad = self::normalizeCityName(trim($parte));
+                        if ($ciudad && self::esCiudadColombiana($ciudad)) {
+                            $origenesMulti[] = $ciudad;
+                        }
+                    }
+                    
+                    if (count($origenesMulti) >= 3) {
+                        $destinoMulti3 = null;
+                        if (preg_match('/DESTINO\s*:\s*(.+?)(?=DETALLES|ORIGEN|PESO|CNT|MERCANCIA|$)/uis', $mensaje, $mDestMulti3)) {
+                            $destinoRaw3 = trim($mDestMulti3[1]);
+                            $destinoMulti3 = self::extractCityFromSegment($destinoRaw3);
+                            if (!$destinoMulti3) {
+                                $destinoMulti3 = self::normalizeCityName($destinoRaw3);
+                            }
+                        }
+                        
+                        if ($destinoMulti3) {
+                            Log::info('🌍 3+ orígenes en un solo campo ORIGEN detectados (patrón -1.5)', [
+                                'origenes' => $origenesMulti,
+                                'destino' => $destinoMulti3,
+                                'total_rutas' => count($origenesMulti)
+                            ]);
+                            
+                            return [
+                                'origenes' => $origenesMulti,
+                                'destinos' => [$destinoMulti3],
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+        
         // 🆕 Patrón -1: "ORIGEN: X ... PRIMER DESTINO: Y ... SEGUNDO DESTINO: Z"
         // Es un patrón de ENTREGA DIVIDIDA (split delivery): un solo origen con múltiples destinos numerados
         // Cada destino puede tener su propia cantidad
