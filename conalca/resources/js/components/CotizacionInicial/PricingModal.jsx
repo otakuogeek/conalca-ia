@@ -1,5 +1,5 @@
 // resources/js/components/CotizacionInicial/PricingModal.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import { 
@@ -9,7 +9,7 @@ import {
   fetchPercentageSettings,
   fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
-import { FaSpinner, FaInfoCircle } from 'react-icons/fa';
+import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt } from 'react-icons/fa';
 
 const PricingModal = ({ 
   onClose, 
@@ -34,6 +34,7 @@ const PricingModal = ({
   const [vehicleGuide, setVehicleGuide] = useState([]);
   const [loadingGuide, setLoadingGuide] = useState(false);
   const [guideError, setGuideError] = useState(null);
+  const [removedReturnRoutes, setRemovedReturnRoutes] = useState([]);
   const [rentabilityDefaults, setRentabilityDefaults] = useState({
     min: 17,
     avg: 24,
@@ -55,6 +56,9 @@ const PricingModal = ({
   }, [percentageSettings.min, rentabilityDefaults.min]);
     
   const showBlockingSpinner = loadingPricings || loadingSuggestions;
+
+  // Track whether return routes (devolución) for import containers have been injected
+  const returnRoutesInjected = useRef(false);
 
   const routesSignature = useMemo(() => (
     JSON.stringify(
@@ -174,13 +178,52 @@ const PricingModal = ({
 const loadPricingsForRoutes = async () => {
   setLoadingPricings(true);
   try {
+    // --- Auto-inject return (devolución) routes for IMPORTACION with containers ---
+    let routesToProcess = [...quoteData];
+    const isImport = (clientData?.operationType || '').toUpperCase() === 'IMPORTACION';
+
+    if (!returnRoutesInjected.current && isImport) {
+      const withReturns = [];
+      quoteData.forEach((route) => {
+        withReturns.push(route);
+        const empaque = (route.tipo_embajale || '').toUpperCase();
+        if (empaque.includes('CONTENEDOR') && !route.isReturnRoute) {
+          withReturns.push({
+            ...route,
+            id: null,
+            // Display shows reversed direction (city → port)
+            ciudad_origen: route.ciudad_destino,
+            ciudad_destino: route.ciudad_origen,
+            // Keep original direction for pricing lookup
+            _pricingOrigin: route.ciudad_origen,
+            _pricingDestination: route.ciudad_destino,
+            isReturnRoute: true,
+            select_value: null,
+            vehiculo_requerido: null,
+            porcentaje: route.porcentaje || 0,
+          });
+        }
+      });
+      returnRoutesInjected.current = true;
+      if (withReturns.length > quoteData.length) {
+        routesToProcess = withReturns;
+        setQuoteData(withReturns);
+      }
+    }
+
+    // --- Fetch pricings for each route (with condition for return routes) ---
     const responses = await Promise.all(
-      quoteData.map(route => {
-        if (!route.ciudad_origen || !route.ciudad_destino) return Promise.resolve([]);
+      routesToProcess.map(route => {
+        // For return routes, use the original route direction + condition filter
+        const fetchOrigin = route.isReturnRoute ? route._pricingOrigin : route.ciudad_origen;
+        const fetchDestination = route.isReturnRoute ? route._pricingDestination : route.ciudad_destino;
+
+        if (!fetchOrigin || !fetchDestination) return Promise.resolve([]);
         return fetchLatestPricingsByRoute({
-          origin: route.ciudad_origen,
-          destination: route.ciudad_destino,
+          origin: fetchOrigin,
+          destination: fetchDestination,
           cargo_weight: route.peso_mercancia || 0,
+          condition: route.isReturnRoute ? 'IMPORTACION' : undefined,
         })
           .then(({ data }) => data)
           .catch(error => {
@@ -389,6 +432,99 @@ const requestAISuggestions = async (currentKey) => {
     setPorcentajeGlobal(null);
   };
 
+  // --- Remove a return route (devolución) ---
+  const removeReturnRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route || !route.isReturnRoute) return;
+
+    // Store the removed route with its associated data for recovery
+    setRemovedReturnRoutes(prev => [
+      ...prev,
+      {
+        route: { ...route },
+        pricing: pricings[routeIndex] || [],
+        selectedPricing: selectedPricings[routeIndex] || null,
+        // Track which parent route it belongs to (the route just before it)
+        parentOrigin: route.ciudad_destino, // reversed, so parent origin = return destination
+        parentDestination: route.ciudad_origen,
+      }
+    ]);
+
+    // Remove from quoteData
+    setQuoteData(prev => prev.filter((_, i) => i !== routeIndex));
+
+    // Remove from pricings array
+    setPricings(prev => prev.filter((_, i) => i !== routeIndex));
+
+    // Rebuild selectedPricings with updated indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      let newIdx = 0;
+      Object.keys(prev).sort((a, b) => Number(a) - Number(b)).forEach(key => {
+        const idx = Number(key);
+        if (idx === routeIndex) return; // skip removed
+        newSelected[newIdx] = prev[idx];
+        newIdx++;
+      });
+      return newSelected;
+    });
+  };
+
+  // --- Recover a previously removed return route ---
+  const recoverReturnRoute = (removedIndex) => {
+    const removed = removedReturnRoutes[removedIndex];
+    if (!removed) return;
+
+    // Find where to insert: after the parent route
+    let insertAfter = -1;
+    quoteData.forEach((r, i) => {
+      if (
+        r.ciudad_origen === removed.parentOrigin &&
+        r.ciudad_destino === removed.parentDestination &&
+        !r.isReturnRoute
+      ) {
+        insertAfter = i;
+      }
+    });
+
+    const insertIndex = insertAfter >= 0 ? insertAfter + 1 : quoteData.length;
+
+    // Re-insert into quoteData
+    setQuoteData(prev => [
+      ...prev.slice(0, insertIndex),
+      removed.route,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Re-insert into pricings
+    setPricings(prev => [
+      ...prev.slice(0, insertIndex),
+      removed.pricing,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Rebuild selectedPricings with shifted indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      const sortedKeys = Object.keys(prev).map(Number).sort((a, b) => a - b);
+      sortedKeys.forEach(idx => {
+        if (idx >= insertIndex) {
+          newSelected[idx + 1] = prev[idx];
+        } else {
+          newSelected[idx] = prev[idx];
+        }
+      });
+      // Restore selected pricing for recovered route
+      if (removed.selectedPricing) {
+        newSelected[insertIndex] = removed.selectedPricing;
+      }
+      return newSelected;
+    });
+
+    // Remove from removed list
+    setRemovedReturnRoutes(prev => prev.filter((_, i) => i !== removedIndex));
+  };
+
   const calculateFinalValue = (routeIndex) => {
     const route = quoteData[routeIndex];
     const pricing = selectedPricings[routeIndex];
@@ -476,6 +612,7 @@ const requestAISuggestions = async (currentKey) => {
           pricing_id: selectedPricings[index]?.id ?? null,
           porcentaje: route.porcentaje,
           valor_cliente: route.finalValue,
+          is_return_route: route.isReturnRoute || false,
           // add any extra fields you expect to persist (candado_satelital, etc.)
         }));
 
@@ -688,7 +825,25 @@ const requestAISuggestions = async (currentKey) => {
           {/* Tabla de rutas y precios - mayor espacio */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-3/5">
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex-shrink-0">
-              <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
+                {removedReturnRoutes.length > 0 && (
+                  <div className="flex items-center space-x-2">
+                    {removedReturnRoutes.map((removed, rIdx) => (
+                      <button
+                        key={rIdx}
+                        type="button"
+                        onClick={() => recoverReturnRoute(rIdx)}
+                        className="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 hover:border-blue-300 transition-all duration-200 shadow-sm"
+                        title={`Recuperar devolución ${removed.route.ciudad_origen} → ${removed.route.ciudad_destino}`}
+                      >
+                        <FaUndoAlt className="w-3 h-3 mr-1.5" />
+                        Recuperar {removed.route.ciudad_origen?.substring(0, 3)}-{removed.route.ciudad_destino?.substring(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="overflow-x-auto flex-1 min-h-0">
               <table className="w-full text-sm">
@@ -706,11 +861,29 @@ const requestAISuggestions = async (currentKey) => {
                 <tbody>
                   {quoteData.map((route, index) => {
                     const automaticParameters = getAutomaticParameters(route);
+                    const isReturn = route.isReturnRoute;
                     
                     return (
-                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
+                      <tr key={index} className={`border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150 ${isReturn ? 'bg-blue-50/40' : ''}`}>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
-                          {route.ciudad_origen || '-'}
+                          <div className="flex flex-col">
+                            {isReturn && (
+                              <div className="flex items-center space-x-1 mb-1">
+                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded inline-block w-fit">
+                                  ↩ DEVOLUCIÓN
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeReturnRoute(index)}
+                                  title="Eliminar ruta de devolución"
+                                  className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                                >
+                                  <FaTrashAlt className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                            {route.ciudad_origen || '-'}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
                           {route.ciudad_destino || '-'}
@@ -983,7 +1156,7 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
               return (
                 <div key={index} className="flex flex-col items-center w-full">
                   <div className="text-xs text-gray-500 product-sans mb-1 text-center">
-                    {(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                    {route.isReturnRoute ? '↩ ' : ''}{(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
                   </div>
                   <div className="text-xs font-600 text-orange-600 product-sans text-center">
                     ${Number(finalRoutePrice).toLocaleString()}

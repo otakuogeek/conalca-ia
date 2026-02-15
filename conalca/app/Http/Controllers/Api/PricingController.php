@@ -42,14 +42,21 @@ class PricingController extends Controller
             'origin'        => 'required|string',
             'destination'   => 'required|string',
             'cargo_weight'  => 'nullable|numeric|min:0',
+            'condition'     => 'nullable|string',
         ]);
 
         $capacityMap = DB::table('vehiculos_pricing')
             ->pluck('peso_maximo', 'vehiculo_silogtran');
 
-        $raw = Pricing::where('origin', $validated['origin'])
-            ->where('destination', $validated['destination'])
-            ->orderByDesc('updated_at')      // newest first
+        $query = Pricing::where('origin', $validated['origin'])
+            ->where('destination', $validated['destination']);
+
+        // Filter by condition when provided (e.g. IMPORTACION for return routes)
+        if (!empty($validated['condition'])) {
+            $query->where('condition', $validated['condition']);
+        }
+
+        $raw = $query->orderByDesc('updated_at')      // newest first
             ->orderBy('vehicle_type')        // deterministic
             ->orderByDesc('weight')
             ->get();

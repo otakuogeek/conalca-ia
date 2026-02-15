@@ -573,10 +573,23 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           return list;
                         }, []);
 
+                        const isReturn = route.isReturnRoute || route.is_return_route;
+
                         return (
-                          <tr key={index} className="bg-orange-50 hover:bg-orange-100 transition-colors duration-150">
-                            <td className="border border-gray-200 px-2 py-2 text-center font-medium">{index + 1}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_origen || '-'}</td>
+                          <tr key={index} className={`hover:bg-orange-100 transition-colors duration-150 ${isReturn ? 'bg-blue-50' : 'bg-orange-50'}`}>
+                            <td className="border border-gray-200 px-2 py-2 text-center font-medium">
+                              {isReturn ? (
+                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">↩ DEV</span>
+                              ) : (
+                                index + 1
+                              )}
+                            </td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">
+                              {isReturn && (
+                                <div className="text-[10px] font-semibold text-blue-600 mb-0.5">DEVOLUCIÓN</div>
+                              )}
+                              {route.ciudad_origen || '-'}
+                            </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_requerido || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
