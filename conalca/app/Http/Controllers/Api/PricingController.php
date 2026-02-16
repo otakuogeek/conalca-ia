@@ -43,6 +43,7 @@ class PricingController extends Controller
             'destination'   => 'required|string',
             'cargo_weight'  => 'nullable|numeric|min:0',
             'condition'     => 'nullable|string',
+            'is_return'     => 'nullable|boolean',
         ]);
 
         $capacityMap = DB::table('vehiculos_pricing')
@@ -51,9 +52,25 @@ class PricingController extends Controller
         $query = Pricing::where('origin', $validated['origin'])
             ->where('destination', $validated['destination']);
 
-        // Filter by condition when provided (e.g. IMPORTACION for return routes)
+        // Filter by condition when provided (e.g. IMPORTACION for import routes)
         if (!empty($validated['condition'])) {
             $query->where('condition', $validated['condition']);
+
+            // For return routes: only show DEV CONT options
+            // For main routes: exclude DEV CONT options
+            if (!empty($validated['is_return'])) {
+                $query->where('type_pricing', 'dev_cont');
+            } else {
+                $query->where(function ($q) {
+                    $q->whereNull('type_pricing')
+                       ->orWhere('type_pricing', '!=', 'dev_cont');
+                });
+            }
+        } else {
+            // Exclude special-condition pricings from normal route queries
+            $query->where(function ($q) {
+                $q->whereNull('condition')->orWhere('condition', '');
+            });
         }
 
         $raw = $query->orderByDesc('updated_at')      // newest first

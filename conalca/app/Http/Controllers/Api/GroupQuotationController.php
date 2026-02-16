@@ -14,6 +14,11 @@ class GroupQuotationController extends Controller
         try {
             $user = auth()->user();
 
+            // Si no hay usuario autenticado, devolver vacío
+            if (!$user) {
+                return response()->json(['data' => []]);
+            }
+
             // Si es super admin, no filtramos
             $query = GroupCotization::with([
                 'client',
@@ -25,7 +30,7 @@ class GroupQuotationController extends Controller
             ->orderBy('created_at', 'desc');
             
             // Si NO es super admin, solo le mostramos sus grupos
-            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA') {
+            if (!$user->hasRole('SUPER ADMIN') && !$user->hasRole('GERENTE DE CUENTA')) {
                 $query->where('user_id', $user->id);
             }
 
@@ -113,7 +118,7 @@ class GroupQuotationController extends Controller
             $group = GroupCotization::findOrFail($id);
 
             // Verificar permisos: solo el creador del grupo o admin puede eliminarlo
-            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA' && $group->user_id != $user->id) {
+            if (!$user->hasRole('SUPER ADMIN') && !$user->hasRole('GERENTE DE CUENTA') && $group->user_id != $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No tienes permisos para eliminar este grupo de cotización.'

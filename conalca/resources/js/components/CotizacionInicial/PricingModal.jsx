@@ -211,10 +211,10 @@ const loadPricingsForRoutes = async () => {
       }
     }
 
-    // --- Fetch pricings for each route (with condition for return routes) ---
+    // --- Fetch pricings for each route ---
+    const isImportOp = (clientData?.operationType || '').toUpperCase() === 'IMPORTACION';
     const responses = await Promise.all(
       routesToProcess.map(route => {
-        // For return routes, use the original route direction + condition filter
         const fetchOrigin = route.isReturnRoute ? route._pricingOrigin : route.ciudad_origen;
         const fetchDestination = route.isReturnRoute ? route._pricingDestination : route.ciudad_destino;
 
@@ -222,8 +222,9 @@ const loadPricingsForRoutes = async () => {
         return fetchLatestPricingsByRoute({
           origin: fetchOrigin,
           destination: fetchDestination,
-          cargo_weight: route.peso_mercancia || 0,
-          condition: route.isReturnRoute ? 'IMPORTACION' : undefined,
+          cargo_weight: route.isReturnRoute ? 0 : (route.peso_mercancia || 0),
+          condition: (isImportOp || route.isReturnRoute) ? 'IMPORTACION' : undefined,
+          is_return: route.isReturnRoute ? true : undefined,
         })
           .then(({ data }) => data)
           .catch(error => {
@@ -285,29 +286,51 @@ const requestAISuggestions = async (currentKey) => {
     console.log('[PricingModal] Auto-select suggestions:', suggestions);
 
     Object.entries(suggestions).forEach(([routeIndex, suggestion]) => {
+      const route = quoteData[Number(routeIndex)];
       const routePricings = pricings[routeIndex] || [];
       let pricingForRoute = null;
 
-      // Prefer matching by pricing_id (guarantees exact row)
-      if (suggestion.pricing_id) {
-        pricingForRoute = routePricings.find(
-          p => Number(p.id) === Number(suggestion.pricing_id)
-        );
-      }
-
-      // Fallback: match by vehicle type (and optionally the price) if no ID
-      if (!pricingForRoute) {
+      // For return routes: auto-select based on parent container size
+      if (route?.isReturnRoute) {
+        const parentEmpaque = (route.tipo_embajale || '').toUpperCase();
+        const containerSize = parentEmpaque.includes("40") ? "40'" : "20'";
+        // Find cheapest DEV CNT matching the container size (COMPENSACIÓN first)
         pricingForRoute = routePricings.find(p =>
-          p.vehicle_type === suggestion.vehicle_type &&
-          (
-            suggestion.price === undefined ||
-            Number(p.price) === Number(suggestion.price)
-          )
+          p.vehicle_type.includes(containerSize) && p.vehicle_type.includes('COMPENSACIÓN')
+        ) || routePricings.find(p =>
+          p.vehicle_type.includes(containerSize)
         );
+
+        if (pricingForRoute) {
+          // Set the suggestion text to match the auto-selected option
+          setVehicleSuggestions(prev => ({
+            ...prev,
+            [routeIndex]: { vehicle_type: pricingForRoute.vehicle_type }
+          }));
+        }
+      } else {
+        // For main routes: use AI suggestion
+        // Prefer matching by pricing_id (guarantees exact row)
+        if (suggestion.pricing_id) {
+          pricingForRoute = routePricings.find(
+            p => Number(p.id) === Number(suggestion.pricing_id)
+          );
+        }
+
+        // Fallback: match by vehicle type (and optionally the price) if no ID
+        if (!pricingForRoute) {
+          pricingForRoute = routePricings.find(p =>
+            p.vehicle_type === suggestion.vehicle_type &&
+            (
+              suggestion.price === undefined ||
+              Number(p.price) === Number(suggestion.price)
+            )
+          );
+        }
       }
 
       if (!pricingForRoute) {
-        console.warn(`[PricingModal] No pricing option matches AI suggestion for route ${routeIndex}`, suggestion, routePricings);
+        console.warn(`[PricingModal] No pricing option matches for route ${routeIndex}`, suggestion, routePricings);
         return;
       }
 
@@ -893,7 +916,6 @@ const requestAISuggestions = async (currentKey) => {
                           {vehicleSuggestions[index] && (
                             <div className="text-xs mb-2 rounded bg-blue-50 text-blue-600 px-2 py-1">
                               IA sugiere: <strong>{vehicleSuggestions[index].vehicle_type}</strong>
-                              <span className="text-gray-500"> — {vehicleSuggestions[index].reason}</span>
                             </div>
                           )}
                           
@@ -902,7 +924,7 @@ const requestAISuggestions = async (currentKey) => {
                             onChange={(e) => handleVehicleSelect(index, e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
                           >
-                            <option value="">Selecciona vehículo</option>
+                            <option value="">{isReturn ? 'Selecciona tipo devolución' : 'Selecciona vehículo'}</option>
                             {(pricings[index] || []).map(pricing => (
                               <option key={pricing.id} value={pricing.id}>
                                 {pricing.vehicle_type} - ${Number(pricing.price).toLocaleString()}

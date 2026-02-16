@@ -43,20 +43,6 @@ class VerifyCsrfToken extends Middleware
      */
     public function handle($request, \Closure $next)
     {
-        // Solo para debugging en entorno local/debug
-        if (config('app.debug')) {
-            Log::info('CSRF Debug', [
-                'url' => $request->url(),
-                'method' => $request->method(),
-                'session_id' => $request->session()->getId(),
-                'csrf_token_input' => $request->input('_token'),
-                'csrf_token_session' => $request->session()->token(),
-                'csrf_token_header' => $request->header('X-CSRF-TOKEN'),
-                'cookies' => $request->cookies->all(),
-                'session_started' => $request->session()->isStarted(),
-            ]);
-        }
-
         return parent::handle($request, $next);
     }
 
@@ -69,15 +55,6 @@ class VerifyCsrfToken extends Middleware
     protected function tokensMatch($request)
     {
         $token = $this->getTokenFromRequest($request);
-        
-        if (config('app.debug')) {
-            Log::info('CSRF Token Match Check', [
-                'session_token' => $request->session()->token(),
-                'request_token' => $token,
-                'match' => hash_equals($request->session()->token(), (string) $token)
-            ]);
-        }
-
         return hash_equals($request->session()->token(), (string) $token);
     }
 }
