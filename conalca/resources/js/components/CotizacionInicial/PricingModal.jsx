@@ -10,7 +10,7 @@ import {
   fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
 import { requestPricingRoute } from '../../services/solicitations';
-import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle } from 'react-icons/fa';
+import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle, FaCopy, FaPlus } from 'react-icons/fa';
 
 const PricingModal = ({ 
   onClose, 
@@ -252,14 +252,14 @@ const loadPricingsForRoutes = async () => {
     // Detect routes with no pricing options available
     const missing = [];
     routesToProcess.forEach((route, idx) => {
-      if (!route.isReturnRoute && (!responses[idx] || responses[idx].length === 0)) {
+      if (!responses[idx] || responses[idx].length === 0) {
         const origin = route.ciudad_origen || '';
         const destination = route.ciudad_destino || '';
         if (origin && destination) {
           // Avoid duplicates in the list
           const key = `${origin}-${destination}`;
           if (!missing.find(m => `${m.origin}-${m.destination}` === key)) {
-            missing.push({ origin, destination, routeIndex: idx });
+            missing.push({ origin, destination, routeIndex: idx, isReturn: route.isReturnRoute || false });
           }
         }
       }
@@ -405,6 +405,37 @@ const requestAISuggestions = async (currentKey) => {
     ));
   };
 
+  // --- Extras (dynamic "Otro" items) ---
+  const addExtra = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])];
+      extras.push({ nombre: '', valor: 0 });
+      return { ...route, extras };
+    }));
+  };
+
+  const removeExtra = (routeIndex, extraIndex) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])].filter((_, i) => i !== extraIndex);
+      return { ...route, extras };
+    }));
+  };
+
+  const updateExtra = (routeIndex, extraIndex, field, value) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])];
+      extras[extraIndex] = { ...extras[extraIndex], [field]: value };
+      return { ...route, extras };
+    }));
+  };
+
+  const getExtrasTotal = (route) => {
+    return (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+  };
+
   const getAutomaticParameters = (route) => {
     const parameters = [];
     
@@ -484,6 +515,75 @@ const requestAISuggestions = async (currentKey) => {
 
   const resetGlobalPorcentaje = () => {
     setPorcentajeGlobal(null);
+  };
+
+  // --- Duplicate a route ---
+  const duplicateRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route) return;
+
+    // Find where to insert: after the route and its devolución (if any)
+    let insertIndex = routeIndex + 1;
+    // If this is a main route with a devolución right after, skip past it
+    if (!route.isReturnRoute && quoteData[insertIndex]?.isReturnRoute) {
+      insertIndex++;
+    }
+
+    const newRoute = {
+      ...route,
+      id: null,
+      select_value: null,
+      vehiculo_requerido: null,
+      isDuplicate: true,
+      _duplicateOf: routeIndex,
+    };
+
+    // Insert into quoteData
+    setQuoteData(prev => [
+      ...prev.slice(0, insertIndex),
+      newRoute,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Copy pricings options for the duplicated route
+    setPricings(prev => [
+      ...prev.slice(0, insertIndex),
+      prev[routeIndex] || [],
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Shift selectedPricings indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      Object.keys(prev).map(Number).sort((a, b) => a - b).forEach(idx => {
+        if (idx >= insertIndex) {
+          newSelected[idx + 1] = prev[idx];
+        } else {
+          newSelected[idx] = prev[idx];
+        }
+      });
+      return newSelected;
+    });
+  };
+
+  // --- Remove a duplicated route ---
+  const removeDuplicateRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route || !route.isDuplicate) return;
+
+    setQuoteData(prev => prev.filter((_, i) => i !== routeIndex));
+    setPricings(prev => prev.filter((_, i) => i !== routeIndex));
+
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      let newIdx = 0;
+      Object.keys(prev).map(Number).sort((a, b) => a - b).forEach(idx => {
+        if (idx === routeIndex) return;
+        newSelected[newIdx] = prev[idx];
+        newIdx++;
+      });
+      return newSelected;
+    });
   };
 
   // --- Remove a return route (devolución) ---
@@ -595,8 +695,10 @@ const requestAISuggestions = async (currentKey) => {
       parametersTotal += Number(route[param.name]) || 0;
     });
 
+    const extrasTotal = getExtrasTotal(route);
+
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    return valueWithMargin + acompanamiento + parametersTotal;
+    return valueWithMargin + acompanamiento + parametersTotal + extrasTotal;
   };
 
   const canContinue = () => {
@@ -898,7 +1000,7 @@ const requestAISuggestions = async (currentKey) => {
         {/* Layout principal */}
         <div className="flex flex-row gap-8 h-[650px]">
           {/* Tabla de rutas y precios - mayor espacio */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-3/5">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-[70%]">
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
@@ -939,7 +1041,7 @@ const requestAISuggestions = async (currentKey) => {
                           <div className="mt-2 flex flex-wrap gap-2">
                             {missingPricingRoutes.map((r, i) => (
                               <span key={i} className="inline-flex items-center text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-medium product-sans">
-                                {r.origin} → {r.destination}
+                                {r.isReturn ? '↩ ' : ''}{r.origin} → {r.destination}
                               </span>
                             ))}
                           </div>
@@ -955,7 +1057,7 @@ const requestAISuggestions = async (currentKey) => {
                           <div className="mt-2 flex flex-wrap gap-2">
                             {missingPricingRoutes.map((r, i) => (
                               <span key={i} className="inline-flex items-center text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full font-medium product-sans">
-                                {r.origin} → {r.destination}
+                                {r.isReturn ? '↩ ' : ''}{r.origin} → {r.destination}
                               </span>
                             ))}
                           </div>
@@ -992,8 +1094,9 @@ const requestAISuggestions = async (currentKey) => {
                     <th className="text-left px-4 py-3 product-sans min-w-[120px]">Destino</th>
                     <th className="text-left px-4 py-3 product-sans min-w-[140px]">Vehículo</th>
                     <th className="text-center px-4 py-3 product-sans min-w-[110px]">Precio Base</th>
-                    <th className="text-center px-4 py-3 product-sans min-w-[120px]">Parámetros</th>
-                    <th className="text-center px-4 py-3 product-sans min-w-[100px]">Rent.(%)</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[100px]">Parámetros</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[160px]">Extras</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[80px]">Rent.(%)</th>
                     <th className="text-center px-4 py-3 product-sans min-w-[120px]">Valor Cliente</th>
                   </tr>
                 </thead>
@@ -1001,27 +1104,54 @@ const requestAISuggestions = async (currentKey) => {
                   {quoteData.map((route, index) => {
                     const automaticParameters = getAutomaticParameters(route);
                     const isReturn = route.isReturnRoute;
+                    const isDuplicate = route.isDuplicate;
+                    
+                    // Determine if separator needed: new group starts at non-return, non-duplicate routes after index 0
+                    const isGroupStart = index > 0 && !isReturn && !isDuplicate;
                     
                     return (
-                      <tr key={index} className={`border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150 ${isReturn ? 'bg-blue-50/40' : ''}`}>
+                      <React.Fragment key={index}>
+                        {isGroupStart && (
+                          <tr>
+                            <td colSpan="8" className="px-0 py-0">
+                              <div className="border-t-2 border-orange-200 mx-4 my-1"></div>
+                            </td>
+                          </tr>
+                        )}
+                        <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150 ${isReturn ? 'bg-blue-50/40' : ''} ${isDuplicate ? 'bg-amber-50/30' : ''}`}>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
-                          <div className="flex flex-col">
+                          <div className="flex items-center flex-wrap gap-1">
                             {isReturn && (
-                              <div className="flex items-center space-x-1 mb-1">
-                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded inline-block w-fit">
+                              <>
+                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 whitespace-nowrap">
                                   ↩ DEVOLUCIÓN
                                 </span>
                                 <button
                                   type="button"
                                   onClick={() => removeReturnRoute(index)}
                                   title="Eliminar ruta de devolución"
-                                  className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                                  className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
                                 >
-                                  <FaTrashAlt className="w-3 h-3" />
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
                                 </button>
-                              </div>
+                              </>
                             )}
-                            {route.ciudad_origen || '-'}
+                            {isDuplicate && (
+                              <>
+                                <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 whitespace-nowrap">
+                                  📋 DUPLICADA
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeDuplicateRoute(index)}
+                                  title="Eliminar ruta duplicada"
+                                  className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                                >
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
+                                </button>
+                              </>
+                            )}
+                            <span>{route.ciudad_origen || '-'}</span>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
@@ -1056,17 +1186,17 @@ const requestAISuggestions = async (currentKey) => {
                         <td className="px-4 py-3">
                           {/* Parámetros automáticos */}
                           {automaticParameters.length > 0 ? (
-                            <div className="space-y-3">
+                            <div className="space-y-1.5">
                               {automaticParameters.map((param) => (
-                                <div key={param.name} className="flex flex-col items-center">
-                                  <label className={`text-xs font-medium mb-1 text-${param.color}-600 product-sans text-center`}>
+                                <div key={param.name} className="flex items-center gap-1.5">
+                                  <label className={`text-[10px] font-medium text-${param.color}-600 product-sans whitespace-nowrap w-16 text-right`}>
                                     {param.label}
                                   </label>
                                   <input
                                     type="number"
                                     value={route[param.name] || ''}
                                     onChange={(e) => handleParameterChange(index, param.name, e.target.value)}
-                                    className={`w-24 px-3 py-2 text-sm text-center border border-${param.color}-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-${param.color}-400 product-sans`}
+                                    className={`w-20 px-2 py-1 text-xs text-center border border-${param.color}-300 rounded focus:outline-none focus:ring-1 focus:ring-${param.color}-400 product-sans`}
                                     placeholder="$"
                                     min="0"
                                   />
@@ -1076,6 +1206,44 @@ const requestAISuggestions = async (currentKey) => {
                           ) : (
                             <div className="text-sm text-gray-400 text-center">-</div>
                           )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="space-y-1.5">
+                            {(route.extras || []).map((extra, eIdx) => (
+                              <div key={eIdx} className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={extra.nombre || ''}
+                                  onChange={(e) => updateExtra(index, eIdx, 'nombre', e.target.value)}
+                                  className="w-20 px-1.5 py-1 text-[11px] border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-400 product-sans placeholder-gray-400"
+                                  placeholder="Nombre"
+                                />
+                                <input
+                                  type="number"
+                                  value={extra.valor || ''}
+                                  onChange={(e) => updateExtra(index, eIdx, 'valor', e.target.value)}
+                                  className="w-20 px-1.5 py-1 text-[11px] text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-400 product-sans"
+                                  placeholder="$ Valor"
+                                  min="0"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeExtra(index, eIdx)}
+                                  className="p-0.5 text-red-400 hover:text-red-600 rounded transition-colors"
+                                  title="Quitar"
+                                >
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => addExtra(index)}
+                              className="inline-flex items-center gap-1 text-[10px] text-orange-500 hover:text-orange-600 font-medium product-sans"
+                            >
+                              <FaPlus className="w-2.5 h-2.5" /> Agregar
+                            </button>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-center space-y-2">
@@ -1097,11 +1265,24 @@ const requestAISuggestions = async (currentKey) => {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-sm font-700 text-orange-600">
-                            ${Number(calculateFinalValue(index)).toLocaleString()}
-                          </span>
+                          <div className="flex flex-col items-center space-y-1">
+                            <span className="text-sm font-700 text-orange-600">
+                              ${Number(calculateFinalValue(index)).toLocaleString()}
+                            </span>
+                            {!isDuplicate && (
+                              <button
+                                type="button"
+                                onClick={() => duplicateRoute(index)}
+                                title="Duplicar ruta con otro precio"
+                                className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded transition-colors duration-150"
+                              >
+                                <FaCopy className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1110,7 +1291,7 @@ const requestAISuggestions = async (currentKey) => {
           </div>
 
           {/* Tarjetas de rentabilidad */}
-          <div className="flex flex-row justify-between h-full space-x-4 w-2/5">
+          <div className="flex flex-row justify-between h-full space-x-4 w-[30%]">
             <RentabilityCard
               title="PROPUESTA #1"
               subtitle={`RENTABILIDAD MÍNIMA (${rentabilityDefaults.scope === 'route' ? 'Ruta' : 'Global'})`}
@@ -1190,7 +1371,8 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
           parametersTotal += Number(route[param.name]) || 0;
         });
 
-        return total + withMargin + parametersTotal;
+        const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+        return total + withMargin + parametersTotal + extrasTotal;
       }
 
       return total;
@@ -1273,7 +1455,7 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
         
         <div className="border-t border-gray-200 pt-2 flex-1 w-full flex flex-col items-center justify-center">
           {/* Lista de precios por ruta */}
-          <div className="flex flex-col space-y-3 mb-2 w-full items-center justify-center">
+          <div className="flex flex-col space-y-1 mb-2 w-full items-center justify-center">
             {quoteData.map((route, index) => {
               const pricing = selectedPricings[index];
               let finalRoutePrice = 0;
@@ -1288,18 +1470,28 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
                   parametersTotal += Number(route[param.name]) || 0;
                 });
 
-                finalRoutePrice = withMargin + parametersTotal;
+                const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+                finalRoutePrice = withMargin + parametersTotal + extrasTotal;
               }
+
+              const isReturn = route.isReturnRoute;
+              const isDuplicate = route.isDuplicate;
+              const isGroupStart = index > 0 && !isReturn && !isDuplicate;
               
               return (
-                <div key={index} className="flex flex-col items-center w-full">
-                  <div className="text-xs text-gray-500 product-sans mb-1 text-center">
-                    {route.isReturnRoute ? '↩ ' : ''}{(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                <React.Fragment key={index}>
+                  {isGroupStart && (
+                    <div className="w-4/5 border-t border-gray-200 my-1"></div>
+                  )}
+                  <div className="flex flex-col items-center w-full">
+                    <div className="text-xs text-gray-500 product-sans mb-0.5 text-center">
+                      {isReturn ? '↩ ' : ''}{isDuplicate ? '📋 ' : ''}{(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                    </div>
+                    <div className={`text-xs font-600 product-sans text-center ${isDuplicate ? 'text-amber-600' : 'text-orange-600'}`}>
+                      ${Number(finalRoutePrice).toLocaleString()}
+                    </div>
                   </div>
-                  <div className="text-xs font-600 text-orange-600 product-sans text-center">
-                    ${Number(finalRoutePrice).toLocaleString()}
-                  </div>
-                </div>
+                </React.Fragment>
               );
             })}
           </div>
