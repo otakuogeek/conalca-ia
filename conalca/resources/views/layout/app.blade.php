@@ -314,7 +314,8 @@
                             </a>
                         </div>
                         {{-- Solicitudes --}}
-                        <!-- <div>
+                        @if(auth()->user()->hasAnyRole(['PRICING','SUPER ADMIN','ASISTENTE COMERCIAL','GERENTE DE CUENTA','SAC','JEFE COMERCIAL']))
+                        <div>
                             <a href="{{ route('requests.show') }}"
                                 class="nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                 text-base font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
@@ -332,7 +333,8 @@
                                       :class="sidebarCollapsed ? 'sidebar-text-hidden' : 'sidebar-text'"
                                       x-show="!sidebarCollapsed"> Solicitudes </span>
                             </a>
-                        </div> -->
+                        </div>
+                        @endif
                         {{-- cotizaciones --}}
                         <div>
                             <a href="{{ route('quotes.react-test') }}"

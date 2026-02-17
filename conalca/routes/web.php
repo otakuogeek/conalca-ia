@@ -506,8 +506,7 @@ Route::group(['middleware' => 'auth'], function () {
 
     // Nueva ruta específica para React con nombre más claro
     Route::get('/cotizacion', function () {
-        $quotes = CotizacionModel::get();
-        return view('quotes.react-show', compact('quotes'));
+        return view('quotes.react-show');
     })->name('quotes.react-test');
 
     // Ruta original con Livewire (disponible como backup)
@@ -693,6 +692,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             /* ────── CRUD de Solicitudes ────── */
             Route::get ('/'      , [SolicitationController::class, 'index']);
             Route::post('/'      , [SolicitationController::class, 'store']);
+            Route::post('/pricing-route-request', [SolicitationController::class, 'requestPricingRoute']);
             Route::get ('/{id}'  , [SolicitationController::class, 'show']);
             Route::put ('/{id}'  , [SolicitationController::class, 'update']);
 

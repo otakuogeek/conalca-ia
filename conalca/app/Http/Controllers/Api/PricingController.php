@@ -49,16 +49,19 @@ class PricingController extends Controller
         $capacityMap = DB::table('vehiculos_pricing')
             ->pluck('peso_maximo', 'vehiculo_silogtran');
 
+        $conditionProvided = !empty($validated['condition']);
+        $isReturn = !empty($validated['is_return']);
+
         $query = Pricing::where('origin', $validated['origin'])
             ->where('destination', $validated['destination']);
 
         // Filter by condition when provided (e.g. IMPORTACION for import routes)
-        if (!empty($validated['condition'])) {
+        if ($conditionProvided) {
             $query->where('condition', $validated['condition']);
 
             // For return routes: only show DEV CONT options
             // For main routes: exclude DEV CONT options
-            if (!empty($validated['is_return'])) {
+            if ($isReturn) {
                 $query->where('type_pricing', 'dev_cont');
             } else {
                 $query->where(function ($q) {
@@ -69,7 +72,9 @@ class PricingController extends Controller
         } else {
             // Exclude special-condition pricings from normal route queries
             $query->where(function ($q) {
-                $q->whereNull('condition')->orWhere('condition', '');
+                $q->whereNull('condition')
+                  ->orWhere('condition', '')
+                  ->orWhere('condition', 'NACIONAL');
             });
         }
 
@@ -77,6 +82,27 @@ class PricingController extends Controller
             ->orderBy('vehicle_type')        // deterministic
             ->orderByDesc('weight')
             ->get();
+
+        // Fallback: if no condition was provided and nothing matched,
+        // retry using all conditions for this route.
+        if (!$conditionProvided && $raw->isEmpty()) {
+            $fallbackQuery = Pricing::where('origin', $validated['origin'])
+                ->where('destination', $validated['destination']);
+
+            if ($isReturn) {
+                $fallbackQuery->where('type_pricing', 'dev_cont');
+            } else {
+                $fallbackQuery->where(function ($q) {
+                    $q->whereNull('type_pricing')
+                      ->orWhere('type_pricing', '!=', 'dev_cont');
+                });
+            }
+
+            $raw = $fallbackQuery->orderByDesc('updated_at')
+                ->orderBy('vehicle_type')
+                ->orderByDesc('weight')
+                ->get();
+        }
 
         $filtered = $raw->filter(function ($pricing) use ($validated, $capacityMap) {
             $vehicleKey = strtoupper(trim($pricing->vehicle_type));

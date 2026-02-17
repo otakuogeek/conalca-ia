@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use App\Models\City;
 
 class CityController extends Controller
@@ -42,37 +43,35 @@ class CityController extends Controller
 
     public function index(Request $request)
     {
-        $cities = City::orderBy('ciudad_nombre')->get([
-            'ciudad_codigo',
-            'ciudad_nombre',
-            'ciudad_codigodane',
-            'departamento_nombre',
-            'pais_nombre',
-        ]);
+        // Cachear ciudades por 24h — catálogo estático
+        $sorted = Cache::remember('catalog_cities_sorted', 60 * 60 * 24, function () {
+            $cities = City::orderBy('ciudad_nombre')->get([
+                'ciudad_codigo',
+                'ciudad_nombre',
+                'ciudad_codigodane',
+                'departamento_nombre',
+                'pais_nombre',
+            ]);
 
-        // 🆕 Ordenar para que las ciudades principales aparezcan primero
-        $sorted = $cities->sortBy(function($city) {
-            $nombreCiudad = mb_strtoupper(explode(' - ', $city->ciudad_nombre)[0] ?? '');
-            $nombreDepto = mb_strtoupper($city->departamento_nombre ?? '');
-            
-            // Si esta ciudad tiene un departamento principal definido
-            if (isset(self::$departamentosPrincipales[$nombreCiudad])) {
-                $deptoPrincipal = self::$departamentosPrincipales[$nombreCiudad];
-                // Si es la ciudad principal, ponerla primero (prioridad 0)
-                if (stripos($nombreDepto, $deptoPrincipal) !== false || stripos($city->ciudad_nombre, $deptoPrincipal) !== false) {
-                    return '0_' . $city->ciudad_nombre;
+            return $cities->sortBy(function($city) {
+                $nombreCiudad = mb_strtoupper(explode(' - ', $city->ciudad_nombre)[0] ?? '');
+                $nombreDepto = mb_strtoupper($city->departamento_nombre ?? '');
+                
+                if (isset(self::$departamentosPrincipales[$nombreCiudad])) {
+                    $deptoPrincipal = self::$departamentosPrincipales[$nombreCiudad];
+                    if (stripos($nombreDepto, $deptoPrincipal) !== false || stripos($city->ciudad_nombre, $deptoPrincipal) !== false) {
+                        return '0_' . $city->ciudad_nombre;
+                    }
+                    return '1_' . $city->ciudad_nombre;
                 }
-                // Si no es la principal, ponerla después (prioridad 1)
-                return '1_' . $city->ciudad_nombre;
-            }
-            
-            // Ciudades sin duplicados, orden normal
-            return '0_' . $city->ciudad_nombre;
+                
+                return '0_' . $city->ciudad_nombre;
+            })->values();
         });
 
         return response()->json([
             'success' => true,
-            'data' => $sorted->values()
-        ]);
+            'data' => $sorted
+        ])->header('Cache-Control', 'public, max-age=3600');
     }
 }

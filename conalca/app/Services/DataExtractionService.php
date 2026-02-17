@@ -1913,6 +1913,36 @@ EOT;
             'vvicencio' => 'VILLAVICENCIO', 'dosq' => 'DOSQUEBRADAS',
         ];
         
+        // 🆕 FIX: Detectar código IATA/abreviatura como PRIMERA palabra del texto
+        // Maneja casos como "BAQ   Calle 76 # 70-35" → BARRANQUILLA
+        $palabras = preg_split('/[\s,;]+/', trim($texto), -1, PREG_SPLIT_NO_EMPTY);
+        if (!empty($palabras)) {
+            $primeraPalabraRaw = rtrim($palabras[0], '.,;:');
+            $primeraPalabraLower = mb_strtolower($primeraPalabraRaw);
+            if (isset($abreviaturasExpansion[$primeraPalabraLower])) {
+                $ciudadExpandida = $abreviaturasExpansion[$primeraPalabraLower];
+                Log::info('✅ Código IATA/abreviatura detectado al inicio del texto', [
+                    'codigo' => $primeraPalabraRaw,
+                    'ciudad' => $ciudadExpandida,
+                    'texto_completo' => $texto
+                ]);
+                return $ciudadExpandida;
+            }
+            
+            // También verificar abreviaturas multi-palabra (ej: "sta marta")
+            if (count($palabras) >= 2) {
+                $dospalabras = mb_strtolower($primeraPalabraRaw . ' ' . rtrim($palabras[1], '.,;:'));
+                if (isset($abreviaturasExpansion[$dospalabras])) {
+                    $ciudadExpandida = $abreviaturasExpansion[$dospalabras];
+                    Log::info('✅ Abreviatura multi-palabra detectada al inicio', [
+                        'abreviatura' => $dospalabras,
+                        'ciudad' => $ciudadExpandida
+                    ]);
+                    return $ciudadExpandida;
+                }
+            }
+        }
+        
         // 1. Patrón "Aeropuerto CIUDAD" / "Puerto CIUDAD"
         // 🔧 FIX: Usar \S+ para capturar solo la primera palabra, luego verificar progresivamente
         if (preg_match('/(?:aeropuerto|terminal\s+a[eé]re[oa])\s+(?:de\s+|el\s+)?(\S+)/ui', $texto, $m)) {

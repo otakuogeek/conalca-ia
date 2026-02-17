@@ -9,7 +9,8 @@ import {
   fetchPercentageSettings,
   fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
-import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt } from 'react-icons/fa';
+import { requestPricingRoute } from '../../services/solicitations';
+import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle } from 'react-icons/fa';
 
 const PricingModal = ({ 
   onClose, 
@@ -35,6 +36,9 @@ const PricingModal = ({
   const [loadingGuide, setLoadingGuide] = useState(false);
   const [guideError, setGuideError] = useState(null);
   const [removedReturnRoutes, setRemovedReturnRoutes] = useState([]);
+  const [missingPricingRoutes, setMissingPricingRoutes] = useState([]);
+  const [pricingRequestSent, setPricingRequestSent] = useState(false);
+  const [sendingPricingRequest, setSendingPricingRequest] = useState(false);
   const [rentabilityDefaults, setRentabilityDefaults] = useState({
     min: 17,
     avg: 24,
@@ -234,6 +238,23 @@ const loadPricingsForRoutes = async () => {
       })
     );
     setPricings(responses);
+
+    // Detect routes with no pricing options available
+    const missing = [];
+    routesToProcess.forEach((route, idx) => {
+      if (!route.isReturnRoute && (!responses[idx] || responses[idx].length === 0)) {
+        const origin = route.ciudad_origen || '';
+        const destination = route.ciudad_destino || '';
+        if (origin && destination) {
+          // Avoid duplicates in the list
+          const key = `${origin}-${destination}`;
+          if (!missing.find(m => `${m.origin}-${m.destination}` === key)) {
+            missing.push({ origin, destination, routeIndex: idx });
+          }
+        }
+      }
+    });
+    setMissingPricingRoutes(missing);
   } catch (error) {
     console.error('[PricingModal] Error loading all pricings:', error);
   } finally {
@@ -604,6 +625,27 @@ const requestAISuggestions = async (currentKey) => {
   //   }
   // };
 
+    const handleRequestPricingRoutes = async () => {
+      if (missingPricingRoutes.length === 0) return;
+      setSendingPricingRequest(true);
+      try {
+        const { data } = await requestPricingRoute({
+          routes: missingPricingRoutes.map(r => ({
+            origin: r.origin,
+            destination: r.destination,
+          })),
+          group_id: clientData?.groupId || null,
+        });
+        setPricingRequestSent(true);
+        console.log('[PricingModal] Pricing route request sent:', data);
+      } catch (error) {
+        console.error('[PricingModal] Error sending pricing route request:', error);
+        alert('Error al enviar la solicitud. Intenta nuevamente.');
+      } finally {
+        setSendingPricingRequest(false);
+      }
+    };
+
     const handleContinue = async () => {
       if (!canContinue()) {
         alert('Completa todos los campos requeridos antes de continuar.');
@@ -869,6 +911,70 @@ const requestAISuggestions = async (currentKey) => {
               </div>
             </div>
             <div className="overflow-x-auto flex-1 min-h-0">
+              {/* Alert for routes without pricing */}
+              {missingPricingRoutes.length > 0 && (
+                <div className={`mx-4 mt-3 mb-2 rounded-lg border p-4 ${pricingRequestSent ? 'bg-green-50 border-green-300' : 'bg-amber-50 border-amber-300'}`}>
+                  <div className="flex items-start space-x-3">
+                    <FaExclamationTriangle className={`mt-0.5 flex-shrink-0 ${pricingRequestSent ? 'text-green-500' : 'text-amber-500'}`} />
+                    <div className="flex-1">
+                      {pricingRequestSent ? (
+                        <>
+                          <p className="text-sm font-semibold text-green-700 product-sans">
+                            ✅ Solicitud enviada al equipo de Pricing
+                          </p>
+                          <p className="text-xs text-green-600 mt-1 product-sans">
+                            Se ha notificado al equipo de Pricing para que creen las tarifas de las siguientes rutas. 
+                            Podrás continuar con esta cotización una vez estén configuradas.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {missingPricingRoutes.map((r, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-medium product-sans">
+                                {r.origin} → {r.destination}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-semibold text-amber-800 product-sans">
+                            Rutas sin tarifa configurada
+                          </p>
+                          <p className="text-xs text-amber-700 mt-1 product-sans">
+                            Las siguientes rutas no tienen precios en el sistema. Envía una solicitud al equipo de Pricing para que los configuren.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {missingPricingRoutes.map((r, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full font-medium product-sans">
+                                {r.origin} → {r.destination}
+                              </span>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleRequestPricingRoutes}
+                            disabled={sendingPricingRequest}
+                            className="mt-3 inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg shadow-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {sendingPricingRequest ? (
+                              <>
+                                <FaSpinner className="animate-spin mr-2" />
+                                Enviando solicitud...
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                                </svg>
+                                Solicitar creación de precio al equipo Pricing
+                              </>
+                            )}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-700 text-sm font-600 border-b border-gray-200 bg-gray-50">

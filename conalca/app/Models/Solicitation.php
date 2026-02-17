@@ -10,7 +10,7 @@ class Solicitation extends Model
     use HasFactory;
 
     protected $fillable = [
-        'created_by','pricing_id','importance','status','origin',
+        'created_by','pricing_id','importance','status','type','group_id','origin',
         'destination','description','price',
         'pricing_note','superadmin_note','support_requested_at'
     ];

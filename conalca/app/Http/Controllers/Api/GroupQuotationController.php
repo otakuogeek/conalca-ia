@@ -19,15 +19,34 @@ class GroupQuotationController extends Controller
                 return response()->json(['data' => []]);
             }
 
-            // Si es super admin, no filtramos
-            $query = GroupCotization::with([
-                'client',
-                'cotizaciones.client',
-                'cotizaciones.pricing',
-                'cotizaciones.solicitud',
-                'cotizaciones.notes.author'
-            ])
-            ->orderBy('created_at', 'desc');
+            // Columnas necesarias del grupo (solo las que usa el frontend)
+            $groupColumns = [
+                'id', 'user_id', 'client_id', 'status', 'type',
+                'operation_type', 'reference', 'created_at', 'updated_at'
+            ];
+
+            // Columnas necesarias de cotizaciones (solo las que usa la tarjeta)
+            $cotizacionColumns = [
+                'id', 'group_cotization_id', 'client_id', 'pricing_id',
+                'ciudad_origen', 'ciudad_destino', 'valor', 'porcentaje',
+                'decision_cliente', 'created_at'
+            ];
+
+            $query = GroupCotization::select($groupColumns)
+                ->with([
+                    'client:id,cliente,documento',
+                    'cotizaciones' => function ($q) use ($cotizacionColumns) {
+                        $q->select($cotizacionColumns);
+                    },
+                    'cotizaciones.pricing:id,price',
+                    'cotizaciones.solicitud:id,cotizacion_model_id,estado',
+                ])
+                // Excluir borradores vacíos (sin cotizaciones)
+                ->where(function ($q) {
+                    $q->where('status', '!=', 'borrador')
+                      ->orWhereHas('cotizaciones');
+                })
+                ->orderBy('created_at', 'desc');
             
             // Si NO es super admin, solo le mostramos sus grupos
             if (!$user->hasRole('SUPER ADMIN') && !$user->hasRole('GERENTE DE CUENTA')) {
@@ -52,6 +71,12 @@ class GroupQuotationController extends Controller
                         
                         return 0;
                     });
+
+                    // Ocultar producto_label del JSON (no se usa en la tarjeta)
+                    $group->cotizaciones->each(function ($cot) {
+                        $cot->makeHidden('producto_label');
+                    });
+
                     return $group;
                 });
 

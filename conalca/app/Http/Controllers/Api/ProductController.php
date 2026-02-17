@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use App\Models\Product;
 
 class ProductController extends Controller
@@ -24,15 +25,18 @@ class ProductController extends Controller
 
     public function index(Request $request)
     {
-        $products = Product::orderBy('producto_nombre')->get([
-            'producto_codigo',
-            'producto_nombre',
-        ]);
+        // Cachear productos por 24h — catálogo estático
+        $products = Cache::remember('catalog_products', 60 * 60 * 24, function () {
+            return Product::orderBy('producto_nombre')->get([
+                'producto_codigo',
+                'producto_nombre',
+            ]);
+        });
 
         return response()->json([
             'success' => true,
             'data' => $products,
-        ]);
+        ])->header('Cache-Control', 'public, max-age=3600');
     }
 
     public function search(Request $request)
