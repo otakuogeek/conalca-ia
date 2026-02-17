@@ -83,6 +83,61 @@ class PricingController extends Controller
             ->orderByDesc('weight')
             ->get();
 
+        // For IDA-REGRESO return routes: also fetch base IMPORTACION prices
+        // so the commercial can see both options side by side
+        $baseRaw = collect();
+        if ($conditionProvided && $isReturn && str_contains($validated['condition'], 'IDA-REGRESO')) {
+            $baseCondition = str_replace(' IDA-REGRESO', '', $validated['condition']);
+            $baseQuery = Pricing::where('origin', $validated['origin'])
+                ->where('destination', $validated['destination'])
+                ->where('condition', $baseCondition)
+                ->where('type_pricing', 'dev_cont')
+                ->orderByDesc('updated_at')
+                ->orderBy('vehicle_type')
+                ->orderByDesc('weight')
+                ->get();
+            $baseRaw = $baseQuery;
+
+            // Tag IDA-REGRESO entries so they appear as separate dropdown options
+            $raw->each(function ($pricing) {
+                $pricing->vehicle_type = $pricing->vehicle_type . ' (IDA-REGRESO)';
+                $pricing->is_round_trip = true;
+            });
+
+            // If no IDA-REGRESO results exist, just show the base prices
+            if ($raw->isEmpty()) {
+                $raw = $baseRaw;
+                $baseRaw = collect();
+            }
+        }
+
+        // Fallback for IDA-REGRESO without base prices already fetched
+        if ($conditionProvided && $raw->isEmpty() && !$baseRaw->count() && str_contains($validated['condition'] ?? '', 'IDA-REGRESO')) {
+            $baseCondition = str_replace(' IDA-REGRESO', '', $validated['condition']);
+            $fallbackQuery = Pricing::where('origin', $validated['origin'])
+                ->where('destination', $validated['destination'])
+                ->where('condition', $baseCondition);
+
+            if ($isReturn) {
+                $fallbackQuery->where('type_pricing', 'dev_cont');
+            } else {
+                $fallbackQuery->where(function ($q) {
+                    $q->whereNull('type_pricing')
+                       ->orWhere('type_pricing', '!=', 'dev_cont');
+                });
+            }
+
+            $raw = $fallbackQuery->orderByDesc('updated_at')
+                ->orderBy('vehicle_type')
+                ->orderByDesc('weight')
+                ->get();
+        }
+
+        // Merge base + IDA-REGRESO into a single collection
+        if ($baseRaw->count()) {
+            $raw = $baseRaw->concat($raw);
+        }
+
         // Fallback: if no condition was provided and nothing matched,
         // retry using all conditions for this route.
         if (!$conditionProvided && $raw->isEmpty()) {
@@ -105,7 +160,8 @@ class PricingController extends Controller
         }
 
         $filtered = $raw->filter(function ($pricing) use ($validated, $capacityMap) {
-            $vehicleKey = strtoupper(trim($pricing->vehicle_type));
+            // Strip IDA-REGRESO tag for capacity lookup
+            $vehicleKey = strtoupper(trim(str_replace(' (IDA-REGRESO)', '', $pricing->vehicle_type)));
             $catalogCapacity = $capacityMap[$vehicleKey] ?? null;
 
             // overwrite weight so front-end sees the official limit

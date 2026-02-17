@@ -223,11 +223,21 @@ const loadPricingsForRoutes = async () => {
         const fetchDestination = route.isReturnRoute ? route._pricingDestination : route.ciudad_destino;
 
         if (!fetchOrigin || !fetchDestination) return Promise.resolve([]);
+
+        // Determine condition: return routes that coexist with their forward route
+        // are IDA-REGRESO (round-trip) — use special pricing
+        let condition;
+        if (route.isReturnRoute) {
+          condition = 'IMPORTACION IDA-REGRESO';
+        } else if (isImportOp) {
+          condition = 'IMPORTACION';
+        }
+
         return fetchLatestPricingsByRoute({
           origin: fetchOrigin,
           destination: fetchDestination,
           cargo_weight: route.isReturnRoute ? 0 : (route.peso_mercancia || 0),
-          condition: (isImportOp || route.isReturnRoute) ? 'IMPORTACION' : undefined,
+          condition,
           is_return: route.isReturnRoute ? true : undefined,
         })
           .then(({ data }) => data)
