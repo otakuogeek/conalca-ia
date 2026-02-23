@@ -46,6 +46,14 @@ class PricingController extends Controller
             'is_return'     => 'nullable|boolean',
         ]);
 
+        Log::info('[PricingController] latestByRoute called', [
+            'origin' => $validated['origin'],
+            'destination' => $validated['destination'],
+            'cargo_weight' => $validated['cargo_weight'] ?? null,
+            'condition' => $validated['condition'] ?? null,
+            'is_return' => $validated['is_return'] ?? null,
+        ]);
+
         $capacityMap = DB::table('vehiculos_pricing')
             ->pluck('peso_maximo', 'vehiculo_silogtran');
 
@@ -167,20 +175,39 @@ class PricingController extends Controller
             // overwrite weight so front-end sees the official limit
             $pricing->weight = $catalogCapacity ?: ($pricing->weight ?? null);
 
+            // For container types: parse weight from 'extra' field when weight is null
+            // e.g. "40\" HASTA 25 TON. EXPRESO 2S3" -> 25000 (kg)
+            if (
+                !$pricing->weight &&
+                $pricing->extra &&
+                preg_match('/HASTA\s+([\d.,]+)\s*TON/i', $pricing->extra, $matches)
+            ) {
+                $tonValue = floatval(str_replace(',', '.', $matches[1]));
+                $pricing->weight = $tonValue * 1000; // convert tons to kg
+            }
+
             if (
                 !empty($validated['cargo_weight']) &&
                 $pricing->weight &&
                 $validated['cargo_weight'] > $pricing->weight
             ) {
-                // discard options that can’t carry the cargo
+                // discard options that can't carry the cargo
                 return false;
             }
             return true;
         })->values();
 
-        // NEW: keep only the cheapest option per vehicle_type
+        // Keep only the best option per vehicle_type (or vehicle_type+extra for containers)
         $deduped = $filtered
-            ->groupBy(fn ($p) => strtoupper(trim($p->vehicle_type)))
+            ->groupBy(function ($p) {
+                $vt = strtoupper(trim($p->vehicle_type));
+                // For container types with weight tiers (extra field), group by
+                // vehicle_type + extra to preserve distinct tiers
+                if (str_contains($vt, 'CONTENEDOR') && !empty($p->extra)) {
+                    return $vt . '|' . strtoupper(trim($p->extra));
+                }
+                return $vt;
+            })
             ->map(function ($group) {
                 // sort by price asc, tie-break by higher weight
                 return $group->sort(function ($a, $b) {

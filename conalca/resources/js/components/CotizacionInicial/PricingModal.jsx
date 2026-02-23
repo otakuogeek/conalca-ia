@@ -217,6 +217,7 @@ const loadPricingsForRoutes = async () => {
 
     // --- Fetch pricings for each route ---
     const isImportOp = (clientData?.operationType || '').toUpperCase() === 'IMPORTACION';
+    const isExportOp = (clientData?.operationType || '').toUpperCase() === 'EXPORTACION';
     const responses = await Promise.all(
       routesToProcess.map(route => {
         const fetchOrigin = route.isReturnRoute ? route._pricingOrigin : route.ciudad_origen;
@@ -231,6 +232,8 @@ const loadPricingsForRoutes = async () => {
           condition = 'IMPORTACION IDA-REGRESO';
         } else if (isImportOp) {
           condition = 'IMPORTACION';
+        } else if (isExportOp) {
+          condition = 'EXPORTACION';
         }
 
         return fetchLatestPricingsByRoute({
@@ -1173,7 +1176,7 @@ const requestAISuggestions = async (currentKey) => {
                             <option value="">{isReturn ? 'Selecciona tipo devolución' : 'Selecciona vehículo'}</option>
                             {(pricings[index] || []).map(pricing => (
                               <option key={pricing.id} value={pricing.id}>
-                                {pricing.vehicle_type} - ${Number(pricing.price).toLocaleString()}
+                                {pricing.vehicle_type}{pricing.extra ? ` (${pricing.extra})` : ''} - ${Number(pricing.price).toLocaleString()}
                               </option>
                             ))}
                           </select>

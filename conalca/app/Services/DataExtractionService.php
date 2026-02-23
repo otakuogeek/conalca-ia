@@ -1699,6 +1699,7 @@ EOT;
             
             // 🆕 FIX: Colapsar multi-rutas falsas (rutas con mismo origen y destino)
             // Si después de normalizar, todas las rutas tienen el mismo origen y destino, fusionarlas en una sola
+            // EXCEPCIÓN: No colapsar si las rutas tienen pesos diferentes (ej: múltiples contenedores con distinto peso)
             if (count($extractedData['rutas']) > 1) {
                 $allSameOriginDest = true;
                 $firstOrigen = $extractedData['rutas'][0]['origen'] ?? null;
@@ -1713,7 +1714,31 @@ EOT;
                     }
                 }
                 
+                // Verificar si las rutas tienen pesos diferentes → NO colapsar
+                $hasDifferentWeights = false;
                 if ($allSameOriginDest) {
+                    $weights = [];
+                    foreach ($extractedData['rutas'] as $ruta) {
+                        $w = $ruta['peso'] ?? $ruta['peso_kg'] ?? null;
+                        if ($w !== null) {
+                            $weights[] = floatval($w);
+                        }
+                    }
+                    // Si hay al menos 2 rutas con peso y los pesos no son todos iguales
+                    if (count($weights) >= 2) {
+                        $uniqueWeights = array_unique($weights);
+                        if (count($uniqueWeights) > 1) {
+                            $hasDifferentWeights = true;
+                            Log::info('🔧 DataExtractionService: Multi-ruta con mismo origen/destino PERO pesos diferentes → NO colapsar', [
+                                'origen' => $firstOrigen,
+                                'destino' => $firstDestino,
+                                'pesos' => $weights,
+                            ]);
+                        }
+                    }
+                }
+                
+                if ($allSameOriginDest && !$hasDifferentWeights) {
                     Log::info('🔧 DataExtractionService: Colapsando multi-ruta falsa (todas con mismo origen/destino)', [
                         'origen' => $firstOrigen,
                         'destino' => $firstDestino,
@@ -2006,12 +2031,81 @@ EOT;
                 if ($this->esCiudadColombiana($segmentoAntes)) {
                     return mb_strtoupper($segmentoAntes);
                 }
-                // 🆕 FIX: Si el texto antes del departamento parece un municipio (1-3 palabras, sin números/dirección), CONFIAR
+                // 🆕 FIX v2: Intentar extraer ciudad conocida DENTRO del texto antes de confiar ciegamente
+                // Maneja casos como "ZONA INDUSTRIAL DE TENJO" → "TENJO"
                 $ultimaParte = trim(end($partes));
                 if (!empty($ultimaParte) && mb_strlen($ultimaParte) >= 3 && mb_strlen($ultimaParte) <= 40
                     && !preg_match('/\d|calle|carrera|cra|cll|autopista|km|bodega|avenida|transversal|diagonal|manzana|lote/ui', $ultimaParte)) {
-                    Log::info('✅ DataExtractionService: Ciudad aceptada por estar antes de departamento', ['ciudad' => $ultimaParte, 'depto' => $depto]);
-                    return mb_strtoupper($ultimaParte);
+                    
+                    // Paso A: Intentar remover prefijos de ubicación conocidos
+                    $prefijosUbicacion = [
+                        'zona industrial de', 'zona franca de', 'parque industrial de',
+                        'centro industrial de', 'zona portuaria de', 'parque empresarial de',
+                        'zona industrial del', 'zona franca del', 'puerto de', 'terminal de',
+                        'zona industrial', 'zona franca', 'parque industrial',
+                        'centro logistico de', 'centro logístico de', 'centro logistico', 'centro logístico',
+                        'complejo industrial de', 'complejo industrial',
+                    ];
+                    $segmentoLower = mb_strtolower($ultimaParte);
+                    $ciudadPorPrefijo = null;
+                    foreach ($prefijosUbicacion as $prefijo) {
+                        if (mb_strpos($segmentoLower, $prefijo) === 0) {
+                            $candidato = trim(mb_substr($ultimaParte, mb_strlen($prefijo)));
+                            if (!empty($candidato) && $this->esCiudadColombiana($candidato)) {
+                                $ciudadPorPrefijo = $candidato;
+                                break;
+                            }
+                        }
+                    }
+                    if ($ciudadPorPrefijo) {
+                        Log::info('✅ DataExtractionService: Ciudad extraída removiendo prefijo de ubicación', [
+                            'prefijo_removido' => true, 'ciudad' => $ciudadPorPrefijo, 'texto_original' => $ultimaParte
+                        ]);
+                        return mb_strtoupper($this->removeAccents($ciudadPorPrefijo));
+                    }
+                    
+                    // Paso B: Buscar alguna ciudad conocida entre las palabras
+                    $palabrasSegmento = preg_split('/\s+/', trim($ultimaParte));
+                    $ciudadEncontrada = null;
+                    for ($j = 0; $j < count($palabrasSegmento); $j++) {
+                        $palabra = trim($palabrasSegmento[$j]);
+                        if (!empty($palabra) && mb_strlen($palabra) >= 3 && $this->esCiudadColombiana($palabra)) {
+                            $ciudadEncontrada = $palabra;
+                        }
+                        // También probar combinaciones de 2-3 palabras (ej: "Santa Marta", "San José del Guaviare")
+                        if ($j < count($palabrasSegmento) - 1) {
+                            $dosPalabras = $palabrasSegmento[$j] . ' ' . $palabrasSegmento[$j + 1];
+                            if ($this->esCiudadColombiana($dosPalabras)) {
+                                $ciudadEncontrada = $dosPalabras;
+                            }
+                        }
+                        if ($j < count($palabrasSegmento) - 2) {
+                            $tresPalabras = $palabrasSegmento[$j] . ' ' . $palabrasSegmento[$j + 1] . ' ' . $palabrasSegmento[$j + 2];
+                            if ($this->esCiudadColombiana($tresPalabras)) {
+                                $ciudadEncontrada = $tresPalabras;
+                            }
+                        }
+                    }
+                    if ($ciudadEncontrada) {
+                        Log::info('✅ DataExtractionService: Ciudad encontrada dentro del segmento antes de departamento', [
+                            'ciudad' => $ciudadEncontrada, 'texto_original' => $ultimaParte, 'depto' => $depto
+                        ]);
+                        return mb_strtoupper($this->removeAccents($ciudadEncontrada));
+                    }
+                    
+                    // Paso C: Solo confiar ciegamente en textos cortos (1-2 palabras) que podrían ser municipios pequeños
+                    $numPalabras = count($palabrasSegmento);
+                    if ($numPalabras <= 2) {
+                        Log::info('✅ DataExtractionService: Ciudad aceptada por estar antes de departamento (texto corto)', [
+                            'ciudad' => $ultimaParte, 'depto' => $depto, 'num_palabras' => $numPalabras
+                        ]);
+                        return mb_strtoupper($ultimaParte);
+                    }
+                    
+                    // Si tiene 3+ palabras y no se encontró ciudad conocida, NO confiar → continuar al paso 3
+                    Log::info('⚠️ DataExtractionService: Texto largo antes de departamento NO confiable, ignorando', [
+                        'texto' => $ultimaParte, 'depto' => $depto, 'num_palabras' => $numPalabras
+                    ]);
                 }
             }
         }
