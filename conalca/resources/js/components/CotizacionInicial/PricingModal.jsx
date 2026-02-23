@@ -236,21 +236,74 @@ const loadPricingsForRoutes = async () => {
           condition = 'EXPORTACION';
         }
 
+        // Extract container size (20 or 40) from tipo_embajale
+        // Handles: CONTENEDOR 20, CONTENEDOR (1) 20 PIES, 1X40' HC, 40' GP, etc.
+        const empaque = (route.tipo_embajale || '').toUpperCase();
+        let containerSize;
+        if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(empaque)) {
+          if (/40/.test(empaque)) containerSize = '40';
+          else if (/20/.test(empaque)) containerSize = '20';
+        }
+
         return fetchLatestPricingsByRoute({
           origin: fetchOrigin,
           destination: fetchDestination,
           cargo_weight: route.isReturnRoute ? 0 : (route.peso_mercancia || 0),
           condition,
           is_return: route.isReturnRoute ? true : undefined,
+          container_size: containerSize,
         })
-          .then(({ data }) => data)
+          .then(({ data }) => {
+            // Client-side filter: if container route, keep only matching container size
+            if (containerSize) {
+              return data.filter(p => {
+                const vt = (p.vehicle_type || '').toUpperCase();
+                const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+                if (!isContainerType) return true;
+                return vt.includes(containerSize);
+              });
+            }
+            return data;
+          })
           .catch(error => {
             console.error('[PricingModal] Error loading pricing for route', route, error);
             return [];
           });
       })
     );
-    setPricings(responses);
+
+    // === FILTRO POR TAMAÑO DE CONTENEDOR ===
+    // Filtrar responses según el tipo_embajale de cada ruta
+    // Si es CONTENEDOR 20, solo mostrar opciones de 20'. Si es 40, solo 40'.
+    const filteredResponses = responses.map((routePricings, idx) => {
+      const route = routesToProcess[idx];
+      const empaque = (route?.tipo_embajale || route?.empaque || '').toUpperCase();
+      
+      // Detectar tamaño de contenedor
+      let containerSize = null;
+      if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(empaque)) {
+        if (/40/.test(empaque)) containerSize = '40';
+        else if (/20/.test(empaque)) containerSize = '20';
+      }
+
+      console.log(`[PricingModal] Route ${idx} container filter:`, { empaque, containerSize, totalOptions: routePricings.length });
+
+      if (!containerSize) return routePricings; // No es contenedor, devolver todo
+
+      // Filtrar: solo contenedores del tamaño correcto + vehículos no-contenedor
+      // Incluye tanto "CONTENEDOR 20'" como "DEV CNT 20'" (devolución)
+      const filtered = routePricings.filter(p => {
+        const vt = (p.vehicle_type || '').toUpperCase();
+        const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+        if (!isContainerType) return true;
+        return vt.includes(containerSize);
+      });
+
+      console.log(`[PricingModal] Route ${idx} after filter:`, { filteredCount: filtered.length });
+      return filtered;
+    });
+
+    setPricings(filteredResponses);
 
     // Detect routes with no pricing options available
     const missing = [];
@@ -1174,7 +1227,26 @@ const requestAISuggestions = async (currentKey) => {
                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
                           >
                             <option value="">{isReturn ? 'Selecciona tipo devolución' : 'Selecciona vehículo'}</option>
-                            {(pricings[index] || []).map(pricing => (
+                            {(() => {
+                              // Filter pricings by container size from tipo_embajale (safety net)
+                              const routeEmpaque = (route.tipo_embajale || '').toUpperCase();
+                              let routeContainerSize = null;
+                              if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(routeEmpaque)) {
+                                if (/40/.test(routeEmpaque)) routeContainerSize = '40';
+                                else if (/20/.test(routeEmpaque)) routeContainerSize = '20';
+                              }
+
+                              return (pricings[index] || []).filter(pricing => {
+                                const vt = (pricing.vehicle_type || '').toUpperCase();
+                                const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+
+                                if (routeContainerSize) {
+                                  if (isContainerType) return vt.includes(routeContainerSize);
+                                  return true;
+                                }
+                                return true;
+                              });
+                            })().map(pricing => (
                               <option key={pricing.id} value={pricing.id}>
                                 {pricing.vehicle_type}{pricing.extra ? ` (${pricing.extra})` : ''} - ${Number(pricing.price).toLocaleString()}
                               </option>

@@ -12165,6 +12165,13 @@ REGLA: Si el campo está vacío, mostrarlo como "-" y PREGUNTAR antes de crear c
 - NO aplicar la tabla de peso cuando hay contenedores
 - Contenedores SOLO se transportan en tractocamión, NUNCA en turbo, sencillo, camioneta, etc.
 
+📦 REGLA DE TARIFA POR CONTENEDOR Y PESO (IMPORTACIÓN/EXPORTACIÓN):
+- Cuando el servicio involucra CONTENEDORES, la tarifa sugerida debe corresponder EXACTAMENTE al tipo de contenedor Y al rango de peso.
+- Para seleccionar la tarifa correcta, usar el peso con tara incluida y elegir el rango de peso más ajustado (el menor rango que cubra el peso).
+- Ejemplo: Si es importación Cartagena → Bogotá con contenedor de 20' y peso con tara de 11.3 TON → sugerir "20 hasta 12 Ton Expreso 2S2" (NO "20 hasta 25 Ton Expreso 2S3").
+- NUNCA seleccionar un rango de peso superior si el peso cabe en un rango inferior del mismo contenedor.
+- Si existen varias tarifas con el MISMO VALOR pero diferente rango de peso/contenedor, SIEMPRE elegir la que corresponde exactamente al contenedor y peso.
+
 Si NO hay contenedores, basado en el peso detectado sugiere:
 - Hasta 1.5 ton: CAMIONETA
 - 1.5-3.5 ton: SENCILLO

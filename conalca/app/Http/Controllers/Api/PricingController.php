@@ -39,11 +39,12 @@ class PricingController extends Controller
     public function latestByRoute(Request $request)
     {
         $validated = $request->validate([
-            'origin'        => 'required|string',
-            'destination'   => 'required|string',
-            'cargo_weight'  => 'nullable|numeric|min:0',
-            'condition'     => 'nullable|string',
-            'is_return'     => 'nullable|boolean',
+            'origin'         => 'required|string',
+            'destination'    => 'required|string',
+            'cargo_weight'   => 'nullable|numeric|min:0',
+            'condition'      => 'nullable|string',
+            'is_return'      => 'nullable|boolean',
+            'container_size' => 'nullable|string|in:20,40',
         ]);
 
         Log::info('[PricingController] latestByRoute called', [
@@ -52,6 +53,7 @@ class PricingController extends Controller
             'cargo_weight' => $validated['cargo_weight'] ?? null,
             'condition' => $validated['condition'] ?? null,
             'is_return' => $validated['is_return'] ?? null,
+            'container_size' => $validated['container_size'] ?? null,
         ]);
 
         $capacityMap = DB::table('vehiculos_pricing')
@@ -167,6 +169,21 @@ class PricingController extends Controller
                 ->get();
         }
 
+        // Filter by container size when provided:
+        // container_size=20 → only CONTENEDOR 20' + non-container vehicles
+        // container_size=40 → only CONTENEDOR 40' + non-container vehicles
+        // If no container_size → show all options (frontend handles carga suelta filtering)
+        $containerSize = $validated['container_size'] ?? null;
+        if ($containerSize) {
+            $raw = $raw->filter(function ($pricing) use ($containerSize) {
+                $vt = strtoupper(trim($pricing->vehicle_type));
+                if (!str_contains($vt, 'CONTENEDOR')) {
+                    return true; // non-container types always shown
+                }
+                return str_contains($vt, $containerSize);
+            });
+        }
+
         $filtered = $raw->filter(function ($pricing) use ($validated, $capacityMap) {
             // Strip IDA-REGRESO tag for capacity lookup
             $vehicleKey = strtoupper(trim(str_replace(' (IDA-REGRESO)', '', $pricing->vehicle_type)));
@@ -221,7 +238,18 @@ class PricingController extends Controller
             })
             ->values();
 
-        return response()->json($deduped);
+        // Sort container options by weight ascending so the dropdown is organized
+        // from lightest to heaviest tier (e.g. "hasta 10 TON" before "hasta 12 TON")
+        $sorted = $deduped->sortBy(function ($p) {
+            $vt = strtoupper(trim($p->vehicle_type));
+            // Non-containers first, then containers sorted by weight
+            if (!str_contains($vt, 'CONTENEDOR')) {
+                return [0, $p->weight ?? 0];
+            }
+            return [1, $p->weight ?? 0];
+        })->values();
+
+        return response()->json($sorted);
     }
 
     public function suggestVehicles(Request $request)
@@ -251,6 +279,7 @@ class PricingController extends Controller
             'routes.*.pricings.*.vehicle_type' => 'required|string',
             'routes.*.pricings.*.price'        => 'required|numeric',
             'routes.*.pricings.*.weight'       => 'nullable|numeric',
+            'routes.*.pricings.*.extra'        => 'nullable|string',
         ]);
 
         // 2) Inject catalog capacities + drop overweight options
@@ -304,10 +333,11 @@ class PricingController extends Controller
                 'cargo_weight' => $route['peso_mercancia'] ?? 0,
                 'options'      => array_map(function ($pricing) {
                     return [
-                        'pricing_id'  => $pricing['id'] ?? null,
+                        'pricing_id'   => $pricing['id'] ?? null,
                         'vehicle_type' => $pricing['vehicle_type'],
                         'price'        => $pricing['price'],
                         'max_load_kg'  => $pricing['weight'] ?? null,
+                        'extra'        => $pricing['extra'] ?? null,
                     ];
                 }, $route['pricings'] ?? []),
             ];
@@ -386,6 +416,33 @@ class PricingController extends Controller
         ]);
     }
 
+    /**
+     * Sort options by tightest weight fit first (smallest max_load_kg that can carry the cargo),
+     * then by price ascending as tiebreaker. This ensures the exact container+weight tier
+     * is preferred (e.g. "20 hasta 12 Ton Expreso 2S2" for 11.3 TON cargo).
+     */
+    private function sortOptionsByBestFit(array $options, float $cargoWeight): array
+    {
+        usort($options, function ($a, $b) use ($cargoWeight) {
+            $aMax = $a['max_load_kg'] ?? PHP_INT_MAX;
+            $bMax = $b['max_load_kg'] ?? PHP_INT_MAX;
+
+            // Both must be able to carry the cargo (already filtered upstream),
+            // prefer the tightest fit (smallest capacity that still works)
+            $aFit = ($aMax >= $cargoWeight) ? $aMax : PHP_INT_MAX;
+            $bFit = ($bMax >= $cargoWeight) ? $bMax : PHP_INT_MAX;
+
+            if ($aFit !== $bFit) {
+                return $aFit <=> $bFit; // tightest fit first
+            }
+
+            // Same capacity tier → prefer cheapest price
+            return ($a['price'] ?? PHP_INT_MAX) <=> ($b['price'] ?? PHP_INT_MAX);
+        });
+
+        return $options;
+    }
+
     private function enforceCheapestSuggestions(array $routesPayload, array $aiSuggestions): array
     {
         foreach ($routesPayload as $route) {
@@ -396,46 +453,52 @@ class PricingController extends Controller
                 continue;
             }
 
-            // Sort ascending by price so index 0 is always the cheapest valid option
-            usort($options, fn($a, $b) =>
-                ($a['price'] ?? PHP_INT_MAX) <=> ($b['price'] ?? PHP_INT_MAX)
-            );
+            $cargoWeight = $route['cargo_weight'] ?? 0;
 
-            $cheapest = $options[0];
+            // Sort by tightest weight fit first, then cheapest price
+            $options = $this->sortOptionsByBestFit($options, $cargoWeight);
 
-            $aiVehicleType = $aiSuggestions[$routeIndex]['vehicle_type'] ?? null;
-            $matchedOption = collect($options)->firstWhere('vehicle_type', $aiVehicleType);
+            $bestOption = $options[0];
 
-            // If AI didn't match any option (or picked a wrong vehicle), force the cheapest
+            $aiPricingId = $aiSuggestions[$routeIndex]['pricing_id'] ?? null;
+            $matchedOption = $aiPricingId
+                ? collect($options)->firstWhere('pricing_id', $aiPricingId)
+                : null;
+
+            // If AI didn't match any option, force the best-fit option
             if (!$matchedOption) {
+                $extraLabel = !empty($bestOption['extra']) ? " ({$bestOption['extra']})" : '';
                 $aiSuggestions[$routeIndex] = [
-                    'vehicle_type' => $cheapest['vehicle_type'],
-                    'pricing_id'   => $cheapest['pricing_id'] ?? null,
+                    'vehicle_type' => $bestOption['vehicle_type'],
+                    'pricing_id'   => $bestOption['pricing_id'] ?? null,
                     'reason'       => sprintf(
-                        'Selección ajustada automáticamente: %s es la opción válida más económica (%s) para transportar %s kg.',
-                        $cheapest['vehicle_type'],
-                        number_format($cheapest['price'], 0, ',', '.'),
-                        number_format($route['cargo_weight'] ?? 0, 0, ',', '.')
+                        'Selección ajustada automáticamente: %s%s es la opción que mejor corresponde al peso de %s kg (%s).',
+                        $bestOption['vehicle_type'],
+                        $extraLabel,
+                        number_format($cargoWeight, 0, ',', '.'),
+                        number_format($bestOption['price'], 0, ',', '.')
                     ),
                 ];
                 continue;
             }
 
-            // Even if the vehicle matches, make sure we use the exact pricing row (ID)
-            if (($matchedOption['vehicle_type'] ?? null) !== $cheapest['vehicle_type']) {
-                // AI picked a more expensive option
+            // Even if the vehicle matches, check if it's the best-fit option
+            if (($matchedOption['pricing_id'] ?? null) !== ($bestOption['pricing_id'] ?? null)) {
+                // AI picked a different option than the best fit
+                $extraLabel = !empty($bestOption['extra']) ? " ({$bestOption['extra']})" : '';
                 $aiSuggestions[$routeIndex] = [
-                    'vehicle_type' => $cheapest['vehicle_type'],
-                    'pricing_id'   => $cheapest['pricing_id'] ?? null,
+                    'vehicle_type' => $bestOption['vehicle_type'],
+                    'pricing_id'   => $bestOption['pricing_id'] ?? null,
                     'reason'       => sprintf(
-                        'Selección ajustada automáticamente: %s es la opción válida más económica (%s) para transportar %s kg.',
-                        $cheapest['vehicle_type'],
-                        number_format($cheapest['price'], 0, ',', '.'),
-                        number_format($route['cargo_weight'] ?? 0, 0, ',', '.')
+                        'Selección ajustada automáticamente: %s%s es la opción que mejor corresponde al peso de %s kg (%s).',
+                        $bestOption['vehicle_type'],
+                        $extraLabel,
+                        number_format($cargoWeight, 0, ',', '.'),
+                        number_format($bestOption['price'], 0, ',', '.')
                     ),
                 ];
             } else {
-                // AI picked the cheapest vehicle; just attach the specific pricing_id
+                // AI picked the best-fit option; keep it
                 $aiSuggestions[$routeIndex]['pricing_id'] = $matchedOption['pricing_id'] ?? null;
             }
         }
@@ -461,9 +524,11 @@ class PricingController extends Controller
                 continue;
             }
 
-            usort($options, fn ($a, $b) =>
-                ($a['price'] ?? PHP_INT_MAX) <=> ($b['price'] ?? PHP_INT_MAX)
-            );
+            // Sort by tightest weight fit first (exact container+weight tier match),
+            // then by cheapest price as tiebreaker.
+            // This ensures e.g. "20 hasta 12 Ton Expreso 2S2" is preferred over
+            // "20 hasta 25 Ton Expreso 2S3" for 11.3 TON cargo.
+            $options = $this->sortOptionsByBestFit($options, $cargoWeight);
 
             $bestOption = null;
             foreach ($options as $option) {
@@ -489,13 +554,15 @@ class PricingController extends Controller
 
             $priceLabel  = number_format($bestOption['price'], 0, ',', '.');
             $weightLabel = number_format($cargoWeight ?? 0, 0, ',', '.');
+            $extraLabel  = !empty($bestOption['extra']) ? " ({$bestOption['extra']})" : '';
 
             $suggestions[$routeIndex] = [
                 'vehicle_type' => $bestOption['vehicle_type'],
                 'pricing_id'   => $bestOption['pricing_id'],
                 'reason'       => sprintf(
-                    'Se elige %s porque transporta %s kg al mejor precio disponible (%s).',
+                    'Se elige %s%s porque corresponde exactamente al peso de %s kg (%s).',
                     $bestOption['vehicle_type'],
+                    $extraLabel,
                     $weightLabel,
                     $priceLabel
                 ),
