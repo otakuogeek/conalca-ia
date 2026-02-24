@@ -612,3 +612,29 @@ Route::prefix('catalog')->group(function () {
         return response()->json($bodyworks);
     });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TEST SEED Routes - Crear cotizaciones de prueba directamente
+// Sin autenticación para facilitar pruebas con curl/Postman
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('test')->group(function () {
+    // Crear un grupo con cotizaciones en estado "En tránsito"
+    Route::post('/seed-cotizacion', [App\Http\Controllers\Api\TestSeedController::class, 'seedCotizacion'])
+        ->name('api.test.seed.cotizacion');
+
+    // Crear múltiples grupos de una vez
+    Route::post('/seed-multiple', [App\Http\Controllers\Api\TestSeedController::class, 'seedMultiple'])
+        ->name('api.test.seed.multiple');
+
+    // Listar grupos de prueba creados
+    Route::get('/seed-groups', [App\Http\Controllers\Api\TestSeedController::class, 'listTestGroups'])
+        ->name('api.test.seed.list');
+
+    // Eliminar un grupo de prueba específico
+    Route::delete('/seed-groups/{id}', [App\Http\Controllers\Api\TestSeedController::class, 'deleteTestGroup'])
+        ->name('api.test.seed.delete');
+
+    // Limpiar todos los grupos de prueba
+    Route::delete('/seed-cleanup', [App\Http\Controllers\Api\TestSeedController::class, 'cleanupTestGroups'])
+        ->name('api.test.seed.cleanup');
+});

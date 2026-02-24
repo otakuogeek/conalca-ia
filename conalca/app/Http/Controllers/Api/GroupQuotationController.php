@@ -25,16 +25,22 @@ class GroupQuotationController extends Controller
                 'operation_type', 'reference', 'created_at', 'updated_at'
             ];
 
-            // Columnas necesarias de cotizaciones (solo las que usa la tarjeta)
+            // Columnas necesarias de cotizaciones (tarjeta + detalle modal)
             $cotizacionColumns = [
                 'id', 'group_cotization_id', 'client_id', 'pricing_id',
                 'ciudad_origen', 'ciudad_destino', 'valor', 'porcentaje',
-                'decision_cliente', 'created_at'
+                'decision_cliente', 'created_at',
+                // Campos de carga (usados por TransitGroupModal)
+                'tipo_mercancia', 'tipo_producto', 'peso_mercancia',
+                'dimensiones_exactas', 'cantidad', 'cantidad_vh',
+                'tipo_embajale', 'tipo_carroceria', 'vehiculo_requerido',
+                'valor_declarado', 'seguro', 'temperatura_mercancia',
+                'registro_fotografico',
             ];
 
             $query = GroupCotization::select($groupColumns)
                 ->with([
-                    'client:id,cliente,documento',
+                    'client:id,cliente,documento,telefono,direccion,ciudad,vigenciacamara,fecha',
                     'cotizaciones' => function ($q) use ($cotizacionColumns) {
                         $q->select($cotizacionColumns);
                     },
