@@ -340,9 +340,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         throw new Error('No se pudo obtener el group_id de la respuesta del servidor');
       }
 
+      // Support multiple emails (comma/semicolon separated)
+      const emailList = parseEmails(emailData.clientEmail);
+
       await sendQuoteEmail({
         group_id: groupId,
-        client_email: emailData.clientEmail,
+        client_email: emailList,
         email_data: {
           title: emailData.titleEmail,
           text: emailData.promptResponse,
@@ -395,8 +398,22 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     }
   };
 
+  const isValidSingleEmail = (email) => {
+    const trimmed = email.trim();
+    return trimmed && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  };
+
   const isValidEmail = (email) => {
-    return email && email.includes('@') && email.includes('.');
+    if (!email) return false;
+    // Support comma or semicolon separated emails
+    const emails = email.split(/[,;]/).map(e => e.trim()).filter(e => e.length > 0);
+    if (emails.length === 0) return false;
+    return emails.every(e => isValidSingleEmail(e));
+  };
+
+  const parseEmails = (email) => {
+    if (!email) return [];
+    return email.split(/[,;]/).map(e => e.trim()).filter(e => e.length > 0);
   };
 
   return (
@@ -888,16 +905,19 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                     Email de destino <span className="text-red-500">*</span>
                   </label>
                   <input 
-                    type="email" 
+                    type="text" 
                     value={emailData.clientEmail}
                     onChange={(e) => handleInputChange('clientEmail', e.target.value)}
                     className={`input-field w-full text-xs ${
                       !emailData.clientEmail ? 'border-red-300 bg-red-50' :
                       isValidEmail(emailData.clientEmail) ? 'border-green-300 bg-green-50' : 'border-orange-300 bg-orange-50'
                     }`}
-                    placeholder="correo@ejemplo.com"
+                    placeholder="correo1@ejemplo.com, correo2@ejemplo.com"
                     required
                   />
+                  <p className="text-gray-400 text-xs mt-1">
+                    Puede ingresar varios correos separados por coma (,) o punto y coma (;)
+                  </p>
                   {!emailData.clientEmail && (
                     <p className="text-red-500 text-xs mt-1 flex items-center">
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -911,7 +931,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
                       </svg>
-                      El formato del correo electrónico no es válido
+                      Uno o más correos no tienen formato válido
                     </p>
                   )}
                   {isValidEmail(emailData.clientEmail) && (
@@ -919,7 +939,10 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
                       </svg>
-                      La cotización se enviará a: <strong>{emailData.clientEmail}</strong>
+                      La cotización se enviará a: <strong>{parseEmails(emailData.clientEmail).join(', ')}</strong>
+                      {parseEmails(emailData.clientEmail).length > 1 && (
+                        <span className="ml-1 text-green-500">({parseEmails(emailData.clientEmail).length} destinatarios)</span>
+                      )}
                     </p>
                   )}
                 </div>
