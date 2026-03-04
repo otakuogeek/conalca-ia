@@ -609,6 +609,26 @@
                                         </a>
                                     @endif
 
+                                    {{-- Tara --}}
+                                    @if (
+                                        auth()->user()->hasRole('SUPER ADMIN') ||
+                                        auth()->user()->hasRole('JEFE COMERCIAL') ||
+                                        auth()->user()->hasRole('SAC')
+                                    )
+                                        <a href="{{ route('tara-settings.index') }}"
+                                            class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                                            text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
+                                            role="button" aria-haspopup="true" data-button="tara-settings">
+                                            <span aria-hidden="true">
+                                                {{-- Ícono de contenedor/cubo --}}
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Tara </span>
+                                        </a>
+                                    @endif
+
                                     {{-- Vehículos --}}
                                     @if (
                                         auth()->user()->hasRole('SUPER ADMIN') ||
@@ -1136,6 +1156,24 @@
                                                     </svg>
                                                 </span>
                                                 <span class="ml-2 text-sm"> Panel de Porcentajes </span>
+                                            </a>
+                                        @endif
+
+                                        {{-- Tara --}}
+                                        @if (
+                                            auth()->user()->hasRole('SUPER ADMIN') ||
+                                            auth()->user()->hasRole('JEFE COMERCIAL') ||
+                                            auth()->user()->hasRole('SAC')
+                                        )
+                                            <a href="{{ route('tara-settings.index') }}"
+                                                class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                                role="button" aria-haspopup="true">
+                                                <span aria-hidden="true">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                                    </svg>
+                                                </span>
+                                                <span class="ml-2 text-sm"> Tara </span>
                                             </a>
                                         @endif
                                     </div>

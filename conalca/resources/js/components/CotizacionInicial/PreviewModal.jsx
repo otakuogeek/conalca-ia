@@ -1,5 +1,5 @@
 // resources/js/components/CotizacionInicial/PreviewModal.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import { saveQuoteFromChat, sendQuoteEmail } from '../../services/cotizationsService';
@@ -21,6 +21,20 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
   });
 
   const [saving, setSaving] = useState(false);
+
+  // 🆕 Tara settings from database (configurable via admin)
+  const [taraSettings, setTaraSettings] = useState({ tara_contenedor_20: 2300, tara_contenedor_40: 3400 });
+
+  useEffect(() => {
+    fetch('/api/catalog/tara-settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data.tara_contenedor_20 && data.tara_contenedor_40) {
+          setTaraSettings(data);
+        }
+      })
+      .catch(() => { /* keep defaults */ });
+  }, []);
 
   const handleInputChange = (field, value) => {
     setEmailData(prev => ({
@@ -94,13 +108,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     return null;
   };
 
-  // 🆕 Helper para obtener la tara según tipo de contenedor
+  // 🆕 Helper para obtener la tara según tipo de contenedor (valores de BD)
   const getContainerTara = (embalaje) => {
     const size = getContainerSize(embalaje);
     switch (size) {
-      case 20: return 2300; // kg
-      case 40: return 3400; // kg
-      case 45: return 3400; // kg (mismo que 40)
+      case 20: return taraSettings.tara_contenedor_20; // kg (configurable)
+      case 40: return taraSettings.tara_contenedor_40; // kg (configurable)
+      case 45: return taraSettings.tara_contenedor_40; // kg (mismo que 40)
       default: return 0;
     }
   };

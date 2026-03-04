@@ -626,6 +626,15 @@ Route::prefix('catalog')->group(function () {
             ->get();
         return response()->json($bodyworks);
     });
+
+    // Tara de contenedores
+    Route::get('/tara-settings', function() {
+        $settings = \App\Models\TaraSetting::getInstance();
+        return response()->json([
+            'tara_contenedor_20' => $settings->tara_contenedor_20,
+            'tara_contenedor_40' => $settings->tara_contenedor_40,
+        ]);
+    });
 });
 
 // ═══════════════════════════════════════════════════════════════

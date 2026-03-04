@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\SolicitationController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\PercentageSettingController;
+use App\Http\Controllers\TaraSettingController;
 use App\Http\Controllers\Api\GoalController;
 use App\Http\Controllers\Api\CotizationNoteController;
 use App\Http\Controllers\Api\SacCotizationController;
@@ -740,6 +741,15 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             ->name('percentage-settings.index');
         Route::put('/percentage-settings/{percentageSetting}', [PercentageSettingController::class, 'update'])
             ->name('percentage-settings.update');
+    });
+
+    // Tara Settings
+    Route::middleware(['auth', 'role:SUPER ADMIN|JEFE COMERCIAL|SAC'])
+    ->group(function () {
+        Route::get('/tara-settings', [TaraSettingController::class, 'index'])
+            ->name('tara-settings.index');
+        Route::put('/tara-settings/{taraSetting}', [TaraSettingController::class, 'update'])
+            ->name('tara-settings.update');
     });
 
     // GOALS
