@@ -1523,6 +1523,9 @@ class ConversationalAgentController extends Controller
                         continue;
                     }
 
+                    // Normalizar ciudad de origen antes de buscar conductores
+                    $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+
                     // Buscar conductores desde la base de datos (ya fueron filtrados y guardados)
                     Log::info('Buscando conductores en BD para llamadas', [
                         'cotizacion_id' => $cotizacion->id
@@ -1540,8 +1543,6 @@ class ConversationalAgentController extends Controller
                         Log::warning('No hay conductores en BD, buscando en Arcángel como respaldo', [
                             'cotizacion_id' => $cotizacion->id
                         ]);
-                        
-                        $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
                         $pesoCarga = 0;
                         if ($cotizacion->peso_mercancia) {
                             $pesoCarga = floatval(str_replace([',', ' kg', ' KG'], '', $cotizacion->peso_mercancia));
@@ -1664,16 +1665,15 @@ class ConversationalAgentController extends Controller
                         ]);
                     }
 
-                    // Iniciar el procesamiento del primer lote
+                    // NO despachar batch aquí - solo registrar llamadas.
+                    // El dispatch se hace en startElevenLabsCalls() cuando el usuario confirma "Iniciar Llamadas".
                     if ($callsScheduled > 0) {
-                        ProcessBatchElevenLabsCalls::dispatch($cotizacion->id, 1, $maxConcurrentCalls, 150)
-                            ->delay(now()->addSeconds(5)); // Pequeño delay inicial
-                        
-                        Log::info('Sistema de lotes iniciado para cotización desde Arcángel', [
+                        Log::info('Llamadas registradas para cotización desde Arcángel (pendientes de inicio)', [
                             'cotizacion_id' => $cotizacion->id,
+                            'total_llamadas' => $callsScheduled,
                             'total_batches' => $batchCount,
                             'calls_per_batch' => $maxConcurrentCalls,
-                            'delay_between_batches' => 150
+                            'nota' => 'Llamadas se iniciarán cuando el usuario confirme via startElevenLabsCalls'
                         ]);
                     }
 
@@ -2282,13 +2282,14 @@ class ConversationalAgentController extends Controller
                 ], 400);
             }
 
-            // Buscar llamadas pendientes para esta cotización
+            // Buscar SOLO llamadas pendientes que NO estén ya en procesamiento
             $llamadas = \App\Models\Llamada::where('id_cotizacion', $cotizacionId)
                 ->where('status', \App\Models\Llamada::STATUS_PENDIENTE)
+                ->where('queue_status', 'pending')
                 ->get();
 
             if ($llamadas->isEmpty()) {
-                Log::info('No hay llamadas pendientes para esta cotización', [
+                Log::info('No hay llamadas pendientes (o ya están en procesamiento) para esta cotización', [
                     'cotizacion_id' => $cotizacionId
                 ]);
                 
@@ -2380,14 +2381,14 @@ class ConversationalAgentController extends Controller
 
             // Iniciar el procesamiento del primer lote si hay llamadas
             if ($callsScheduled > 0) {
-                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 150)
+                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 90)
                     ->delay(now()->addSeconds(5)); // Pequeño delay inicial
                 
                 Log::info('Sistema de lotes iniciado para cotización existente', [
                     'cotizacion_id' => $cotizacionId,
                     'total_batches' => $batchCount,
                     'calls_per_batch' => $maxConcurrentCalls,
-                    'delay_between_batches' => 150
+                    'delay_between_batches' => 90
                 ]);
             }
 
@@ -2398,8 +2399,8 @@ class ConversationalAgentController extends Controller
                 'calls_scheduled' => $callsScheduled,
                 'total_batches' => $batchCount,
                 'calls_per_batch' => $maxConcurrentCalls,
-                'delay_between_batches_seconds' => 150,
-                'estimated_completion_time' => now()->addSeconds($batchCount * 150),
+                'delay_between_batches_seconds' => 90,
+                'estimated_completion_time' => now()->addSeconds($batchCount * 90),
                 'drivers' => $drivers,
                 'execution_mode' => 'batch_asynchronous'
             ]);

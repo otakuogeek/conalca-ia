@@ -257,6 +257,21 @@ Route::middleware(['auth:sanctum,web'])->group(function () {
 Route::post('/start-elevenlabs-calls/{cotizacionId}', [App\Http\Controllers\ConversationalAgentController::class, 'startElevenLabsCalls'])
     ->name('api.start-elevenlabs-calls');
 
+// ============================================================================
+// ElevenLabs Agent Tools - Endpoints que el agente de voz usa como herramientas
+// Estos endpoints son llamados vía webhook por el agente durante las conversaciones
+// ============================================================================
+Route::prefix('elevenlabs-tools')->group(function () {
+    Route::post('/get-conductor-by-telefono', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getConductorByTelefono'])
+        ->name('api.elevenlabs-tools.get-conductor');
+    Route::post('/get-cotizaciones', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getCotizaciones'])
+        ->name('api.elevenlabs-tools.get-cotizaciones');
+    Route::post('/precioviaje', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'precioViaje'])
+        ->name('api.elevenlabs-tools.precioviaje');
+    Route::post('/save-driver-decision', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'saveDriverDecision'])
+        ->name('api.elevenlabs-tools.save-driver-decision');
+});
+
 // Endpoint para hacer llamadas directas a cualquier número
 Route::post('/make-direct-call', [App\Http\Controllers\ConversationalAgentController::class, 'makeDirectCall'])
     ->name('call-drivers.direct');

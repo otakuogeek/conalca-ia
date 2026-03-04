@@ -547,20 +547,14 @@ class VehiculoController extends Controller
             $envPath = base_path('.env');
             $envContent = file_get_contents($envPath);
 
-            // Actualizar ARCANGEL_MODE
-            if ($nuevoModo === 'production') {
-                $envContent = preg_replace(
-                    '/^#?ARCANGEL_MODE=.*/m',
-                    'ARCANGEL_MODE=production',
-                    $envContent
-                );
-            } else {
-                $envContent = preg_replace(
-                    '/^#?ARCANGEL_MODE=.*/m',
-                    'ARCANGEL_MODE=development',
-                    $envContent
-                );
-            }
+            // Eliminar todas las líneas ARCANGEL_MODE existentes y dejar solo una
+            $envContent = preg_replace('/^#?ARCANGEL_MODE=.*\n?/m', '', $envContent);
+            // Insertar el nuevo valor después del comentario de ARCANGEL
+            $envContent = preg_replace(
+                '/(# ARCANGEL - INTEGRACIÓN API\n# ============================================================================\n)/',
+                '$1ARCANGEL_MODE=' . $nuevoModo . "\n",
+                $envContent
+            );
 
             file_put_contents($envPath, $envContent);
 
@@ -568,17 +562,22 @@ class VehiculoController extends Controller
             \Artisan::call('config:clear');
             \Artisan::call('cache:clear');
 
-            // Eliminar archivo hot para detener hot reload de Vite
+            // SIEMPRE ejecutar eliminación del archivo hot para restablecer CSS
             $hotFile = public_path('hot');
-            if (file_exists($hotFile)) {
-                @unlink($hotFile);
-                Log::info('Archivo hot eliminado para detener hot reload');
-            }
+            $hotExistedBefore = file_exists($hotFile);
+            \Artisan::call('vite:remove-hot');
+            $hotExistsAfter = file_exists($hotFile);
+            Log::info('Eliminación archivo hot ejecutada', [
+                'existia_antes' => $hotExistedBefore,
+                'existe_despues' => $hotExistsAfter,
+                'artisan_output' => trim(\Artisan::output()),
+            ]);
 
             Log::info('Modo Arcángel cambiado', [
                 'modo_anterior' => config('arcangel.mode'),
                 'modo_nuevo' => $nuevoModo,
-                'usuario' => auth()->user()->email ?? 'desconocido'
+                'usuario' => auth()->user()->email ?? 'desconocido',
+                'hot_eliminado' => !$hotExistsAfter,
             ]);
 
             return response()->json([

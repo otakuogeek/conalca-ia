@@ -27,7 +27,7 @@ class LlamadaModel(BaseModel):
 class CotizacionModel(BaseModel):
     """Modelo para la tabla cotizacion_models"""
     id: int
-    pricing_id: int
+    pricing_id: Optional[int] = None
     porcentaje: Optional[str] = None
     ciudad_origen: Optional[str] = None
     ciudad_destino: Optional[str] = None

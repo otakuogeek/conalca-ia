@@ -264,28 +264,49 @@ console.log(data)
       <div>
         <h4 className="font-medium mb-1 flex items-center gap-1">
           <FaUserCheck/> Aceptaron
+          {data.accepted.length > 0 && (
+            <span className="text-xs text-gray-500 ml-1">
+              ({data.total_accepted || data.accepted.length})
+            </span>
+          )}
         </h4>
         {data.accepted.length ? (
-          <ul className="list-disc list-inside text-sm space-y-1">
-            {data.accepted.map(d => (
-              <li key={d.id} className="flex items-center justify-between gap-2">
-                <span>{d.name} – {d.phone}</span>
+          <ul className="space-y-2">
+            {data.accepted.slice(0, 7).map(d => (
+              <li key={d.id} className="flex items-center justify-between gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-semibold text-gray-800 truncate">{d.name}</span>
+                  <span className="text-xs text-gray-600">
+                    📞 {d.phone}
+                    {d.placa && d.placa !== 'Sin placa' && (
+                      <span className="ml-2">🚛 {d.placa}</span>
+                    )}
+                  </span>
+                  {d.tipo_vehiculo && (
+                    <span className="text-xs text-gray-500">{d.tipo_vehiculo}</span>
+                  )}
+                </div>
 
                 {data.selected_driver_id === d.id ? (
-                  <span className="text-green-600 text-xs font-medium">
-                    Seleccionado
+                  <span className="text-green-600 text-xs font-medium whitespace-nowrap bg-green-100 px-2 py-1 rounded-full">
+                    ✓ Seleccionado
                   </span>
                 ) : (
                   <button
                     onClick={() => handleSelectDriver(d.id)}
                     disabled={!!selectingId}
-                    className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {selectingId === d.id ? 'Guardando…' : 'Elegir este conductor'}
+                    {selectingId === d.id ? 'Guardando…' : 'Elegir'}
                   </button>
                 )}
               </li>
             ))}
+            {(data.total_accepted || data.accepted.length) > 7 && (
+              <p className="text-xs text-gray-500 text-center mt-1">
+                Mostrando 7 de {data.total_accepted} conductores que aceptaron
+              </p>
+            )}
           </ul>
         ) : (
           <p className="text-sm text-gray-500 flex items-center gap-1">

@@ -111,6 +111,38 @@ class ProcessElevenLabsCall implements ShouldQueue
             
             $cotizacion = CotizacionModel::find($this->cotizacionId);
             
+            // Fallback: si no se encontró conductor en ninguna tabla, usar datos de la llamada directamente
+            if (!$driverData && $llamada->numero_destino) {
+                Log::warning('ProcessElevenLabsCall: Usando datos directos de la llamada como fallback', [
+                    'llamada_id' => $this->llamadaId,
+                    'numero_destino' => $llamada->numero_destino
+                ]);
+                
+                $driverData = [
+                    'id' => $llamada->conductor_id ?? $this->driverId ?? 0,
+                    'nombre' => 'Conductor',
+                    'telefono' => $llamada->numero_destino,
+                    'placa' => 'N/A'
+                ];
+                
+                // Intentar obtener nombre del conductor desde llamadas_conductores por número
+                $conductorByPhone = LlamadaConductor::where('telefono', 'LIKE', '%' . substr(preg_replace('/[^0-9]/', '', $llamada->numero_destino), -10) . '%')
+                    ->where('cotizacion_id', $this->cotizacionId)
+                    ->first();
+                    
+                if ($conductorByPhone) {
+                    $driverData['id'] = $conductorByPhone->id;
+                    $driverData['nombre'] = $conductorByPhone->nombre_conductor;
+                    $driverData['placa'] = $conductorByPhone->placa ?? 'N/A';
+                    $conductor = $conductorByPhone;
+                    
+                    Log::info('Conductor encontrado por teléfono', [
+                        'conductor_id' => $conductorByPhone->id,
+                        'nombre' => $conductorByPhone->nombre_conductor
+                    ]);
+                }
+            }
+            
             if (!$driverData || !$cotizacion) {
                 Log::error('ProcessElevenLabsCall: Modelos no encontrados', [
                     'driver_found' => $driverData ? 'yes' : 'no',
@@ -144,16 +176,27 @@ class ProcessElevenLabsCall implements ShouldQueue
             // Usar el servicio de ElevenLabs
             $elevenLabsService = app(ElevenLabsCallService::class);
             
-            // Preparar datos del cliente para la llamada
+            // Preparar datos del cliente para la llamada - datos completos de la orden
             $clientData = [
+                // IDs de referencia
                 'cotizacion_id' => $cotizacion->id,
+                'group_cotization_id' => $cotizacion->group_cotization_id,
                 'driver_id' => $driverData['id'],
-                'driver_name' => $driverData['nombre'],
                 'llamada_id' => $llamada->id_llamada,
+                // Datos del conductor
+                'driver_name' => $driverData['nombre'],
                 'placa' => $driverData['placa'],
+                'tipo_vehiculo' => $conductor?->tipo_vehiculo ?? $cotizacion->vehiculo_requerido ?? 'No especificado',
+                // Datos de la orden/cotización
                 'origen' => $cotizacion->ciudad_origen ?? 'No especificado',
                 'destino' => $cotizacion->ciudad_destino ?? 'No especificado',
-                'vehiculo_requerido' => $cotizacion->vehiculo_requerido ?? 'No especificado'
+                'vehiculo_requerido' => $cotizacion->vehiculo_requerido ?? 'No especificado',
+                'tipo_mercancia' => $cotizacion->tipo_mercancia ?? 'Carga general',
+                'peso_mercancia' => $cotizacion->peso_mercancia ?? '0',
+                'tipo_embajale' => $cotizacion->tipo_embajale ?? 'No especificado',
+                'tipo_carroceria' => $cotizacion->tipo_carroceria ?? 'No especificado',
+                'valor_declarado' => $cotizacion->valor_declarado ?? '0',
+                'valor_flete' => $cotizacion->valor ?? '0',
             ];
             
             Log::info('Client data preparado', $clientData);

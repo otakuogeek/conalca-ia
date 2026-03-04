@@ -23,7 +23,7 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue
     /**
      * Create a new job instance.
      */
-    public function __construct($cotizacionId, $batchNumber = 1, $maxConcurrentCalls = 3, $delayBetweenBatches = 150)
+    public function __construct($cotizacionId, $batchNumber = 1, $maxConcurrentCalls = 3, $delayBetweenBatches = 90)
     {
         $this->cotizacionId = $cotizacionId;
         $this->batchNumber = $batchNumber;
@@ -58,6 +58,16 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue
                 return;
             }
 
+            // IMPORTANTE: Marcar llamadas como 'processing' INMEDIATAMENTE para evitar
+            // que otro batch job las tome (protección anti-duplicados)
+            $llamadaIds = $llamadas->pluck('id_llamada')->toArray();
+            Llamada::whereIn('id_llamada', $llamadaIds)->update(['queue_status' => 'processing']);
+            Log::info('ProcessBatchElevenLabsCalls: Llamadas marcadas como processing (anti-duplicado)', [
+                'cotizacion_id' => $this->cotizacionId,
+                'batch_number' => $this->batchNumber,
+                'llamada_ids' => $llamadaIds
+            ]);
+
             Log::info('ProcessBatchElevenLabsCalls: Procesando llamadas del lote', [
                 'cotizacion_id' => $this->cotizacionId,
                 'batch_number' => $this->batchNumber,
@@ -65,13 +75,13 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue
                 'llamadas_ids' => $llamadas->pluck('id_llamada')->toArray()
             ]);
 
-            // Procesar cada llamada del lote con un pequeño delay entre ellas
+            // Procesar cada llamada del lote con delay de 60s entre ellas (evitar SIP 486 Line limit)
             foreach ($llamadas as $index => $llamada) {
-                // Delay escalonado de 5 segundos entre llamadas del mismo lote
-                $delay = $index * 5;
+                // Delay escalonado de 60 segundos entre llamadas del mismo lote
+                $delay = $index * 60;
                 
                 ProcessElevenLabsCall::dispatch(
-                    $llamada->chofer_id, 
+                    $llamada->conductor_id ?? $llamada->chofer_id, 
                     $this->cotizacionId, 
                     $llamada->id_llamada
                 )->delay(now()->addSeconds($delay));
