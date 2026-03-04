@@ -2,8 +2,8 @@
   API DE SEED - CREAR COTIZACIONES DE PRUEBA EN CONALCA AI
 ================================================================================
 
-FECHA: 24 de febrero de 2026
-VERSIÓN: 1.0
+FECHA: 24 de febrero de 2026 (actualizado 4 de marzo de 2026)
+VERSIÓN: 1.1
 
 ================================================================================
   1. INFORMACIÓN DE CONEXIÓN
@@ -31,10 +31,25 @@ AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
   "client_id":      (OPCIONAL) ID de un cliente ya existente en el sistema.
                     Tipo: integer
                     Ejemplo: 1
-                    Si no se envía, se puede crear un cliente nuevo con "client".
+                    Si no se envía, se puede usar "client_name" para buscar
+                    por nombre, o crear un cliente nuevo con "client".
+
+  "client_name":    (OPCIONAL) Nombre del cliente para buscar en base de datos.
+                    Si no se conoce el client_id, envíe el nombre y el sistema
+                    buscará automáticamente en la tabla de clientes.
+                    Tipo: string, máx 255
+                    Ejemplo: "ECOPETROL"
+                    NOTA: La búsqueda es por coincidencia parcial (LIKE),
+                    así que "ECOPETROL" encontrará "ECOPETROL S.A."
+                    
+                    Prioridad de resolución del cliente:
+                      1. client_id (si viene, se usa directo)
+                      2. client_name (si no viene client_id, busca por nombre)
+                      3. client (si no encuentra por nombre, crea uno nuevo)
+                      4. Fallback: usa el primer cliente disponible en BD
 
   "client":         (OPCIONAL) Datos para crear un cliente nuevo.
-                    Solo se usa si NO se envía "client_id".
+                    Solo se usa si NO se envía "client_id" ni "client_name".
                     Tipo: objeto
                     Campos:
                       "nombre":     Razón social de la empresa (string, máx 255)
@@ -175,7 +190,31 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
     ]
   }'
 
---- EJEMPLO 4: Creando un cliente nuevo ---
+--- EJEMPLO 4: Buscando cliente por NOMBRE (sin conocer el ID) ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_name": "365 OPERADOR",
+    "reference": "PRUEBA-POR-NOMBRE-001",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "CALI",
+        "valor": 4500000,
+        "tipo_mercancia": "TEXTILES",
+        "peso_mercancia": "6000",
+        "vehiculo_requerido": "CAMION SENCILLO"
+      }
+    ]
+  }'
+
+NOTA: El sistema buscará un cliente cuyo nombre contenga "365 OPERADOR".
+      Si lo encuentra, usará su ID automáticamente.
+      Si NO lo encuentra, devolverá error 422 con mensaje descriptivo.
+
+--- EJEMPLO 5: Creando un cliente nuevo ---
 
 curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
   -H "Content-Type: application/json" \
@@ -201,7 +240,7 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
     ]
   }'
 
---- EJEMPLO 5: Crear múltiples grupos de una vez ---
+--- EJEMPLO 6: Crear múltiples grupos de una vez ---
 
 curl -X POST https://conalcaia.conalca.com.co/api/test/seed-multiple \
   -H "Content-Type: application/json" \
@@ -439,7 +478,16 @@ Los grupos con referencia personalizada (sin prefijo TEST-SEED-) se eliminan
     pueden listar y limpiar fácilmente sin afectar datos reales.
   - Si se envía "client_id" y "client" al mismo tiempo, se usa
     "client_id" y se ignora "client".
+  - NUEVO: Se puede enviar "client_name" en lugar de "client_id".
+    El sistema buscará automáticamente el cliente por nombre en la BD.
+    Prioridad: client_id > client_name > client (crear nuevo) > fallback.
   - El campo "valor" es el precio total de la cotización para esa ruta.
   - Se pueden enviar hasta 20 grupos en un solo request con /seed-multiple.
+
+  ENDPOINT SAVE-QUOTE-FROM-CHAT:
+  - POST /api/save-quote-from-chat también soporta "client_name".
+  - Si no se envía "client_id", se puede enviar "client_name" y el
+    sistema resolverá el ID automáticamente buscando por nombre.
+  - Si no encuentra coincidencia, retorna error 422 con mensaje claro.
 
 ================================================================================

@@ -38,6 +38,7 @@ class TestSeedController extends Controller
             // Datos del grupo
             'user_id'        => 'required|integer|exists:users,id',
             'client_id'      => 'nullable|integer|exists:clients,id',
+            'client_name'    => 'nullable|string|max:255', // Nombre del cliente para buscar en BD
             'operation_type'  => 'nullable|string|in:DISTRIBUCION,EXPORTACION,IMPORTACION',
             'reference'      => 'nullable|string|max:255',
             'cargo_type'     => 'nullable|string',
@@ -84,6 +85,19 @@ class TestSeedController extends Controller
             return DB::transaction(function () use ($request) {
                 // ─── 1. Resolver o crear cliente ───
                 $clientId = $request->client_id;
+
+                // 🔍 Si no viene client_id pero sí client_name, buscar por nombre
+                if (!$clientId && $request->client_name) {
+                    $clientByName = Client::where('cliente', 'LIKE', '%' . trim($request->client_name) . '%')->first();
+                    if ($clientByName) {
+                        $clientId = $clientByName->id;
+                        Log::info('🔍 TestSeed: client_id resuelto por nombre', [
+                            'client_name_buscado' => $request->client_name,
+                            'client_id_encontrado' => $clientByName->id,
+                            'cliente_nombre_bd' => $clientByName->cliente,
+                        ]);
+                    }
+                }
 
                 if (!$clientId && $request->has('client')) {
                     $clientData = $request->input('client');

@@ -29,7 +29,8 @@ class QuoteSaveController extends Controller
         // ]);
 
         $request->validate([
-            'client_id' => 'required|integer|exists:clients,id',
+            'client_id' => 'nullable|integer|exists:clients,id',
+            'client_name' => 'nullable|string|max:255', // Nombre del cliente para buscar en BD
             'quote_data' => 'required|array|min:1',
             'quote_data.*.id' => 'nullable|integer', // <-- allow existing cotización id
             'quote_data.*.precio_pricing_id' => 'nullable|integer|exists:pricings,id',
@@ -44,6 +45,35 @@ class QuoteSaveController extends Controller
             'type_business' => 'required|string',
             'operation_type' => 'nullable|string'
         ]);
+
+        // ─── Resolver client_id: si no viene, buscar por client_name ───
+        if (!$request->client_id && $request->client_name) {
+            $client = Client::where('cliente', 'LIKE', '%' . trim($request->client_name) . '%')->first();
+
+            if (!$client) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No se encontró un cliente con el nombre '{$request->client_name}'. Verifique el nombre e intente de nuevo.",
+                    'suggestion' => 'Puede enviar client_id directamente si conoce el ID del cliente.',
+                ], 422);
+            }
+
+            // Inyectar el client_id resuelto en el request
+            $request->merge(['client_id' => $client->id]);
+
+            Log::info('🔍 client_id resuelto por nombre', [
+                'client_name_buscado' => $request->client_name,
+                'client_id_encontrado' => $client->id,
+                'cliente_nombre_bd' => $client->cliente,
+            ]);
+        }
+
+        if (!$request->client_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Debe enviar client_id o client_name para identificar al cliente.',
+            ], 422);
+        }
 
         DB::beginTransaction();
         
