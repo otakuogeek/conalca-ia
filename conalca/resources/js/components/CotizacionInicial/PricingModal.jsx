@@ -448,7 +448,7 @@ const requestAISuggestions = async (currentKey) => {
 
     setQuoteData(prev => prev.map((route, index) => 
       index === routeIndex 
-        ? { ...route, select_value: targetId, vehiculo_requerido: selectedPricing.vehicle_type }
+        ? { ...route, select_value: targetId, vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido, vehiculo_requerido: selectedPricing.vehicle_type }
         : route
     ));
   };
@@ -841,6 +841,7 @@ const requestAISuggestions = async (currentKey) => {
           tipo_embajale: route.tipo_embajale,
           tipo_producto: route.tipo_producto,
           vehiculo_requerido: route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
+          vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
           valor_declarado: route.valor_declarado,
           pricing_id: selectedPricings[index]?.id ?? null,
           porcentaje: route.porcentaje,

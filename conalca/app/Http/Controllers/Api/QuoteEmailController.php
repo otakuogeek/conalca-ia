@@ -76,7 +76,7 @@ class QuoteEmailController extends Controller
                     return [
                         'ciudad_origen' => $cotizacion->ciudad_origen,
                         'ciudad_destino' => $cotizacion->ciudad_destino,
-                        'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
+                        'vehiculo_requerido' => $cotizacion->vehiculo_filtrado ?? $cotizacion->vehiculo_requerido,
                         'peso_mercancia' => $cotizacion->peso_mercancia,
                         'valor' => $cotizacion->valor,
                         'valor_final' => $cotizacion->valor,

@@ -110,13 +110,13 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'    => $producto, // 🔥 Usar producto con prioridad correcta
+                        'tipo_producto'    => $producto,
                         'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'vehiculo_filtrado' => $routeData['vehiculo_filtrado'] ?? $routeData['vehiculo_requerido'] ?? null,
                         'valor_declarado'  => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'       => $routeData['pricing_id'] ?? null,
                         'porcentaje'       => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
                         'valor_cliente'    => $this->parseMoneyField($routeData['valor_cliente'] ?? '0'),
-                        // add any extra fields you need to persist (candado_satelital, etc.)
                     ]);
                 } else {
                     // CREATE new
@@ -129,8 +129,9 @@ class QuoteRoutesController extends Controller
                         'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'       => $producto, // 🔥 Usar producto con prioridad correcta
+                        'tipo_producto'       => $producto,
                         'vehiculo_requerido'  => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'vehiculo_filtrado'   => $routeData['vehiculo_filtrado'] ?? $routeData['vehiculo_requerido'] ?? null,
                         'valor_declarado'     => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'          => $routeData['pricing_id'] ?? null,
                         'porcentaje'          => $this->parseNumericField($routeData['porcentaje'] ?? '0'),

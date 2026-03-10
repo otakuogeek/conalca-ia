@@ -35,6 +35,7 @@ class CotizacionModel extends Model
         'temperatura_mercancia',
         'humedad',
         'vehiculo_requerido',
+        'vehiculo_filtrado',
         'regimen_nacionalizado',
         'agente_aduanas',
         'descargue_cargue',

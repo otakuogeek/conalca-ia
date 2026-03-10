@@ -622,7 +622,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                               {route.ciudad_origen || '-'}
                             </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_requerido || '-'}</td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_filtrado || route.vehiculo_requerido || '-'}</td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
                               {/* 🆕 Mostrar cantidad de contenedores si aplica */}
                               {isContainer && containerQuantity > 1 && (

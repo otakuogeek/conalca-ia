@@ -50,7 +50,7 @@
                             <td>
                                 {{ $cot->ciudad_origen }} - {{ $cot->ciudad_destino }}
                             </td>
-                            <td>{{ $cot->vehiculo_requerido ?? '-' }}</td>
+                            <td>{{ $cot->vehiculo_filtrado ?? $cot->vehiculo_requerido ?? '-' }}</td>
                             <td>${{ number_format($cot->valor > 0 ? $cot->valor : (optional($cot->pricing)->price + optional($cot->pricing)->price * ($cot->porcentaje/100)), 0) }}</td>
                             <td class="actions">
                                 <label>
