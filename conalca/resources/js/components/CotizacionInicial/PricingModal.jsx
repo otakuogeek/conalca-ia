@@ -754,7 +754,9 @@ const requestAISuggestions = async (currentKey) => {
     const extrasTotal = getExtrasTotal(route);
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    return valueWithMargin + acompanamiento + parametersTotal + extrasTotal;
+    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal;
+    // Redondear hacia arriba al múltiplo de 5000 más cercano
+    return Math.ceil(total / 5000) * 5000;
   };
 
   const canContinue = () => {
