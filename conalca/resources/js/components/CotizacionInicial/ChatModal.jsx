@@ -250,6 +250,10 @@ const ChatModal = ({
   const routeFieldLocksRef = useRef({});
   const pendingFieldLocksRef = useRef({});
   const [panelKey, setPanelKey] = useState(0); // 🆕 Key para forzar actualización del panel
+  const [isProcessingOcr, setIsProcessingOcr] = useState(false);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const ocrFileInputRef = useRef(null);
+  const dragCounterRef = useRef(0);
 
   const resetRouteLocks = () => {
     routeFieldLocksRef.current = {};
@@ -3084,6 +3088,138 @@ const ChatModal = ({
     setInputMessage(transcript);
   };
 
+  // --- OCR: Comprimir imagen a menos de 1MB y extraer texto ---
+  const compressImageToBase64 = (file, maxSizeBytes = 1024 * 1024) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          let quality = 0.85;
+          const MAX_DIM = 2048;
+
+          if (width > MAX_DIM || height > MAX_DIM) {
+            const ratio = Math.min(MAX_DIM / width, MAX_DIM / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          const tryCompress = (q) => {
+            const dataUrl = canvas.toDataURL('image/jpeg', q);
+            const sizeBytes = Math.round((dataUrl.length - 'data:image/jpeg;base64,'.length) * 3 / 4);
+            if (sizeBytes > maxSizeBytes && q > 0.1) {
+              tryCompress(q - 0.1);
+            } else {
+              resolve(dataUrl);
+            }
+          };
+          tryCompress(quality);
+        };
+        img.onerror = () => reject(new Error('No se pudo cargar la imagen'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const processImageForOcr = async (file) => {
+    if (!file || !file.type.startsWith('image/')) {
+      alert('Por favor selecciona un archivo de imagen (JPG, PNG, etc.)');
+      return;
+    }
+
+    setIsProcessingOcr(true);
+    try {
+      console.log('[OCR] Comprimiendo imagen...');
+      const base64Image = await compressImageToBase64(file);
+
+      console.log('[OCR] Enviando a OCR.space...');
+      const formData = new FormData();
+      formData.append('base64Image', base64Image);
+      formData.append('language', 'spa');
+      formData.append('isOverlayRequired', 'false');
+      formData.append('OCREngine', '2');
+
+      const response = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        headers: { apikey: 'K88502513888957' },
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (data.IsErroredOnProcessing || !data.ParsedResults?.length) {
+        const errMsg = data.ErrorMessage?.join(', ') || 'No se pudo extraer texto de la imagen.';
+        alert(`Error OCR: ${errMsg}`);
+        return;
+      }
+
+      const extractedText = data.ParsedResults.map(r => r.ParsedText).join('\n').trim();
+      if (!extractedText) {
+        alert('No se encontró texto en la imagen.');
+        return;
+      }
+
+      console.log('[OCR] Texto extraído:', extractedText.substring(0, 200));
+      setInputMessage(prev => prev ? `${prev}\n${extractedText}` : extractedText);
+    } catch (err) {
+      console.error('[OCR] Error:', err);
+      alert('Error al procesar la imagen. Intenta de nuevo.');
+    } finally {
+      setIsProcessingOcr(false);
+    }
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    processImageForOcr(file);
+  };
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingImage(true);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDraggingImage(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingImage(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      processImageForOcr(file);
+    }
+  };
+
   const handleCreateQuote = async () => {
     // 🔒 PROTECCIÓN TRIPLE contra doble click
     if (isSavingQuote.current || isCreatingQuote) {
@@ -4644,7 +4780,24 @@ const ChatModal = ({
                     </div>
                   )}
 
-                  <div className="relative">
+                  <div
+                    className="relative"
+                    onDragEnter={handleDragEnter}
+                    onDragLeave={handleDragLeave}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                  >
+                    {isDraggingImage && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-blue-100 bg-opacity-90 border-2 border-dashed border-blue-400 rounded-xl pointer-events-none">
+                        <div className="flex flex-col items-center space-y-1">
+                          <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                          </svg>
+                          <span className="text-blue-600 text-sm font-semibold product-sans">Suelta la imagen aquí para extraer texto</span>
+                        </div>
+                      </div>
+                    )}
                     <textarea
                       value={inputMessage}
                       onChange={(e) => {
@@ -4674,6 +4827,34 @@ const ChatModal = ({
 
                     {/* Botones de Acción */}
                     <div className="absolute bottom-3 right-3 flex items-center space-x-2">
+                      {/* Botón subir imagen OCR */}
+                      <input
+                        type="file"
+                        ref={ocrFileInputRef}
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleImageUpload}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => ocrFileInputRef.current?.click()}
+                        disabled={isProcessingOcr || isSending || currentRunId || processingMessage}
+                        className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-400 hover:bg-blue-500 transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Subir imagen para extraer texto (OCR)"
+                      >
+                        {isProcessingOcr ? (
+                          <svg className="w-4 h-4 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                          </svg>
+                        )}
+                      </button>
+
                       <SpeechRecognition
                         onResult={handleVoiceResult}
                         isRecording={isRecording}
