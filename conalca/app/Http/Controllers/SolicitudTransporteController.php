@@ -588,6 +588,12 @@ class SolicitudTransporteController extends Controller
             'soltra_mostrarconductordigitalizado'=> 'NO',
             'usuario_codigoautorizado'           => '',
             'soltra_recomendado'                 => '',
+
+            /* ----------  campos cargue/descargue pactados  ---------- */
+            'soltra_tiempocarguepactado'         => $c->tiempo_cargue_pactado ?? '',
+            'soltra_fechacitadescargue'          => $c->fecha_cita_descargue ? Carbon::parse($c->fecha_cita_descargue)->format('Y-m-d') : '',
+            'soltra_horacitadescargue'           => $c->hora_cita_descargue ?? '',
+            'soltra_tiempodescarguepactado'      => $c->tiempo_descargue_pactado ?? '',
         ];
 
         return [

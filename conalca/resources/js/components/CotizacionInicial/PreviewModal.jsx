@@ -132,6 +132,9 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       return isContainerPacking(embalaje);
     });
   };
+  // Redondear valor hacia arriba al múltiplo de 5.000 más cercano
+  const roundToNearest5K = (value) => Math.ceil(value / 5000) * 5000;
+
   const buildRouteFinancials = (route, index) => {
     const pricing = selectedPricings[index];
     const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
@@ -168,13 +171,14 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     });
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const valuePerUnit = valueWithMargin + acompanamiento + parametersTotal;
+    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal;
+    const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
     
     // 🆕 Cantidad de contenedores (solo para sistema interno)
     const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
     
     // 🔥 IMPORTANTE: 
-    // - valuePerUnit: valor por UNIDAD de contenedor (lo que ve el cliente)
+    // - valuePerUnit: valor por UNIDAD redondeado (lo que ve el cliente)
     // - totalValueInternal: valor total multiplicado por cantidad (para sistema interno)
     // - finalValue: ahora es el valor POR UNIDAD (lo que se muestra al cliente)
     const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
@@ -254,7 +258,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       });
 
       const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-      const valuePerUnit = valueWithMargin + acompanamiento + parametersTotal;
+      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal;
+      const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
       
       // 🆕 Detectar si es contenedor y calcular valores
       const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
@@ -263,7 +268,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       const containerSize = getContainerSize(embalaje);
       const containerTara = getContainerTara(embalaje);
       
-      // 🔥 totalValueInternal: para sistema interno (cantidad * valor unitario)
+      // 🔥 totalValueInternal: para sistema interno (cantidad * valor unitario redondeado)
       const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
 
       return {

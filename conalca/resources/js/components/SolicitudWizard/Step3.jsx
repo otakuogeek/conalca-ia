@@ -46,14 +46,18 @@ const DebugInspector = ({ form, formData, data, show }) => {
 };
 
 const buildStep3State = (formData = {}, cargue = {}) => ({
-  fecha_cargue         : formData.fecha_cargue         || cargue.fecha_cargue         || '',
-  hora_cargue          : formData.hora_cargue          || cargue.hora_cargue          || '',
-  remitente            : formData.remitente            || cargue.remitente            || '',
-  destinario           : formData.destinario ?? formData.destinatario ?? cargue.destinario ?? cargue.destinatario ?? '',
-  contacto             : formData.contacto             || cargue.contacto             || '',
-  promesa_servicio     : formData.promesa_servicio     || cargue.promesa_servicio     || '',
-  documento_transporte : formData.documento_transporte || cargue.documento_transporte || '',
-  observacion_cargue   : formData.observacion_cargue   || cargue.observacion_cargue   || ''
+  fecha_cargue              : formData.fecha_cargue              || cargue.fecha_cargue              || '',
+  hora_cargue               : formData.hora_cargue               || cargue.hora_cargue               || '',
+  tiempo_cargue_pactado     : formData.tiempo_cargue_pactado     || cargue.tiempo_cargue_pactado     || '',
+  fecha_cita_descargue      : formData.fecha_cita_descargue      || cargue.fecha_cita_descargue      || '',
+  hora_cita_descargue       : formData.hora_cita_descargue       || cargue.hora_cita_descargue       || '',
+  tiempo_descargue_pactado  : formData.tiempo_descargue_pactado  || cargue.tiempo_descargue_pactado  || '',
+  remitente                 : formData.remitente                 || cargue.remitente                 || '',
+  destinario                : formData.destinario ?? formData.destinatario ?? cargue.destinario ?? cargue.destinatario ?? '',
+  contacto                  : formData.contacto                  || cargue.contacto                  || '',
+  promesa_servicio          : formData.promesa_servicio          || cargue.promesa_servicio          || '',
+  documento_transporte      : formData.documento_transporte      || cargue.documento_transporte      || '',
+  observacion_cargue        : formData.observacion_cargue        || cargue.observacion_cargue        || ''
 });
 
 export default function Step3({ data = {}, formData = {}, onNext, onPrev, loading }) {
@@ -122,6 +126,78 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
             onChange={change}
             className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
             required
+          />
+        </div>
+
+        {/* Tiempo cargue pactado */}
+        <div>
+          <label
+            htmlFor="tiempo_cargue_pactado"
+            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
+          >
+            <FiClock className="text-orange-500" /> Tiempo cargue pactado
+          </label>
+          <input
+            id="tiempo_cargue_pactado"
+            name="tiempo_cargue_pactado"
+            type="time"
+            value={form.tiempo_cargue_pactado}
+            onChange={change}
+            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+          />
+        </div>
+
+        {/* Fecha cita descargue */}
+        <div>
+          <label
+            htmlFor="fecha_cita_descargue"
+            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
+          >
+            <FiCalendar className="text-orange-500" /> Fecha cita descargue
+          </label>
+          <input
+            id="fecha_cita_descargue"
+            name="fecha_cita_descargue"
+            type="date"
+            value={form.fecha_cita_descargue}
+            onChange={change}
+            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+          />
+        </div>
+
+        {/* Hora cita descargue */}
+        <div>
+          <label
+            htmlFor="hora_cita_descargue"
+            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
+          >
+            <FiClock className="text-orange-500" /> Hora cita descargue
+          </label>
+          <input
+            id="hora_cita_descargue"
+            name="hora_cita_descargue"
+            type="time"
+            value={form.hora_cita_descargue}
+            onChange={change}
+            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+          />
+        </div>
+
+        {/* Tiempo descargue pactado */}
+        <div>
+          <label
+            htmlFor="tiempo_descargue_pactado"
+            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
+          >
+            <FiClock className="text-orange-500" /> Tiempo descargue pactado
+          </label>
+          <input
+            id="tiempo_descargue_pactado"
+            name="tiempo_descargue_pactado"
+            type="time"
+            value={form.tiempo_descargue_pactado}
+            onChange={change}
+            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
         </div>
 
