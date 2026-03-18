@@ -49,4 +49,46 @@ class SilogController extends Controller
                             $r->all());
         return $res->json();
     }
+
+    /**
+     * Consultar clientes en Silogtran (API externa).
+     * GET /api/silog/clientes?documento=900894351&calificacion=A
+     */
+    public function consultarCliente(Request $req, SilogtranService $silog)
+    {
+        $documento    = $req->input('documento');
+        $calificacion = $req->input('calificacion');
+
+        if (!$documento && !$calificacion) {
+            return response()->json([
+                'success' => false,
+                'data'    => [],
+                'msg'     => 'Debe ingresar al menos un filtro (documento o calificacion)',
+            ], 422);
+        }
+
+        // Validar calificación si se envía
+        if ($calificacion && !in_array(strtoupper($calificacion), ['A', 'B', 'C', 'D'])) {
+            return response()->json([
+                'success' => false,
+                'data'    => [],
+                'msg'     => 'La calificación debe ser A, B, C o D',
+            ], 422);
+        }
+
+        try {
+            $result = $silog->consultarCliente($documento, $calificacion);
+            return response()->json($result);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('[SilogController] consultarCliente error', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'data'    => [],
+                'msg'     => 'Error al consultar clientes en Silogtran: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

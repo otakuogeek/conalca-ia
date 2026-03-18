@@ -108,19 +108,56 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
   const searchClients = async (searchTerm) => {
     setSearchLoading(true);
     try {
-      const response = await fetch(`/api/clients/search?q=${encodeURIComponent(searchTerm)}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        const clients = data.clients || [];
-        setSearchResults(clients);
-        setShowSearchResults(clients.length > 0);
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(csrfToken && { 'X-CSRF-TOKEN': csrfToken })
+      };
+
+      // Buscar en BD local y en Silogtran (API externa) en paralelo
+      const [localRes, silogRes] = await Promise.allSettled([
+        fetch(`/api/clients/search?q=${encodeURIComponent(searchTerm)}`, { headers }),
+        fetch(`/api/silog/clientes?documento=${encodeURIComponent(searchTerm)}`, { headers }),
+      ]);
+
+      let merged = [];
+
+      // Resultados locales
+      if (localRes.status === 'fulfilled' && localRes.value.ok) {
+        const localData = await localRes.value.json();
+        merged = (localData.clients || []).map(c => ({ ...c, source: 'local' }));
       }
+
+      // Resultados de Silogtran
+      if (silogRes.status === 'fulfilled' && silogRes.value.ok) {
+        const silogData = await silogRes.value.json();
+        if (silogData.success && silogData.data) {
+          const silogClients = Object.values(silogData.data).map(c => ({
+            id: null,
+            documento: (c.nitcliente_digitoverificacion || '').trim(),
+            cliente: c.nombre_razonsocial || '',
+            calificacion: c.calificacion || '',
+            estado: c.estado_cliente || '',
+            email: '',
+            telefono: '',
+            direccion: '',
+            ciudad: '',
+            contacto: '',
+            cargo: '',
+            source: 'silogtran',
+          }));
+          // Evitar duplicados por documento
+          const localDocs = new Set(merged.map(c => c.documento));
+          silogClients.forEach(c => {
+            if (!localDocs.has(c.documento)) {
+              merged.push(c);
+            }
+          });
+        }
+      }
+
+      setSearchResults(merged);
+      setShowSearchResults(merged.length > 0);
     } catch (error) {
       console.error('Error buscando clientes:', error);
     } finally {
@@ -227,22 +264,51 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
 
                 {/* Dropdown de resultados de búsqueda */}
                 {showSearchResults && searchResults.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                    {searchResults.map((client) => (
-                      <div
-                        key={client.id}
-                        onClick={() => selectClient(client)}
-                        className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-medium text-gray-900 text-sm">{client.cliente}</span>
-                          <span className="text-xs text-gray-500">NIT: {client.documento}</span>
-                          {client.ciudad && (
-                            <span className="text-xs text-gray-500">{client.ciudad}</span>
-                          )}
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
+                    {searchResults.map((client, idx) => {
+                      const estado = (client.estado || '').toUpperCase();
+                      const isActivo = estado === 'ACTIVO';
+                      return (
+                        <div
+                          key={client.id || `silog-${idx}`}
+                          onClick={() => selectClient(client)}
+                          className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-col min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-gray-900 text-sm truncate">{client.cliente}</span>
+                                {client.source === 'silogtran' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium shrink-0">Silogtran</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                <span className="text-xs text-gray-500">NIT: {client.documento}</span>
+                                {client.ciudad && (
+                                  <span className="text-xs text-gray-400">{client.ciudad}</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {estado && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                                  isActivo
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-orange-100 text-orange-700'
+                                }`}>
+                                  {estado}
+                                </span>
+                              )}
+                              {client.calificacion && (
+                                <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full font-medium">
+                                  {client.calificacion}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

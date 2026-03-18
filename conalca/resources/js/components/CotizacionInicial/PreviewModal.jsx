@@ -376,6 +376,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           asesor_name: emailData.advisorName,
           asesor_phone: emailData.advisorPhone,
           asesor_email: emailData.advisorEmail,
+          cargo_type: clientData.cargoType || null,
+          operation_type: clientData.operationType || null,
           routes: quotesToSave,
           total_price: calculateTotal(),
         },
@@ -565,6 +567,82 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                 <p className="text-xs text-gray-700 leading-relaxed">
                   {emailData.promptResponse}
                 </p>
+              </div>
+
+              {/* Detalle de la Cotización por Ruta */}
+              <div className="my-4">
+                <h3 className="text-xs font-semibold text-gray-800 mb-2 flex items-center">
+                  <svg className="w-3 h-3 mr-1 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                    <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                  </svg>
+                  Detalle de la Cotización
+                </h3>
+
+                {quoteData.map((route, index) => {
+                  const { finalValue } = buildRouteFinancials(route, index);
+                  const cargoLabels = {
+                    general: 'General', refrigerado: 'Refrigerada',
+                    dangerous: 'Peligrosa', sobredimensionada: 'Sobredimensionada',
+                  };
+                  const cargoLabel = cargoLabels[(clientData.cargoType || 'general').toLowerCase()] || (clientData.cargoType || 'General');
+
+                  return (
+                    <div key={index} className="mb-3 border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                      <div className="bg-orange-500 text-white px-3 py-1.5 text-[11px] font-semibold">
+                        Ruta #{index + 1}: {route.ciudad_origen || '-'} → {route.ciudad_destino || '-'}
+                      </div>
+                      <table className="w-full text-[10px] border-collapse">
+                        <tbody>
+                          <tr>
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold w-2/5">Origen</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{route.ciudad_origen || '-'}</td>
+                          </tr>
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Destino</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{route.ciudad_destino || '-'}</td>
+                          </tr>
+                          <tr>
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Tipo Carga</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{cargoLabel}</td>
+                          </tr>
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Peso</td>
+                            <td className="px-2 py-1 border-b border-gray-100">
+                              {route.peso_mercancia ? `${Number(route.peso_mercancia).toLocaleString()} kg` : '-'}
+                            </td>
+                          </tr>
+                          {route.valor_declarado && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Valor Mercancía</td>
+                              <td className="px-2 py-1 border-b border-gray-100">
+                                ${Number(route.valor_declarado).toLocaleString()}
+                              </td>
+                            </tr>
+                          )}
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Vehículo</td>
+                            <td className="px-2 py-1 border-b border-gray-100">
+                              {route.vehiculo_filtrado || route.vehiculo_requerido || '-'}
+                            </td>
+                          </tr>
+                          {route.tipo_producto && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Producto</td>
+                              <td className="px-2 py-1 border-b border-gray-100 capitalize">{route.tipo_producto}</td>
+                            </tr>
+                          )}
+                          <tr className="bg-orange-50">
+                            <td className="px-2 py-1.5 text-orange-700 font-bold">Valor del Servicio</td>
+                            <td className="px-2 py-1.5 text-orange-700 font-bold text-sm">
+                              ${Number(finalValue).toLocaleString()}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Tabla de Rutas */}

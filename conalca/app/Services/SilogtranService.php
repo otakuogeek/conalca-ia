@@ -53,6 +53,42 @@ class SilogtranService
     }
 
     /* -----------------------------------------------------------------
+     |  CONSULTAR CLIENTE
+     |-----------------------------------------------------------------*/
+
+    /**
+     * Consulta clientes en Silogtran mediante la API consultarCliente.
+     *
+     * @param  string|null $documento  NIT / documento del cliente
+     * @param  string|null $calificacion  A, B, C o D
+     * @return array  Respuesta completa de la API
+     */
+    public function consultarCliente(?string $documento = null, ?string $calificacion = null): array
+    {
+        $payload = [];
+
+        if ($documento) {
+            $payload['documento_cliente'] = $documento;
+        }
+        if ($calificacion) {
+            $payload['calificacion'] = $calificacion;
+        }
+
+        $response = $this->call(
+            'servicio.ConsultasInforme.consultarCliente',
+            $payload
+        );
+
+        Log::debug('[ConsultarCliente] HTTP Silogtran', [
+            'status'  => $response->status(),
+            'body'    => $response->body(),
+            'payload' => $payload,
+        ]);
+
+        return $response->json() ?? [];
+    }
+
+    /* -----------------------------------------------------------------
      |  SOLICITUD DE TRANSPORTE
      |-----------------------------------------------------------------*/
 

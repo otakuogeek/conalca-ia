@@ -77,9 +77,13 @@ class QuoteEmailController extends Controller
                         'ciudad_origen' => $cotizacion->ciudad_origen,
                         'ciudad_destino' => $cotizacion->ciudad_destino,
                         'vehiculo_requerido' => $cotizacion->vehiculo_filtrado ?? $cotizacion->vehiculo_requerido,
+                        'vehiculo_solicitado' => $cotizacion->vehiculo_requerido,
                         'peso_mercancia' => $cotizacion->peso_mercancia,
                         'valor' => $cotizacion->valor,
                         'valor_final' => $cotizacion->valor,
+                        'valor_declarado' => $cotizacion->valor_declarado,
+                        'tipo_producto' => $cotizacion->tipo_producto,
+                        'tipo_mercancia' => $cotizacion->tipo_mercancia,
                         'tipaco_codigo' => $cotizacion->tipaco_codigo ?? null,
                         'itesoltra_vehiculoacompanamiento' => $cotizacion->itesoltra_vehiculoacompanamiento ?? 0,
                         'itesoltra_acompanamientovalor' => $cotizacion->itesoltra_acompanamientovalor ?? 0,
@@ -120,6 +124,10 @@ class QuoteEmailController extends Controller
                 // Rutas y totales (usar datos de la BD, no del frontend)
                 'routes'                => $this->prepareRoutesWithTotals($routesFromDB),
                 'total_price'           => $this->calculateTotalPrice($routesFromDB),
+                
+                // Datos de la solicitud original para comparativo
+                'cargo_type'            => $group->cargo_type ?? $emailData['cargo_type'] ?? null,
+                'operation_type'        => $group->operation_type ?? $emailData['operation_type'] ?? null,
                 
                 // Asesor
                 'asesor_name'           => $emailData['asesor_name'] ?? 'Asesor Comercial',

@@ -576,6 +576,14 @@ Route::delete('/cotizacion/grupos/{id}', [App\Http\Controllers\Api\GroupQuotatio
     ->name('api.cotizacion.grupos.destroy');
 
 // ═══════════════════════════════════════════════════════════════
+// Silogtran - Consultas externas
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('silog')->group(function () {
+    Route::get('/clientes', [App\Http\Controllers\Api\SilogController::class, 'consultarCliente'])
+        ->name('api.silog.consultar-cliente');
+});
+
+// ═══════════════════════════════════════════════════════════════
 // Solicitud Transporte Routes - Sistema de solicitudes de transporte paso a paso
 // ═══════════════════════════════════════════════════════════════
 Route::prefix('solicitud-transporte')->group(function () {
