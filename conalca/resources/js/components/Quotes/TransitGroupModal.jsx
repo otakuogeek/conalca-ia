@@ -85,6 +85,17 @@ export default function TransitGroupModal({ open, onClose, group }) {
                     <span className="px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200 shadow-sm">
                       ID {group?.id}
                     </span>
+                    {(() => {
+                      const stMatch = (group?.cotizaciones || [])
+                        .map(c => c.solicitud?.silogtran_status || '')
+                        .join(' ')
+                        .match(/ST\s*\d+/i);
+                      return stMatch ? (
+                        <span className="px-3 py-1.5 rounded-full bg-green-50 text-green-700 text-xs font-bold border border-green-200 shadow-sm">
+                          {stMatch[0]}
+                        </span>
+                      ) : null;
+                    })()}
                     <span
                       className="truncate uppercase text-gray-700 text-sm"
                       title={group?.client?.name}

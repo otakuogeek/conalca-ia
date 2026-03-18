@@ -825,6 +825,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
         Route::get('/empaques',          'empaques');
         Route::get('/vehiculos/clases',  'clasesVehiculo');
         Route::get('/vehiculos/carrocerias','carrocerias');
+        Route::get('/terceros',          'terceros');
     });
 
     // Módulo de Conductores (Solo SUPER ADMIN y SAC)

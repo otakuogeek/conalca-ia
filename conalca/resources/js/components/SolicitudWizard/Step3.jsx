@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import PropTypes   from 'prop-types';
 import { chatBus } from './ChatBox';
+import AsyncSearchSelect    from '../ui/AsyncSelect';
+import { searchTerceros }    from '../../api/solicitud';
 import {
   FiPackage,        // título
   FiCalendar,       // fechas
@@ -45,7 +47,7 @@ const DebugInspector = ({ form, formData, data, show }) => {
   );
 };
 
-const buildStep3State = (formData = {}, cargue = {}) => ({
+const buildStep3State = (formData = {}, cargue = {}, data = {}) => ({
   fecha_cargue              : formData.fecha_cargue              || cargue.fecha_cargue              || '',
   hora_cargue               : formData.hora_cargue               || cargue.hora_cargue               || '',
   tiempo_cargue_pactado     : formData.tiempo_cargue_pactado     || cargue.tiempo_cargue_pactado     || '',
@@ -53,21 +55,23 @@ const buildStep3State = (formData = {}, cargue = {}) => ({
   hora_cita_descargue       : formData.hora_cita_descargue       || cargue.hora_cita_descargue       || '',
   tiempo_descargue_pactado  : formData.tiempo_descargue_pactado  || cargue.tiempo_descargue_pactado  || '',
   remitente                 : formData.remitente                 || cargue.remitente                 || '',
+  remitente_label           : formData.remitente_label           || cargue.remitente_label           || '',
   destinario                : formData.destinario ?? formData.destinatario ?? cargue.destinario ?? cargue.destinatario ?? '',
+  destinario_label          : formData.destinario_label          || cargue.destinario_label          || '',
   contacto                  : formData.contacto                  || cargue.contacto                  || '',
   promesa_servicio          : formData.promesa_servicio          || cargue.promesa_servicio          || '',
   documento_transporte      : formData.documento_transporte      || cargue.documento_transporte      || '',
-  observacion_cargue        : formData.observacion_cargue        || cargue.observacion_cargue        || ''
+  observacion_cargue        : formData.observacion_cargue        || cargue.observacion_cargue        || data.condicion_despacho || ''
 });
 
 export default function Step3({ data = {}, formData = {}, onNext, onPrev, loading }) {
   const c = data.cargue || {};
   
   const [showDebug, setShowDebug] = useState(false);
-  const [form, setForm] = useState(buildStep3State(formData, c));
+  const [form, setForm] = useState(buildStep3State(formData, c, data));
 
   useEffect(() => {
-    setForm(buildStep3State(formData, data.cargue || {}));
+    setForm(buildStep3State(formData, data.cargue || {}, data));
   }, [formData, data]);
   
 
@@ -135,15 +139,18 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
             htmlFor="tiempo_cargue_pactado"
             className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
           >
-            <FiClock className="text-orange-500" /> Tiempo cargue pactado
+            <FiClock className="text-orange-500" /> Tiempo cargue pactado (horas)
           </label>
           <input
             id="tiempo_cargue_pactado"
             name="tiempo_cargue_pactado"
-            type="time"
+            type="number"
+            min="0"
+            step="1"
             value={form.tiempo_cargue_pactado}
             onChange={change}
             className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            placeholder="Ej: 4"
           />
         </div>
 
@@ -189,62 +196,74 @@ export default function Step3({ data = {}, formData = {}, onNext, onPrev, loadin
             htmlFor="tiempo_descargue_pactado"
             className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
           >
-            <FiClock className="text-orange-500" /> Tiempo descargue pactado
+            <FiClock className="text-orange-500" /> Tiempo descargue pactado (horas)
           </label>
           <input
             id="tiempo_descargue_pactado"
             name="tiempo_descargue_pactado"
-            type="time"
+            type="number"
+            min="0"
+            step="1"
             value={form.tiempo_descargue_pactado}
             onChange={change}
             className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            placeholder="Ej: 4"
           />
         </div>
 
         {/* Remitente */}
         <div>
-          <label
-            htmlFor="remitente"
-            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
-          >
+          <label className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
             <FiUser className="text-orange-500" /> Remitente
           </label>
-          <input
+          <AsyncSearchSelect
             id="remitente"
-            name="remitente"
-            value={form.remitente}
-            onChange={change}
-            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            placeholder="Remitente"
-            required
+            load={searchTerceros}
+            getOpt={t => ({
+              value: String(t.id),
+              label: `${t.codigo || t.documento} – ${t.cliente}`
+            })}
+            value={
+              form.remitente
+                ? { value: form.remitente, label: form.remitente_label || form.remitente }
+                : null
+            }
+            onChange={opt =>
+              setForm(p => ({
+                ...p,
+                remitente       : opt?.value || '',
+                remitente_label : opt?.label || ''
+              }))
+            }
+            placeholder="Buscar remitente…"
           />
         </div>
 
         {/* Destinatario */}
         <div>
-          <label
-            htmlFor="destinatario"
-            className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800"
-          >
+          <label className="block text-sm font-semibold mb-1 flex items-center gap-1 text-gray-800">
             <FiUserCheck className="text-orange-500" /> Destinatario
           </label>
-          {/* <input
+          <AsyncSearchSelect
             id="destinatario"
-            name="destinatario"
-            value={form.destinatario}
-            onChange={change}
-            className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
-            placeholder="Destinatario"
-            required
-          /> */}
-          <input
-            id="destinario"
-            name="destinario"
-            value={form.destinario}
-            onChange={change}
-            className="…"
-            placeholder="Destinatario"
-            required
+            load={searchTerceros}
+            getOpt={t => ({
+              value: String(t.id),
+              label: `${t.codigo || t.documento} – ${t.cliente}`
+            })}
+            value={
+              form.destinario
+                ? { value: form.destinario, label: form.destinario_label || form.destinario }
+                : null
+            }
+            onChange={opt =>
+              setForm(p => ({
+                ...p,
+                destinario       : opt?.value || '',
+                destinario_label : opt?.label || ''
+              }))
+            }
+            placeholder="Buscar destinatario…"
           />
         </div>
 

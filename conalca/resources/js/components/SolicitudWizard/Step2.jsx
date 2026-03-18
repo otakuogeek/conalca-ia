@@ -651,7 +651,8 @@ export default function Step2({ data = {}, formData = {}, onNext, onPrev, loadin
               setForm(p => ({
                 ...p,
                 producto: opt?.value || '',
-                producto_label: opt?.label || ''
+                producto_label: opt?.label || '',
+                descripcion_mercancia: opt?.label || p.descripcion_mercancia || ''
               }))
             }
           />

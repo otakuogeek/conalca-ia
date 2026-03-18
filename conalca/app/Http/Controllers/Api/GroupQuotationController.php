@@ -45,7 +45,7 @@ class GroupQuotationController extends Controller
                         $q->select($cotizacionColumns);
                     },
                     'cotizaciones.pricing:id,price',
-                    'cotizaciones.solicitud:id,cotizacion_model_id,estado',
+                    'cotizaciones.solicitud:id,cotizacion_model_id,estado,silogtran_status',
                 ])
                 // Excluir borradores vacíos (sin cotizaciones)
                 ->where(function ($q) {

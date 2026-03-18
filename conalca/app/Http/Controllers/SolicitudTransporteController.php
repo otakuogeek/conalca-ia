@@ -507,8 +507,8 @@ class SolicitudTransporteController extends Controller
 
         /* ----------- DETALLE  (toma lo que haya y normaliza los valores) ----------- */
         $detalle = [[
-            'ciudad_codigo_origen'            => SH::normalizeCityCode($d->origen ?? 11001000),
-            'ciudad_codigo_destino'           => SH::normalizeCityCode($d->destino ?? 11001000),
+            'ciudad_codigo_origen'            => SH::normalizeCityCode($d->origen ?? '11001000'),
+            'ciudad_codigo_destino'           => SH::normalizeCityCode($d->destino ?? '11001000'),
             'ciudad_codigo_intermedia'        => null,
 
             'itesoltra_cantidad'              => SH::normalizeNumeric($d->cantidad_mercancia ?? 1),
@@ -572,7 +572,7 @@ class SolicitudTransporteController extends Controller
             'soltra_medio'                       => SH::normalizeRequestSource($solicitud->fuente_solicitud ?? 'PAGINA WEB'),
             'soltra_condicionesdespacho'         => $solicitud->condicion_despacho ?? 'PRUEBA WS',
             'soltra_condicionesfacturacion'      => $solicitud->condicion_facturacion ?? 'PRUEBA WS',
-            'ciudad_codigo_facturacion'          => SH::normalizeCityCode($solicitud->ciudad_facturacion ?? 11001000),
+            'ciudad_codigo_facturacion'          => SH::normalizeCityCode($solicitud->ciudad_facturacion ?? '11001000'),
             'vendedor_codigo'                    => $solicitud->vendedor,
             'soltra_mandatario'                  => 1,
             'soltra_tipooperacion'               => SH::normalizeOperationType($solicitud->tipo_operacion ?? 'DISTRIBUCION'),
@@ -606,7 +606,7 @@ class SolicitudTransporteController extends Controller
 
     public function prefill($cotizacionId)
     {
-        $cot = CotizacionModel::with(['client', 'groupCotization'])->findOrFail($cotizacionId);
+        $cot = CotizacionModel::with(['client', 'groupCotization', 'groupCotization.user'])->findOrFail($cotizacionId);
 
         $fechaHora = Carbon::parse($cot->fecha_hora_descargue_cargue);
 
@@ -616,27 +616,49 @@ class SolicitudTransporteController extends Controller
         $groupModalidad = $cot->groupCotization?->type;
         $cotModalidad   = $cot->tipo;
 
+        // Resolver producto, empaque, clase vehículo (con labels)
+        $prodResult    = $this->resolveProducto($cot->tipo_producto);
+        $empResult     = $this->resolveEmpaque($cot->tipo_embajale);
+        $vehResult     = $this->resolveVehicleClass($cot->vehiculo_requerido);
+
+        $user = $cot->groupCotization?->user;
         $data = [
             'cliente_codigo'     => $cot->client?->codigo,
             'cliente_nombre'     => $cot->client?->cliente,
-            'vendedor'           => $cot->groupCotization?->user?->documento,
+            'vendedor'           => $user?->documento,
+            'vendedor_label'     => $user ? ($user->documento . ' – ' . $user->name) : '',
             'origen'             => $origenCode,
+            'origen_label'       => $this->buildCityLabel($origenCode),
             'destino'            => $destinoCode,
+            'destino_label'      => $this->buildCityLabel($destinoCode),
             'cantidad_mercancia' => $cot->cantidad,
             'peso'               => $cot->peso_mercancia,
-            'producto'           => $cot->tipo_producto,
-            'empaque'            => $cot->tipo_embajale,
+            'producto'           => $prodResult['code'],
+            'producto_label'     => $prodResult['label'],
+            'empaque'            => $empResult['code'],
+            'empaque_label'      => $empResult['label'],
             'cantidad_vehiculos' => $cot->cantidad_vh,
             'tipo_operacion'     => $cot->operation_type,
             'tipo_flete'         => strtoupper($cot->consolidado_expreso ?: $cot->fcl_lcl),
             'valor_mercancia'    => $cot->valor_declarado ?: $cot->valor,
-            'descripcion_mercancia' => $cot->tipo_mercancia,
+            'tarifa_cliente'     => $cot->valor,
+            'descripcion_mercancia' => $cot->tipo_mercancia ?: $cot->tipo_producto,
+            'clase_vehiculo'     => $vehResult['code'],
+            'clase_vehiculo_label' => $vehResult['label'],
             'cargue_cuenta_de'   => strtoupper($cot->descargue_cargue) ?: 'CLIENTE',
             'fecha_cargue'       => $fechaHora?->toDateString(),
             'hora_cargue'        => $fechaHora?->format('H:i'),
             'contenedor'         => $cot->fcl_lcl === 'FCL' ? 'SI' : 'NO',
+            // Step 1 - datos del grupo
+            'tipo_viaje'          => $cot->groupCotization?->tipo_viaje ?: '',
+            'moneda'              => $cot->groupCotization?->moneda ?: '',
+            'fuente_solicitud'    => $cot->groupCotization?->fuente_solicitud ?: '',
+            'condicion_despacho'  => $cot->groupCotization?->condicion_despacho ?: '',
+            'condicion_facturacion' => $cot->groupCotization?->condicion_facturacion ?: '',
+            'ciudad_facturacion'  => $cot->groupCotization?->ciudad_facturacion ?: '',
+            'centro_costo_despacho' => $cot->groupCotization?->centro_costo_despacho ?: '',
             // Step 5 – prefer group type, fall back to cotización type
-            'modalidad_internacional' => strtoupper(
+            'modalidad_internacional' => $this->normalizeModalidad(
                 $groupModalidad ?? $cotModalidad ?? ''
             ),
             'itesoltra_vehiculoacompanamiento'  => $cot->itesoltra_vehiculoacompanamiento,
@@ -687,32 +709,47 @@ class SolicitudTransporteController extends Controller
                 $primera_cotizacion->ciudad_destino
             );
 
-            // 🔧 Resolver código de vehículo desde nombre
-            $claseVehiculoCodigo = null;
-            if ($primera_cotizacion->vehiculo_requerido) {
-                $vehiculo = \DB::table('vehicle_class')
-                    ->where('Nombre', 'LIKE', '%' . $primera_cotizacion->vehiculo_requerido . '%')
-                    ->first();
-                $claseVehiculoCodigo = $vehiculo ? $vehiculo->Codigo : null;
-            }
+            // Resolver producto, empaque, clase vehículo (con labels)
+            $prodResult = $this->resolveProducto($primera_cotizacion->tipo_producto);
+            $empResult  = $this->resolveEmpaque($primera_cotizacion->tipo_embajale);
+            $vehResult  = $this->resolveVehicleClass($primera_cotizacion->vehiculo_requerido);
 
+            $groupUser = $grupo->user;
             $data = [
-                // Step 1
+                // Step 1 - datos del grupo
                 'cliente_codigo' => $grupo->client?->codigo,
                 'cliente_nombre' => $grupo->client?->cliente,
                 'tipo_operacion' => $grupo->operation_type ?: 'DISTRIBUCION',
-                'vendedor'       => $grupo->user?->documento,
+                'vendedor'       => $groupUser?->documento,
+                'vendedor_label' => $groupUser ? ($groupUser->documento . ' – ' . $groupUser->name) : '',
+                'tipo_viaje'          => $grupo->tipo_viaje ?: '',
+                'moneda'              => $grupo->moneda ?: '',
+                'fuente_solicitud'    => $grupo->fuente_solicitud ?: '',
+                'condicion_despacho'  => $grupo->condicion_despacho ?: '',
+                'condicion_facturacion' => $grupo->condicion_facturacion ?: '',
+                'ciudad_facturacion'  => $grupo->ciudad_facturacion ?: '',
+                'centro_costo_despacho' => $grupo->centro_costo_despacho ?: '',
 
-                // Step 2 – use numeric codes
+                // Step 2 – codes + labels
                 'origen'             => $origenCode,
+                'origen_label'       => $this->buildCityLabel($origenCode),
                 'destino'            => $destinoCode,
-                'cantidad_mercancia' => $primera_cotizacion->cantidad_mercancia,
+                'destino_label'      => $this->buildCityLabel($destinoCode),
+                'cantidad_mercancia' => $primera_cotizacion->cantidad_mercancia ?: $primera_cotizacion->cantidad,
                 'peso'               => $primera_cotizacion->peso_mercancia ?: $primera_cotizacion->peso,
                 'valor_mercancia'    => $primera_cotizacion->valor_declarado,
-                'descripcion_mercancia' => $primera_cotizacion->tipo_mercancia,
+                'descripcion_mercancia' => $primera_cotizacion->tipo_mercancia ?: $primera_cotizacion->tipo_producto,
                 'vehiculo_requerido' => $primera_cotizacion->vehiculo_requerido,
-                'clase_vehiculo'     => $claseVehiculoCodigo, // 🔧 Usar código resuelto desde nombre
+                'clase_vehiculo'     => $vehResult['code'],
+                'clase_vehiculo_label' => $vehResult['label'],
+                'producto'           => $prodResult['code'],
+                'producto_label'     => $prodResult['label'],
+                'empaque'            => $empResult['code'],
+                'empaque_label'      => $empResult['label'],
+                'tarifa_cliente'     => $primera_cotizacion->valor,
                 'tipo_carga'         => $primera_cotizacion->tipo_carga,
+                'cantidad_vehiculos' => $primera_cotizacion->cantidad_vh ?: 1,
+                'cargue_cuenta_de'   => strtoupper($primera_cotizacion->descargue_cargue ?: '') ?: 'CLIENTE',
                 'clasificacion_contenedor' => $primera_cotizacion->clasificacion_contenedor,
                 'tipo_contenedor'    => $primera_cotizacion->tipo_contenedor,
                 'toneladas'          => $primera_cotizacion->toneladas,
@@ -720,7 +757,7 @@ class SolicitudTransporteController extends Controller
                 'acompanamiento_seguridad' => $primera_cotizacion->acompanamiento_seguridad,
 
                 // Step 5
-                'modalidad_internacional' => strtoupper($grupo->type ?: ''),
+                'modalidad_internacional' => $this->normalizeModalidad($grupo->type ?: ''),
 
                 // Operation flow metadata
                 'operation_flow' => [
@@ -767,7 +804,159 @@ class SolicitudTransporteController extends Controller
                     ->first();
 
         return $city?->ciudad_codigodane;
-}
+    }
+
+    /**
+     * Build a display label for a city DANE code (e.g. "5001000 – MEDELLIN").
+     */
+    private function buildCityLabel($code): string
+    {
+        if (!$code) return '';
+        $city = City::where('ciudad_codigodane', $code)
+                    ->where('estado_nombre', 'ACTIVO')
+                    ->first();
+        if (!$city) return (string) $code;
+        $label = $city->ciudad_codigodane . ' – ' . $city->ciudad_nombre;
+        if ($city->municipio_nombre && $city->municipio_nombre !== $city->ciudad_nombre) {
+            $label .= ' – ' . $city->municipio_nombre;
+        }
+        return $label;
+    }
+
+    /**
+     * Cotización vehicle names to Silogtran vehicle_class mapping.
+     * Returns ['code' => int|null, 'label' => string]
+     */
+    private function resolveVehicleClass(?string $vehiculoRequerido): array
+    {
+        if (!$vehiculoRequerido) return ['code' => null, 'label' => ''];
+
+        // Aliases: cotización names that don't exist in vehicle_class
+        $aliases = [
+            'RÍGIDO'           => 'SENCILLO',
+            'RIGIDO'           => 'SENCILLO',
+            'TRACTOCAMION'     => 'TRACTOMULA 2',
+            'TRACTOMULA'       => 'TRACTOMULA 2',
+            'MINIMULA'         => 'TRACTOMULA 2',
+            'TRACTO'           => 'TRACTOMULA 2',
+            'PATINETA'         => 'PATINETA2',
+            'ARTICULADO'       => 'TRACTOMULA 2',
+            'CAMION'           => 'SENCILLO',
+            'CAMIÓN SENCILLO'  => 'SENCILLO',
+            'FURGON'           => 'SENCILLO',
+            'CAMILLO SENCILLO' => 'SENCILLO',
+            'CAMIÓN TURBO'     => 'TURBO',
+            'CAMION TURBO'     => 'TURBO',
+        ];
+
+        $upper = mb_strtoupper(trim($vehiculoRequerido));
+        // Strip accents for alias lookup
+        $sinAcento = strtoupper(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $upper) ?: $upper);
+
+        // Check alias first
+        $searchName = $aliases[$upper] ?? $aliases[$sinAcento] ?? null;
+
+        // Direct DB search — use exact match for alias resolution, LIKE for direct names
+        if ($searchName) {
+            $vehiculo = \DB::table('vehicle_class')
+                ->whereRaw('UPPER(Nombre) = ?', [$searchName])
+                ->first();
+            // Fallback to LIKE if exact doesn't match
+            if (!$vehiculo) {
+                $vehiculo = \DB::table('vehicle_class')
+                    ->where('Nombre', 'LIKE', '%' . $searchName . '%')
+                    ->first();
+            }
+        } else {
+            $vehiculo = \DB::table('vehicle_class')
+                ->whereRaw('UPPER(Nombre) = ?', [$upper])
+                ->first();
+            if (!$vehiculo) {
+                $vehiculo = \DB::table('vehicle_class')
+                    ->where('Nombre', 'LIKE', '%' . $upper . '%')
+                    ->first();
+            }
+        }
+
+        // Fallback: accent-stripped search
+        if (!$vehiculo && !$searchName) {
+            $vehiculo = \DB::table('vehicle_class')
+                ->whereRaw("REPLACE(REPLACE(REPLACE(Nombre,'Í','I'),'É','E'),'Ó','O') LIKE ?",
+                           ['%' . $sinAcento . '%'])
+                ->first();
+        }
+
+        return [
+            'code'  => $vehiculo?->Codigo,
+            'label' => $vehiculo ? ($vehiculo->Codigo . ' – ' . $vehiculo->Nombre) : '',
+        ];
+    }
+
+    /**
+     * Resolve product text name to code + label.
+     * Returns ['code' => mixed, 'label' => string]
+     */
+    private function resolveProducto(?string $tipoProducto): array
+    {
+        if (!$tipoProducto) return ['code' => null, 'label' => ''];
+        if (is_numeric($tipoProducto)) {
+            $prod = \DB::table('products')->where('producto_codigo', $tipoProducto)->first();
+            return [
+                'code'  => $tipoProducto,
+                'label' => $prod ? ($prod->producto_codigo . ' – ' . Str::limit($prod->producto_nombre, 60)) : $tipoProducto,
+            ];
+        }
+        $prod = \DB::table('products')
+            ->where('producto_nombre', 'LIKE', '%' . $tipoProducto . '%')
+            ->first();
+        return [
+            'code'  => $prod ? $prod->producto_codigo : $tipoProducto,
+            'label' => $prod ? ($prod->producto_codigo . ' – ' . Str::limit($prod->producto_nombre, 60)) : '',
+        ];
+    }
+
+    /**
+     * Resolve empaque text name to code + label.
+     * Returns ['code' => mixed, 'label' => string]
+     */
+    private function resolveEmpaque(?string $tipoEmbajale): array
+    {
+        if (!$tipoEmbajale) return ['code' => null, 'label' => ''];
+        if (is_numeric($tipoEmbajale)) {
+            $emp = \DB::table('tb_empaque')->where('id', $tipoEmbajale)->first();
+            return [
+                'code'  => $tipoEmbajale,
+                'label' => $emp ? ($emp->id . ' – ' . $emp->nome) : $tipoEmbajale,
+            ];
+        }
+        $empNombre = strtoupper(trim($tipoEmbajale));
+        if (in_array($empNombre, ['ESTIBAS', 'ESTIBA', 'PALET', 'PALETA', 'PALETS', 'PALETAS'])) {
+            $empNombre = 'CARGA ESTIBADA';
+        }
+        $emp = \DB::table('tb_empaque')->where('nome', 'LIKE', '%' . $empNombre . '%')->first();
+        return [
+            'code'  => $emp ? $emp->id : $tipoEmbajale,
+            'label' => $emp ? ($emp->id . ' – ' . $emp->nome) : '',
+        ];
+    }
+
+    /**
+     * Normalize modalidad_internacional from DB values to Step5 select options.
+     * DB stores: "dta", "otm", "nacionalizado", "nacional", "Cotización"
+     * Step5 options: OTM, DTA, DTAI, NACIONALIZADA
+     */
+    private function normalizeModalidad(?string $raw): string
+    {
+        if (!$raw) return '';
+        $upper = strtoupper(trim($raw));
+        $map = [
+            'NACIONALIZADO' => 'NACIONALIZADA',
+            'NACIONAL'      => 'NACIONALIZADA',
+            'COTIZACIÓN'    => '',
+            'COTIZACION'    => '',
+        ];
+        return $map[$upper] ?? $upper;
+    }
 
     /**
      * Completa todos los datos obligatorios para el API Silogtran

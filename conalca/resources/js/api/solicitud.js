@@ -51,6 +51,10 @@ export const searchClases      = q =>
 export const searchCarrocerias = q =>
   axios.get(`${CATALOG_API}/vehiculos/carrocerias`, { params: { q } });
 
+// Terceros (Remitentes/Destinatarios)
+export const searchTerceros = q =>
+  axios.get(`${CATALOG_API}/terceros`, { params: { q } });
+
 /* Prefills:  GET /solicitud/{cotizacion}/prefill   */
 export const fetchPrefill = (cotizacionId) =>
   axios.get(`${SOLICITUD_API}/${cotizacionId}/prefill`, {

@@ -62,10 +62,13 @@ class CatalogController extends Controller
         $q = $r->input('q', '');
         $qUpper = mb_strtoupper(trim($q));
 
-        $results = City::where('ciudad_nombre', 'like', "%$q%")
-                ->orWhere('ciudad_codigodane', 'like', "%$q%")
+        $results = City::where('estado_nombre', 'ACTIVO')
+                ->where(function($query) use ($q) {
+                    $query->where('ciudad_nombre', 'like', "%$q%")
+                          ->orWhere('ciudad_codigodane', 'like', "%$q%");
+                })
                 ->limit(30)
-                ->get(['ciudad_codigo', 'ciudad_nombre', 'ciudad_codigodane']);
+                ->get(['ciudad_codigo', 'ciudad_nombre', 'ciudad_codigodane', 'municipio_nombre']);
         
         // 🆕 Si hay múltiples resultados, priorizar la ciudad principal
         if ($results->count() > 1 && isset(self::$ciudadesPrincipales[$qUpper])) {
@@ -179,6 +182,23 @@ class CatalogController extends Controller
                     ->orWhere('Codigo Ministerio', 'like', "%$q%")
                     ->limit(15)
                     ->get(['Codigo', 'Codigo Ministerio', 'Nombre']);
+    }
+
+    /**
+     * Remitentes/Destinatarios: busca clientes que pueden ser remitentes o destinatarios.
+     * Usa la tabla clients filtrando por nombre, código o documento.
+     */
+    public function terceros(Request $r) {
+        $q = $r->input('q', '');
+
+        return Client::where(function($query) use ($q) {
+                    $query->where('cliente', 'like', "%$q%")
+                          ->orWhere('codigo', 'like', "%$q%")
+                          ->orWhere('documento', 'like', "%$q%");
+                })
+                ->where('estado', 'ACTIVO')
+                ->limit(15)
+                ->get(['id', 'codigo', 'documento', 'cliente', 'direccion', 'telefono', 'contacto']);
     }
 
 }
