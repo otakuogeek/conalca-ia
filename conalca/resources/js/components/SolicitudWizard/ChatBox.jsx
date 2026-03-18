@@ -252,6 +252,44 @@ function normalizeValue(field, rawValue) {
       return upper.replace(/\s+/g, '_'); // fallback normalization
     }
 
+    case 'centro_costo_despacho': {
+      const CENTROS = [
+        'TRANSLIDHER BARRANQUILLA','TRANSLIDHER BOGOTA','TRANSLIDHER UBATE',
+        'TRANSLIDHER CARTAGENA','TRANSLIDHER BUENAVENTURA','TRANSLIDHER CALI',
+        'TRANSLIDHER SANTA MARTA','TRANSLIDHER PEREIRA','TRANSLIDHER IPIALES',
+        'TRANSLIDHER MEDELLIN','CONALCA MANIZALEZ','CONALCA BUENAVENTURA',
+        'CONALCA CALI','ALMACENAMIENTO MOSQUERA','OTM CONALCA CTG',
+        'OTM CONALCA SNMT','CONALCA IPIALES','ALMACENAMIENTO CALI',
+        'CONALCA CARTAGENA','CONALCA UBATE','OTM CONALCA BTA',
+        'BUN MAERSK DEDICADO','BOG MAERSK DEDICADO','CLO MAERSK DEDICADO',
+        'CONALCA PEREIRA','CONALCA BARRANQUILLA','ARMENIA - BAVARIA',
+        'CONALCA PAGOS ANT','CONALCA SANTA MARTA','CARTAGENA - BAVARIA',
+        'TUNJA - BAVARIA','SANTAMARTA - BAVARIA','YUMBO - BAVARIA',
+        'CONALCA BOGOTA','CONALCA BUCARAMANGA','OTM CONALCA BAQ',
+        'OTM CONALCA BUN','BUENAVENTURA PANTOS','CONALCA MEDELLIN',
+        'ALMACENAMIENTO','BOGOTA GLOBAL','BUENAVENTURA GLOBAL',
+        'CALI GLOBAL EXPRESS','BOGOTA CONENVIOS','MEDELLIN GLOBAL EXPRESS',
+        'BOGOTA CONALOG','TRANSIFRONT CUCUTA'
+      ];
+      const up = value.toUpperCase().trim();
+      // Exact match first
+      const exact = CENTROS.find(c => c === up);
+      if (exact) return exact;
+      // Contains match (input contains option or option contains input)
+      const contains = CENTROS.find(c => c.includes(up) || up.includes(c));
+      if (contains) return contains;
+      // Word-based fuzzy: find best match by number of matching words
+      const words = up.split(/[\s\-]+/).filter(Boolean);
+      let bestMatch = null, bestScore = 0;
+      for (const c of CENTROS) {
+        const cWords = c.split(/[\s\-]+/);
+        const score = words.filter(w => cWords.some(cw => cw.includes(w) || w.includes(cw))).length;
+        if (score > bestScore) { bestScore = score; bestMatch = c; }
+      }
+      if (bestMatch && bestScore > 0) return bestMatch;
+      return up;
+    }
+
     case 'lugar_recogida_contenedor':
     case 'ciudad_facturacion':
     case 'origen':
@@ -397,7 +435,19 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 // ciudad_facturacion: código DANE numérico como string (p.ej. "11001000")
 // vendedor: código de vendedor como string/numérico (p.ej. "53165050")
 // tipo_operacion: texto libre (p.ej. "DISTRIBUCION")
-// centro_costo_despacho: debe ser uno de los centros válidos (p.ej. "CONALCA BOGOTA", "CONALCA CALI", "CONALCA MEDELLIN")
+// centro_costo_despacho: DEBE ser exactamente uno de estos valores:
+// TRANSLIDHER BARRANQUILLA, TRANSLIDHER BOGOTA, TRANSLIDHER UBATE, TRANSLIDHER CARTAGENA,
+// TRANSLIDHER BUENAVENTURA, TRANSLIDHER CALI, TRANSLIDHER SANTA MARTA, TRANSLIDHER PEREIRA,
+// TRANSLIDHER IPIALES, TRANSLIDHER MEDELLIN, CONALCA MANIZALEZ, CONALCA BUENAVENTURA,
+// CONALCA CALI, ALMACENAMIENTO MOSQUERA, OTM CONALCA CTG, OTM CONALCA SNMT,
+// CONALCA IPIALES, ALMACENAMIENTO CALI, CONALCA CARTAGENA, CONALCA UBATE, OTM CONALCA BTA,
+// BUN MAERSK DEDICADO, BOG MAERSK DEDICADO, CLO MAERSK DEDICADO, CONALCA PEREIRA,
+// CONALCA BARRANQUILLA, ARMENIA - BAVARIA, CONALCA PAGOS ANT, CONALCA SANTA MARTA,
+// CARTAGENA - BAVARIA, TUNJA - BAVARIA, SANTAMARTA - BAVARIA, YUMBO - BAVARIA,
+// CONALCA BOGOTA, CONALCA BUCARAMANGA, OTM CONALCA BAQ, OTM CONALCA BUN,
+// BUENAVENTURA PANTOS, CONALCA MEDELLIN, ALMACENAMIENTO, BOGOTA GLOBAL,
+// BUENAVENTURA GLOBAL, CALI GLOBAL EXPRESS, BOGOTA CONENVIOS, MEDELLIN GLOBAL EXPRESS,
+// BOGOTA CONALOG, TRANSIFRONT CUCUTA
 // cliente_codigo: numérico/string (p.ej. "2551")
 
 // PASO 2 - Origen y destino
@@ -468,7 +518,7 @@ PASO 1 - Datos básicos:
 - ciudad_facturacion: "11001000"
 - vendedor: "53165050"
 - tipo_operacion: "DISTRIBUCION"
-- centro_costo_despacho: "CONALCA BOGOTA"
+- centro_costo_despacho: "BOGOTA GLOBAL" (usa el valor EXACTO de la lista de centros de costo)
 - cliente_codigo: "2551"
 
 PASO 2 - Detalle del servicio:
@@ -507,6 +557,29 @@ Campos principales para detección normal:
 - kit_seguridad, tipo_remesa_rndc
 - modalidad_internacional
 - contenedor, modalidad_internacional, vehiculo_acom
+
+**CENTRO DE COSTO DESPACHO - Valores válidos:**
+Para el campo centro_costo_despacho, SIEMPRE usa el valor EXACTO de esta lista (en MAYÚSCULAS tal cual):
+TRANSLIDHER BARRANQUILLA, TRANSLIDHER BOGOTA, TRANSLIDHER UBATE, TRANSLIDHER CARTAGENA,
+TRANSLIDHER BUENAVENTURA, TRANSLIDHER CALI, TRANSLIDHER SANTA MARTA, TRANSLIDHER PEREIRA,
+TRANSLIDHER IPIALES, TRANSLIDHER MEDELLIN, CONALCA MANIZALEZ, CONALCA BUENAVENTURA,
+CONALCA CALI, ALMACENAMIENTO MOSQUERA, OTM CONALCA CTG, OTM CONALCA SNMT,
+CONALCA IPIALES, ALMACENAMIENTO CALI, CONALCA CARTAGENA, CONALCA UBATE, OTM CONALCA BTA,
+BUN MAERSK DEDICADO, BOG MAERSK DEDICADO, CLO MAERSK DEDICADO, CONALCA PEREIRA,
+CONALCA BARRANQUILLA, ARMENIA - BAVARIA, CONALCA PAGOS ANT, CONALCA SANTA MARTA,
+CARTAGENA - BAVARIA, TUNJA - BAVARIA, SANTAMARTA - BAVARIA, YUMBO - BAVARIA,
+CONALCA BOGOTA, CONALCA BUCARAMANGA, OTM CONALCA BAQ, OTM CONALCA BUN,
+BUENAVENTURA PANTOS, CONALCA MEDELLIN, ALMACENAMIENTO, BOGOTA GLOBAL,
+BUENAVENTURA GLOBAL, CALI GLOBAL EXPRESS, BOGOTA CONENVIOS, MEDELLIN GLOBAL EXPRESS,
+BOGOTA CONALOG, TRANSIFRONT CUCUTA
+
+Ejemplos de interpretación:
+- "centro de costo es bogota global" → rellenar("centro_costo_despacho", "BOGOTA GLOBAL")
+- "centro costo conalca bogota" → rellenar("centro_costo_despacho", "CONALCA BOGOTA")
+- "centro de costo translidher cali" → rellenar("centro_costo_despacho", "TRANSLIDHER CALI")
+- "centro costo maersk buenaventura" → rellenar("centro_costo_despacho", "BUN MAERSK DEDICADO")
+- "despacho desde almacenamiento mosquera" → rellenar("centro_costo_despacho", "ALMACENAMIENTO MOSQUERA")
+- "bavaria armenia" → rellenar("centro_costo_despacho", "ARMENIA - BAVARIA")
 
 IMPORTANTE: Usa SIEMPRE las funciones antes de responder.
 `;
@@ -727,7 +800,7 @@ export default function ChatBox() {
 
     const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
     const isCompleteFormRequest = /\b(llena todo|completa el formulario|llena.*ejemplo|llena.*campos|formulario.*ejemplo|datos.*ejemplo|llena.*completo)\b/.test(lastUserMessage);
-    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina)\b/.test(lastUserMessage);
+    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina|centro.?de.?costo|despacho|translidher|conalca|maersk|bavaria|global|almacenamiento|pantos|conenvios|conalog|transifront)\b/.test(lastUserMessage);
     const functionCallSetting = (isCompleteFormRequest || containsData) ? { name: 'rellenar' } : 'auto';
     console.log('🎯 Function call setting:', functionCallSetting, 'for message:', lastUserMessage);
     console.log('🔄 Complete form request:', isCompleteFormRequest, '| Contains data:', containsData);
