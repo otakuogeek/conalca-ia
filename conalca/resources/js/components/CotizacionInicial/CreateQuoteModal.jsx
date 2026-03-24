@@ -201,6 +201,7 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
     const newErrors = {};
     // El clientType ya está establecido automáticamente como 'cash'
     if (!clientData.operationType) newErrors.operationType = 'Selecciona el tipo de operación';
+    if (clientData.operationType && !clientData.loadType) newErrors.loadType = 'Selecciona el tipo de carga';
     if (!clientData.typeBusiness) newErrors.typeBusiness = 'Selecciona el tipo de modalidad';
 
     if (Object.keys(newErrors).length > 0) {
@@ -354,6 +355,36 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                   </p>
                 )}
               </div>
+
+              {/* Tipo de carga suelta o contenerizada (visible cuando hay tipo de operación) */}
+              {clientData.operationType && (
+                <div className="space-y-2 sm:space-y-3">
+                  <label className="block text-[#898989] text-xs sm:text-sm font-medium">
+                    Tipo de carga *
+                  </label>
+                  <select 
+                    value={clientData.loadType || ''}
+                    onChange={(e) => handleChange('loadType', e.target.value)}
+                    className={`w-full h-12 sm:h-14 rounded-lg bg-white border px-3 sm:px-4 text-gray-700 text-sm sm:text-base focus:ring-2 focus:ring-opacity-20 transition-all ${
+                      errors.loadType 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500' 
+                        : 'border-[#dcdcdc] focus:border-[#FF7C32] focus:ring-[#FF7C32]'
+                    }`}
+                  >
+                    <option value="">Seleccione el tipo de carga</option>
+                    <option value="carga_suelta">Carga suelta</option>
+                    <option value="contenerizada">Contenerizada</option>
+                  </select>
+                  {errors.loadType && (
+                    <p className="text-red-500 text-xs sm:text-sm flex items-center">
+                      <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
+                      </svg>
+                      {errors.loadType}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Tipo de modalidad */}
               <div className="space-y-2 sm:space-y-3">

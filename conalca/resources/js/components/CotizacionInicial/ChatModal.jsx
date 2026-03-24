@@ -287,7 +287,9 @@ const ChatModal = ({
         vehiculo_requerido: r.vehiculo || r.claseVehiculo || r.vehiculo_requerido,
         valor_declarado: r.valor_en_usd ? 0 : (r.valorMercancia || r.valor_declarado || r.valor_mercancia || 0),
         incluye_tara: r.incluye_tara === true,
-        ruta_numero: idx + 1
+        ruta_numero: idx + 1,
+        // 🚢 EXPORTACIÓN: Preservar tipo de ruta
+        tipo_ruta: r.tipo_ruta || null
       };
     });
     
@@ -711,14 +713,21 @@ const ChatModal = ({
 
   // Validar si tenemos todos los datos necesarios para crear cotización
   const hasAllRequiredData = useMemo(() => {
-    // Obtener el primer elemento si es array, o el objeto directamente
-    const data = Array.isArray(quoteData) ? quoteData[0] : quoteData;
+    if (!quoteData) return false;
+    
+    // Para multi-ruta EXPORTACIÓN, buscar la ruta principal (no el retiro de contenedor)
+    let data;
+    if (Array.isArray(quoteData)) {
+      // Buscar la ruta principal (skip retiro_contenedor)
+      data = quoteData.find(r => r && r.tipo_ruta !== 'retiro_contenedor') || quoteData[0];
+    } else {
+      data = quoteData;
+    }
 
     if (!data) return false;
 
+    // producto y empaque son opcionales: se pueden seleccionar en validación/pricing
     return (
-      (selectedProduct !== null || data.producto || data.tipo_producto) &&
-      (selectedEmpaque !== null || data.empaque || data.tipo_embajale) &&
       (data.ciudadOrigen || data.ciudad_origen) &&
       (data.ciudadDestino || data.ciudad_destino) &&
       (data.pesoMercancia || data.peso_mercancia) &&
@@ -744,12 +753,16 @@ const ChatModal = ({
         // 1. producto_mencionado (el que el usuario dijo explícitamente)
         // 2. producto (valor actual/personalizado)
         // 3. tipo_producto (valor alternativo)
-        // 4. selectedProduct (solo para primera ruta)
+        // 4. selectedProduct (para rutas no-retiro cuando solo hay 1 ruta principal)
         // ❌ NUNCA usar producto_nombre como fallback principal (es de BD, no del usuario)
-        const productoFinal = route.producto_mencionado 
+        const isRetiro = route.tipo_ruta === 'retiro_contenedor';
+        const productoFinal = isRetiro ? null : (
+          route.producto_mencionado 
           || route.producto 
           || route.tipo_producto 
-          || (index === 0 ? selectedProduct?.nombre : null);
+          || selectedProduct?.nombre
+          || null
+        );
 
         // 🔧 FIX: Asegurar que todos los campos de peso estén presentes
         // 🆕 Usar normalizeWeight para manejar formato miles español (7.600 = 7600)
@@ -759,15 +772,15 @@ const ChatModal = ({
           ...route,
           // Priorizar el producto de la ruta sobre selectedProduct global
           producto: productoFinal,
-          producto_codigo: route.producto_codigo || (index === 0 ? selectedProduct?.codigo : null),
+          producto_codigo: route.producto_codigo || (!isRetiro ? selectedProduct?.codigo : null),
           tipo_producto: productoFinal,
           // 🔧 FIX BUG #1: Sincronizar los 3 campos de peso
           peso_kg: pesoFinal,
           peso_mercancia: pesoFinal,
           pesoMercancia: pesoFinal,
           // Priorizar el empaque de la ruta sobre selectedEmpaque global
-          empaque: route.empaque || route.tipo_embalaje || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
-          tipo_embalaje: route.tipo_embalaje || route.empaque || (index === 0 ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
+          empaque: route.empaque || route.tipo_embalaje || (!isRetiro ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null),
+          tipo_embalaje: route.tipo_embalaje || route.empaque || (!isRetiro ? (selectedEmpaque?.nome || selectedEmpaque?.nombre) : null)
         };
       });
       console.log('📊 routesData RESULTADO (Caso 1 - Array):', {
@@ -1024,6 +1037,8 @@ const ChatModal = ({
                   empaque: route.empaque ?? null,
                   empaque_id: route.empaque_id ?? null,
                   contenedor: route.tipo_contenedor ?? route.contenedor ?? null,
+                  // 🚢 EXPORTACIÓN: Preservar tipo de ruta (retiro_contenedor / ruta_principal)
+                  tipo_ruta: route.tipo_ruta ?? null,
                   // Mantener valores originales para debug
                   _originalValues: route
                 };
@@ -1076,7 +1091,9 @@ const ChatModal = ({
                           empaque: r.empaque,
                           empaque_id: r.empaque_id,
                           claseVehiculo: r.vehiculo || r.claseVehiculo,
-                          vehiculo: r.vehiculo
+                          vehiculo: r.vehiculo,
+                          // 🚢 EXPORTACIÓN: Preservar tipo de ruta
+                          tipo_ruta: r.tipo_ruta || null
                         };
                       });
                     }
@@ -1428,7 +1445,27 @@ const ChatModal = ({
         console.log('🔍 Antes de updateQuoteData - tipo:', Array.isArray(quoteData) ? 'array' : typeof quoteData);
         
         console.log('🚀 LLAMANDO updateQuoteData con', rutasMapeadas.length, 'rutas');
-        updateQuoteData(rutasMapeadas);
+        // 🚢 FIX: Usar functional update para no sobrescribir auto-split EXPORTACIÓN
+        updateQuoteData(prev => {
+          // Si prev ya tiene rutas con tipo_ruta (auto-split), fusionar solo datos faltantes
+          if (Array.isArray(prev) && prev.some(r => r.tipo_ruta)) {
+            console.log('🚢 processMessageWithAI: Preservando auto-split EXPORTACIÓN, fusionando datos');
+            // Extraer datos útiles de la extracción paralela (producto, empaque, etc.)
+            const sourceData = rutasMapeadas[0] || {};
+            const fieldsToMerge = ['producto', 'tipo_producto', 'empaque', 'tipo_embajale', 'tipo_embalaje',
+              'vehiculo', 'vehiculo_requerido', 'claseVehiculo', 'valorMercancia', 'valor_declarado',
+              'pesoMercancia', 'peso_mercancia', 'peso_kg', 'cantidadMercancia', 'cantidad', 'contenedor', 'incoterm'];
+            return prev.map(r => {
+              if (r.tipo_ruta === 'retiro_contenedor') return r;
+              const merged = { ...r };
+              for (const field of fieldsToMerge) {
+                if (!merged[field] && sourceData[field]) merged[field] = sourceData[field];
+              }
+              return merged;
+            });
+          }
+          return rutasMapeadas;
+        });
         
         // Verificar actualización después de un ciclo
         setTimeout(() => {
@@ -1531,8 +1568,17 @@ const ChatModal = ({
                 return updated;
             }
 
-            console.log('⚠️ processMessageWithAI: Multi-ruta detectada sin ruta seleccionada - NO sobrescribiendo');
-            return prev; // Mantener las rutas existentes
+            // 🚢 FIX: Si hay auto-split, fusionar datos faltantes en rutas principales
+            console.log('⚠️ processMessageWithAI: Multi-ruta - fusionando datos en rutas principales');
+            const nonNullFields = Object.fromEntries(Object.entries(mappedData).filter(([_, v]) => v !== null));
+            return prev.map(r => {
+              if (r.tipo_ruta === 'retiro_contenedor') return r;
+              const merged = { ...r };
+              for (const [k, v] of Object.entries(nonNullFields)) {
+                if (!merged[k]) merged[k] = v;
+              }
+              return merged;
+            });
           }
           
           // Caso ruta única o inicialización
@@ -2015,9 +2061,14 @@ const ChatModal = ({
         );
 
         // 🔥 CRITICAL FIX: Si tenemos multi-ruta activa, NO procesar extracted_data de /api/chat/quote
-        // porque processMessageWithAI ya lo hizo correctamente
+        // EXCEPTO si los datos nuevos contienen tipo_ruta (auto-split EXPORTACIÓN) que es más preciso
         const hasActiveMultiRoute = Array.isArray(quoteData) && quoteData.length > 1;
-        const shouldSkipExtractedData = hasActiveMultiRoute && hasRealExtractedData;
+        const newDataHasTipoRuta = hasRealExtractedData && (() => {
+          const ed = data.data.extracted_data;
+          const arr = Array.isArray(ed) ? ed : (ed && typeof ed === 'object' ? Object.values(ed) : []);
+          return arr.some(r => r && typeof r === 'object' && r.tipo_ruta);
+        })();
+        const shouldSkipExtractedData = hasActiveMultiRoute && hasRealExtractedData && !newDataHasTipoRuta;
 
         if (shouldSkipExtractedData) {
           console.log('⏭️ SALTANDO procesamiento de extracted_data porque processMessageWithAI ya lo procesó correctamente');
@@ -2132,7 +2183,10 @@ const ChatModal = ({
               incoterm: route.incoterm || null,
               observaciones: route.observaciones || null,
               empaque: route.empaque || null,
-              empaque_id: route.empaque_id || null
+              empaque_id: route.empaque_id || null,
+              // 🚢 EXPORTACIÓN: Preservar tipo de ruta (retiro_contenedor / ruta_principal)
+              tipo_ruta: route.tipo_ruta || null,
+              ruta_numero: route.ruta_numero || (idx + 1)
             };
 
             console.log(`📍 Ruta ${idx + 1} mapeada:`, {
@@ -2144,7 +2198,8 @@ const ChatModal = ({
               producto: mapped.producto,
               vehiculo: mapped.vehiculo,
               valor: mapped.valorMercancia,
-              observaciones: mapped.observaciones
+              observaciones: mapped.observaciones,
+              tipo_ruta: mapped.tipo_ruta
             });
 
             return mapped;
@@ -2170,6 +2225,14 @@ const ChatModal = ({
             console.log('🚀 Llamando updateQuoteData con merge:', mappedRoutes);
             updateQuoteData(prev => {
               console.log('📊 updateQuoteData callback - Estado anterior:', prev);
+              
+              // 🚢 EXPORTACIÓN: Si las rutas nuevas traen tipo_ruta (auto-split), 
+              // REEMPLAZAR completamente — son la versión autoritativa del backend
+              const hasTipoRuta = mappedRoutes.some(r => r.tipo_ruta);
+              if (hasTipoRuta) {
+                console.log('🚢 EXPORTACIÓN: Rutas con tipo_ruta detectadas - reemplazo completo');
+                return mappedRoutes;
+              }
               
               // Si no hay datos previos, usar los nuevos directamente (sanitizados)
               if (!prev || (Array.isArray(prev) && prev.length === 0) || (typeof prev === 'object' && Object.keys(prev).length === 0)) {
@@ -3247,22 +3310,23 @@ const ChatModal = ({
     setIsCreatingQuote(true);
     console.log('🔒 Guardado iniciado - bloqueando doble click');
 
-    // Validar que al menos la primera ruta tenga datos básicos
-    const firstRoute = routesArray[0];
+    // Validar la ruta principal (no retiro de contenedor) tenga datos básicos
+    const mainRoute = routesArray.find(r => r.tipo_ruta !== 'retiro_contenedor') || routesArray[0];
     const missingFields = [];
 
-    if (!firstRoute.ciudadOrigen && !firstRoute.ciudad_origen && !firstRoute.origen) {
+    if (!mainRoute.ciudadOrigen && !mainRoute.ciudad_origen && !mainRoute.origen) {
       missingFields.push('Ciudad de origen');
     }
-    if (!firstRoute.ciudadDestino && !firstRoute.ciudad_destino && !firstRoute.destino) {
+    if (!mainRoute.ciudadDestino && !mainRoute.ciudad_destino && !mainRoute.destino) {
       missingFields.push('Ciudad de destino');
     }
-    if (!firstRoute.pesoMercancia && !firstRoute.peso_mercancia && !firstRoute.peso_kg) {
+    // Peso y producto no son obligatorios para rutas de retiro de contenedor
+    if (!mainRoute.pesoMercancia && !mainRoute.peso_mercancia && !mainRoute.peso_kg) {
       missingFields.push('Peso de mercancía');
     }
 
     // Validar producto (puede venir de selectedProduct o de la ruta)
-    if (!selectedProduct && !firstRoute.producto && !firstRoute.tipo_producto) {
+    if (!selectedProduct && !mainRoute.producto && !mainRoute.tipo_producto) {
       missingFields.push('Producto');
     }
 

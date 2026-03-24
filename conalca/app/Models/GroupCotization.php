@@ -22,6 +22,7 @@ class GroupCotization extends Model
         'kit_derrames',
         'pictogramas',
         'cargo_type',
+        'load_type',
         'openai_thread_id',
         'created_from_chat',
     ];

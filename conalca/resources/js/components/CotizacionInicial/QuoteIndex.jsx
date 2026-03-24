@@ -495,6 +495,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           operation_type: data.operationType, // Convertir de camelCase a snake_case
           type_business: data.typeBusiness,    // Convertir de camelCase a snake_case
           cargo_type: data.cargoType,          // Convertir de camelCase a snake_case
+          load_type: data.loadType,              // Tipo de carga: suelta o contenerizada
           candado_satelital: data.candadoSatelital, // Convertir de camelCase a snake_case
           jen_set: data.jenSet,                     // Convertir de camelCase a snake_case
           combustible: data.combustible,

@@ -24,7 +24,8 @@ export const mapBackendRouteToQuote = (route) => {
         empaque_id: route.empaque_id ?? null,
         contenedor: route.tipo_contenedor ?? route.contenedor ?? null,
         incoterm: route.incoterm ?? null,
-        observaciones: route.observaciones ?? null
+        observaciones: route.observaciones ?? null,
+        tipo_ruta: route.tipo_ruta ?? null
     };
 };
 

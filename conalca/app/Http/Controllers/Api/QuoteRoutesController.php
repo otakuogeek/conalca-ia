@@ -28,8 +28,8 @@ class QuoteRoutesController extends Controller
         $request->validate([
             'group_id' => 'required|integer|exists:group_cotizations,id',
             'routes' => 'required|array|min:1',
-            'routes.*.ciudad_origen' => 'required|string',
-            'routes.*.ciudad_destino' => 'required|string',
+            'routes.*.ciudad_origen' => 'nullable|string',
+            'routes.*.ciudad_destino' => 'nullable|string',
             'routes.*.id'             => 'nullable|integer',
         ]);
 

@@ -72,6 +72,12 @@ const QuoteDetailsPanel = ({
   const getMissingFields = (route) => {
     const missing = [];
     
+    // 🚢 EXPORTACIÓN: Para retiro de contenedor, solo se requiere origen
+    if (route.tipo_ruta === 'retiro_contenedor') {
+      if (!route.ciudadOrigen && !route.ciudad_origen) missing.push('origen');
+      return missing;
+    }
+    
     if (!route.ciudadOrigen && !route.ciudad_origen) missing.push('origen');
     if (!route.ciudadDestino && !route.ciudad_destino) missing.push('destino');
     // 🔧 FIX: Considerar peso_kg (en KILOGRAMOS del backend)
@@ -155,7 +161,11 @@ const QuoteDetailsPanel = ({
     <div className="space-y-4">
       {/* Header con resumen cuando hay múltiples rutas */}
       {totalRoutes > 1 && (
-        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl shadow-lg p-4 text-white">
+        <div className={`bg-gradient-to-r ${
+          routes.some(r => r.tipo_ruta === 'retiro_contenedor') 
+            ? 'from-slate-700 to-slate-800' 
+            : 'from-blue-600 to-blue-700'
+        } rounded-xl shadow-lg p-4 text-white`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="bg-white/20 rounded-full p-2">
@@ -164,7 +174,11 @@ const QuoteDetailsPanel = ({
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-bold">Cotización Multi-Ruta</h3>
+                <h3 className="text-lg font-bold">
+                  {routes.some(r => r.tipo_ruta === 'retiro_contenedor') 
+                    ? 'Cotización Exportación' 
+                    : 'Cotización Multi-Ruta'}
+                </h3>
                 <p className="text-blue-100 text-sm">
                   {totalRoutes} rutas detectadas
                   {selectedRouteIndex !== null && (
@@ -211,7 +225,112 @@ const QuoteDetailsPanel = ({
         
         // 🆕 Verificar si esta ruta está seleccionada para edición
         const isSelected = selectedRouteIndex === index;
+
+        // 🚢 EXPORTACIÓN: Si es ruta de retiro de contenedor, renderizar card simplificada
+        const isRetiroContenedor = route.tipo_ruta === 'retiro_contenedor';
         
+        if (isRetiroContenedor) {
+          const uniqueKeyRetiro = `route-retiro-${index}-${route.ciudadOrigen || ''}-${route.ciudadDestino || ''}`;
+          return (
+            <div 
+              key={uniqueKeyRetiro}
+              className={`w-full rounded-2xl shadow-sm overflow-hidden transition-all duration-300 group
+                ${isSelected 
+                  ? 'ring-4 ring-yellow-200 border-2 border-yellow-400 transform scale-[1.01] z-10 my-2' 
+                  : 'border border-gray-200 hover:shadow-md'
+                }`}
+            >
+              {/* Header - Retiro de Contenedor */}
+              <div className="bg-gradient-to-r from-slate-600 to-slate-700 px-5 py-3 relative">
+                {isSelected && (
+                  <div className="absolute top-3 right-16 bg-white/20 px-2 py-0.5 rounded text-white text-xs font-bold animate-pulse">
+                    ✏️ Editando
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3 flex-1">
+                    <button
+                      type="button" 
+                      className={`h-8 px-3 rounded-lg flex items-center gap-2 transition-all duration-200 shadow-sm font-bold text-xs uppercase tracking-wide
+                        ${isSelected 
+                          ? 'bg-white text-yellow-700 hover:bg-yellow-50 ring-2 ring-white/50' 
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                        }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectRoute && onSelectRoute(isSelected ? null : index);
+                      }}
+                    >
+                      {isSelected ? (
+                        <>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Activa</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                          <span>Editar</span>
+                        </>
+                      )}
+                    </button>
+                    <span className="text-white font-bold text-base">
+                      Ruta {index + 1} - Retiro de Contenedor
+                      {isSelected && <span className="ml-2 text-xs font-normal bg-white/30 px-2 py-0.5 rounded-full">Editando</span>}
+                    </span>
+                  </div>
+                  <span className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
+                    📦 Contenedor vacío
+                  </span>
+                </div>
+              </div>
+
+              {/* Origen (retiro) y Destino (cargue) */}
+              <div className="px-5 py-4 bg-gray-50 border-b border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3 flex-1">
+                    <div className={`w-3 h-3 rounded-full ${
+                      route.ciudadOrigen || route.ciudad_origen ? 'text-slate-500' : 'text-red-500'
+                    } bg-current`}></div>
+                    <div className="flex-1">
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">Retiro contenedor</p>
+                      <p className={`text-sm font-bold ${
+                        route.ciudadOrigen || route.ciudad_origen ? 'text-gray-900' : 'text-red-500'
+                      }`}>
+                        {route.ciudadOrigen || route.ciudad_origen || '❌ Pendiente (indique en el chat)'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center px-4">
+                    <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                    </svg>
+                  </div>
+                  <div className="flex items-center space-x-3 flex-1 justify-end text-right">
+                    <div className="flex-1">
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">Punto de cargue</p>
+                      <p className="text-sm font-bold text-gray-900">
+                        {route.ciudadDestino || route.ciudad_destino || '-'}
+                      </p>
+                    </div>
+                    <div className={`w-3 h-3 rounded-full text-slate-500 bg-current`}></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mensaje informativo */}
+              <div className="px-5 py-3">
+                <p className="text-xs text-gray-400 italic text-center">
+                  Solo se requiere el punto de retiro del contenedor vacío
+                </p>
+              </div>
+            </div>
+          );
+        }
+
 
         // Colores según estado y selección
         const colorScheme = isSelected 
