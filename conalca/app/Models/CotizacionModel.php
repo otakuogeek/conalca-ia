@@ -51,6 +51,7 @@ class CotizacionModel extends Model
         'esquema_seguridad',
         'tipo_carroceria',
         'valor',
+        'flete',
         'valor_declarado',
         'tipo_mercancia',
         'ventanas_horarios_recibidos',

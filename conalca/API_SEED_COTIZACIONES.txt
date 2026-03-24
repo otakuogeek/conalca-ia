@@ -2,8 +2,8 @@
   API DE SEED - CREAR COTIZACIONES DE PRUEBA EN CONALCA AI
 ================================================================================
 
-FECHA: 24 de febrero de 2026 (actualizado 4 de marzo de 2026)
-VERSIÓN: 1.1
+FECHA: 24 de febrero de 2026 (actualizado 24 de marzo de 2026)
+VERSIÓN: 1.2
 
 ================================================================================
   1. INFORMACIÓN DE CONEXIÓN
@@ -86,6 +86,7 @@ AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
     │ ciudad_origen           │ SÍ         │ -                │ Ciudad de origen             │
     │ ciudad_destino          │ SÍ         │ -                │ Ciudad de destino            │
     │ valor                   │ SÍ         │ -                │ Precio cotización (numérico) │
+    │ flete                   │ NO         │ null             │ Flete ofrecido al conductor  │
     │ tipo_mercancia          │ NO         │ "Carga general"  │ Tipo de mercancía            │
     │ tipo_producto           │ NO         │ null             │ Producto específico          │
     │ peso_mercancia          │ NO         │ null             │ Peso en kg (string)          │
@@ -103,6 +104,13 @@ AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
     │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
     └─────────────────────────┴────────────┴──────────────────┴──────────────────────────────┘
 
+  NOTA IMPORTANTE sobre "valor" vs "flete":
+  ─────────────────────────────────────────
+  • valor:  Precio de la cotización (lo que se cobra al cliente).
+  • flete:  Valor del flete ofrecido al conductor en la llamada.
+            Si se envía "flete", la IA usará ese monto al negociar con el
+            conductor. Si NO se envía, la IA usará "valor" como fallback.
+
 ================================================================================
   3. EJEMPLOS DE USO CON CURL
 ================================================================================
@@ -118,7 +126,8 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
       {
         "ciudad_origen": "BOGOTA",
         "ciudad_destino": "MEDELLIN",
-        "valor": 3980000
+        "valor": 3980000,
+        "flete": 3200000
       }
     ]
   }'
@@ -138,6 +147,7 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
         "ciudad_origen": "BOGOTA",
         "ciudad_destino": "MEDELLIN",
         "valor": 3980000,
+        "flete": 3200000,
         "tipo_mercancia": "MAIZ",
         "tipo_producto": "MAIZ",
         "peso_mercancia": "10000",
@@ -168,6 +178,7 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
         "ciudad_origen": "CARTAGENA",
         "ciudad_destino": "BOGOTA",
         "valor": 6766608,
+        "flete": 5500000,
         "tipo_mercancia": "QUIMICOS",
         "tipo_producto": "ACIDO SULFURICO",
         "peso_mercancia": "20000",
@@ -304,6 +315,7 @@ Respuesta exitosa (HTTP 201):
         "ciudad_origen": "BOGOTA",
         "ciudad_destino": "MEDELLIN",
         "valor": "3980000",
+        "flete": "3200000",
         "vehiculo_requerido": "TRACTOCAMION",
         "tipo_mercancia": "MAIZ",
         "peso_mercancia": "10000",

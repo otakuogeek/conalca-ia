@@ -196,7 +196,7 @@ class ProcessElevenLabsCall implements ShouldQueue
                 'tipo_embajale' => $cotizacion->tipo_embajale ?? 'No especificado',
                 'tipo_carroceria' => $cotizacion->tipo_carroceria ?? 'No especificado',
                 'valor_declarado' => $cotizacion->valor_declarado ?? '0',
-                'valor_flete' => $cotizacion->valor ?? '0',
+                'valor_flete' => $cotizacion->flete ?? $cotizacion->valor ?? '0',
             ];
             
             Log::info('Client data preparado', $clientData);

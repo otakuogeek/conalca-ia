@@ -45,6 +45,11 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
       [field]: value
     };
 
+    // Limpiar loadType si se cambia de operación y no es EXPORTACION
+    if (field === 'operationType' && value !== 'EXPORTACION') {
+      updatedData.loadType = '';
+    }
+
     // Aplicar parámetros automáticos según el tipo de modalidad
     if (field === 'typeBusiness') {
       switch (value) {
@@ -201,7 +206,7 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
     const newErrors = {};
     // El clientType ya está establecido automáticamente como 'cash'
     if (!clientData.operationType) newErrors.operationType = 'Selecciona el tipo de operación';
-    if (clientData.operationType && !clientData.loadType) newErrors.loadType = 'Selecciona el tipo de carga';
+    if (clientData.operationType === 'EXPORTACION' && !clientData.loadType) newErrors.loadType = 'Selecciona el tipo de carga';
     if (!clientData.typeBusiness) newErrors.typeBusiness = 'Selecciona el tipo de modalidad';
 
     if (Object.keys(newErrors).length > 0) {
@@ -356,8 +361,8 @@ const CreateQuoteModal = ({ onClose, onSubmit, clientData, setClientData }) => {
                 )}
               </div>
 
-              {/* Tipo de carga suelta o contenerizada (visible cuando hay tipo de operación) */}
-              {clientData.operationType && (
+              {/* Tipo de carga suelta o contenerizada (visible solo para exportación) */}
+              {clientData.operationType === 'EXPORTACION' && (
                 <div className="space-y-2 sm:space-y-3">
                   <label className="block text-[#898989] text-xs sm:text-sm font-medium">
                     Tipo de carga *

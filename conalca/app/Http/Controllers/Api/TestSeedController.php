@@ -71,6 +71,7 @@ class TestSeedController extends Controller
             'rutas.*.registro_fotografico'   => 'nullable|string',
             'rutas.*.fecha'                  => 'nullable|date',
             'rutas.*.porcentaje'             => 'nullable|numeric',
+            'rutas.*.flete'                  => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -170,7 +171,8 @@ class TestSeedController extends Controller
                         'seguro'              => $ruta['seguro'] ?? 'No',
                         'temperatura_mercancia' => $ruta['temperatura_mercancia'] ?? 'No aplica',
                         'registro_fotografico'  => $ruta['registro_fotografico'] ?? null,
-                        'porcentaje'          => $ruta['porcentaje'] ?? 0,
+                        'flete'               => $ruta['flete'] ?? null,
+                    'porcentaje'          => $ruta['porcentaje'] ?? 0,
                         'decision_cliente'    => 'aceptada',  // ← Aceptada para que aparezca en CallPanel
                         'active'              => true,
                         'tipo'                => $request->input('operation_type', 'DISTRIBUCION'),
@@ -220,6 +222,7 @@ class TestSeedController extends Controller
                                 'vehiculo_requerido'    => $cot->vehiculo_requerido,
                                 'tipo_mercancia'        => $cot->tipo_mercancia,
                                 'peso_mercancia'        => $cot->peso_mercancia,
+                                'flete'                 => $cot->flete,
                                 'decision_cliente'      => $cot->decision_cliente,
                             ];
                         }),
