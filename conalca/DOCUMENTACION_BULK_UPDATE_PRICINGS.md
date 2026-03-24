@@ -1,19 +1,114 @@
-# 📝 Documentación API - Bulk Update Pricings
+# Documentacion API - Pricings
+
+> **Ultima actualizacion**: 24 de Marzo, 2026
+> **Version API**: 1.1
+> **Base URL Produccion**: `https://conalcaia.conalca.com.co`
+
+---
+
+## Autenticacion
+
+Todos los endpoints requieren autenticacion via **Sanctum (Bearer Token)**.
+
+### Headers obligatorios
+```
+Authorization: Bearer {tu_token_sanctum}
+Content-Type: application/json
+Accept: application/json
+```
+
+> **IMPORTANTE**: Si el token es invalido o no se envia, el API retorna **401** con:
+> ```json
+> {"message": "Unauthenticated."}
+> ```
+
+### Como obtener un token
+Solicitar al administrador del sistema que genere un token Sanctum para tu usuario.
+
+---
+
+## 1. Listar Pricings (GET)
+
+```
+GET /api/pricings
+```
+
+### Descripcion
+Lista los registros de pricing con **paginacion** y filtros opcionales.
+
+> **Nota**: La tabla tiene +230,000 registros. Siempre se devuelve paginado (maximo 500 por pagina).
+
+### Parametros de Query
+
+| Parametro | Tipo | Default | Descripcion |
+|-----------|------|---------|-------------|
+| `per_page` | integer | 100 | Registros por pagina (max 500) |
+| `page` | integer | 1 | Numero de pagina |
+| `origin` | string | - | Filtrar por ciudad origen (busqueda parcial) |
+| `destination` | string | - | Filtrar por ciudad destino (busqueda parcial) |
+| `vehicle_type` | string | - | Filtrar por tipo de vehiculo (busqueda parcial) |
+
+### Ejemplo: Listar con filtros
+
+```bash
+curl -X GET "https://conalcaia.conalca.com.co/api/pricings?origin=CALI&destination=CARTAGENA&per_page=10" \
+  -H "Authorization: Bearer {token}" \
+  -H "Accept: application/json"
+```
+
+### Respuesta Exitosa (200)
+```json
+{
+  "current_page": 1,
+  "data": [
+    {
+      "id": 49452,
+      "vehicle_type": "RIGIDO",
+      "origin": "CALI",
+      "destination": "CARTAGENA",
+      "price": "3342855",
+      "weight": "800",
+      ...
+    }
+  ],
+  "last_page": 75,
+  "per_page": 10,
+  "total": 745
+}
+```
+
+---
+
+## 2. Consultar un Pricing (GET por ID)
+
+```
+GET /api/pricings/{id}
+```
+
+### Ejemplo
+```bash
+curl -X GET "https://conalcaia.conalca.com.co/api/pricings/58727" \
+  -H "Authorization: Bearer {token}" \
+  -H "Accept: application/json"
+```
+
+---
+
+## 3. Bulk Update (PUT)
 
 ## Endpoint
 ```
 PUT /api/pricings/bulk
 ```
 
-## Descripción
-Actualiza múltiples registros de pricing en una sola transacción. Permite actualizar solo los campos especificados para cada registro.
+## Descripcion
+Actualiza multiples registros de pricing en una sola transaccion. Permite actualizar solo los campos especificados para cada registro.
 
 ## Headers
-```json
-{
-  "Content-Type": "application/json",
-  "Accept": "application/json"
-}
+```
+Authorization: Bearer {tu_token_sanctum}
+Content-Type: application/json
+Accept: application/json
 ```
 
 ## Payload (Request Body)
@@ -146,13 +241,14 @@ Actualiza múltiples registros de pricing en una sola transacción. Permite actu
 ### Ejemplo 1: Actualizar solo precios
 
 ```bash
-curl -X PUT http://localhost/api/pricings/bulk \
+curl -X PUT "https://conalcaia.conalca.com.co/api/pricings/bulk" \
+  -H "Authorization: Bearer {token}" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
   -d '{
     "items": [
-      {"id": 1, "price": 600000},
-      {"id": 2, "price": 750000},
-      {"id": 3, "price": 900000}
+      {"id": 58727, "price": 1300000},
+      {"id": 58728, "price": 750000}
     ]
   }'
 ```
@@ -160,17 +256,19 @@ curl -X PUT http://localhost/api/pricings/bulk \
 ### Ejemplo 2: Actualizar campos mixtos
 
 ```bash
-curl -X PUT http://localhost/api/pricings/bulk \
+curl -X PUT "https://conalcaia.conalca.com.co/api/pricings/bulk" \
+  -H "Authorization: Bearer {token}" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
   -d '{
     "items": [
       {
-        "id": 1,
+        "id": 58727,
         "origin": "BOGOTA",
         "price": 550000
       },
       {
-        "id": 2,
+        "id": 58728,
         "vehicle_type": "TRACTOMULA3",
         "weight": 6000
       }
@@ -183,67 +281,100 @@ curl -X PUT http://localhost/api/pricings/bulk \
 ```javascript
 import axios from 'axios';
 
+const TOKEN = 'tu_token_sanctum';
+
 const bulkUpdate = async () => {
   try {
-    const response = await axios.put('/api/pricings/bulk', {
-      items: [
-        { id: 1, price: 500000, weight: 1500 },
-        { id: 2, origin: 'CALI', destination: 'BOGOTA' },
-        { id: 3, vehicle_type: 'DOBLETROQUE', price: 850000 }
-      ]
-    });
+    const response = await axios.put(
+      'https://conalcaia.conalca.com.co/api/pricings/bulk',
+      {
+        items: [
+          { id: 58727, price: 500000, weight: 1500 },
+          { id: 58728, origin: 'CALI', destination: 'BOGOTA' },
+        ]
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${TOKEN}`,
+          'Accept': 'application/json',
+        }
+      }
+    );
     
     console.log('Actualizados:', response.data.total);
     console.log('Registros:', response.data.pricings);
   } catch (error) {
-    console.error('Error:', error.response.data);
+    if (error.response?.status === 401) {
+      console.error('Token invalido o expirado');
+    } else {
+      console.error('Error:', error.response.data);
+    }
   }
 };
 ```
 
-### Ejemplo 4: PHP/Laravel HTTP Client
+### Ejemplo 4: Postman
 
-```php
-use Illuminate\Support\Facades\Http;
-
-$response = Http::put('http://localhost/api/pricings/bulk', [
-    'items' => [
-        ['id' => 1, 'price' => 500000],
-        ['id' => 2, 'price' => 750000, 'weight' => 2000],
-        ['id' => 3, 'origin' => 'MEDELLIN', 'destination' => 'BOGOTA']
-    ]
-]);
-
-$data = $response->json();
-echo "Total actualizado: {$data['total']}\n";
+**Configuracion en Postman:**
+1. Metodo: **PUT**
+2. URL: `https://conalcaia.conalca.com.co/api/pricings/bulk`
+3. Pestana **Authorization**: Tipo "Bearer Token", pegar tu token
+4. Pestana **Headers**: Agregar `Accept: application/json`
+5. Pestana **Body**: raw > JSON:
+```json
+{
+  "items": [
+    {
+      "id": 58727,
+      "price": 1300000
+    }
+  ]
+}
 ```
 
-## Características
+> **Tip Postman**: Si recibes HTML en vez de JSON, verifica que:
+> - El header `Accept: application/json` este presente
+> - El token Bearer sea valido y no haya expirado
 
-✅ **Transaccional**: Todos los cambios se hacen en una transacción DB. Si falla uno, se revierten todos.
-✅ **Actualización Parcial**: Solo actualiza los campos enviados, los demás se mantienen.
-✅ **Validación Individual**: Cada item se valida por separado con mensajes claros.
-✅ **Sin Duplicados**: Los IDs duplicados en el mismo request son rechazados.
-✅ **Eficiente**: Una sola petición para actualizar múltiples registros.
+## Caracteristicas
+
+- **Transaccional**: Todos los cambios se hacen en una transaccion DB. Si falla uno, se revierten todos.
+- **Actualizacion Parcial**: Solo actualiza los campos enviados, los demas se mantienen.
+- **Validacion Individual**: Cada item se valida por separado con mensajes claros.
+- **Sin Duplicados**: Los IDs duplicados en el mismo request son rechazados.
+- **Eficiente**: Una sola peticion para actualizar multiples registros.
 
 ## Notas Importantes
 
-- ⚠️ La actualización es **todo o nada**: si un item falla, se revierten todos los cambios.
-- ⚠️ Los campos `created_at` y `updated_at` se manejan automáticamente.
-- ⚠️ El campo `id` no se puede actualizar, solo se usa para identificar el registro.
-- ⚠️ No hay límite de items, pero se recomienda no exceder 100 por request para mejor performance.
+- La actualizacion es **todo o nada**: si un item falla, se revierten todos los cambios.
+- Los campos `created_at` y `updated_at` se manejan automaticamente.
+- El campo `id` no se puede actualizar, solo se usa para identificar el registro.
+- No hay limite de items, pero se recomienda no exceder 100 por request para mejor performance.
 
-## Relación con Otros Endpoints
+## Errores Comunes
 
-| Endpoint | Método | Propósito |
+| Codigo | Causa | Solucion |
+|--------|-------|----------|
+| **401** | Token invalido, expirado o ausente | Verificar header `Authorization: Bearer {token}` |
+| **422** | Datos invalidos o ID no existe | Revisar el campo `errors` en la respuesta |
+| **500** | Error interno del servidor | Reportar al equipo de desarrollo |
+
+## Relacion con Otros Endpoints
+
+| Endpoint | Metodo | Proposito |
 |----------|--------|-----------|
-| `/api/pricings/bulk` | POST | Crear múltiples registros |
-| `/api/pricings/bulk` | **PUT** | **Actualizar múltiples registros** |
-| `/api/pricings/bulk` | DELETE | Eliminar múltiples registros |
+| `/api/pricings` | GET | **Listar con paginacion y filtros** |
+| `/api/pricings/{id}` | GET | Consultar un registro |
+| `/api/pricings` | POST | Crear un registro |
+| `/api/pricings/bulk` | POST | Crear multiples registros |
+| `/api/pricings/bulk` | **PUT** | **Actualizar multiples registros** |
+| `/api/pricings/bulk` | DELETE | Eliminar multiples registros |
 | `/api/pricings/{id}` | PUT | Actualizar un solo registro |
+| `/api/pricings/{id}` | DELETE | Eliminar un solo registro |
 
 ---
 
-**Fecha de creación**: 17 de Noviembre, 2025  
-**Versión API**: 1.0  
+**Fecha de creacion**: 17 de Noviembre, 2025
+**Ultima actualizacion**: 24 de Marzo, 2026
+**Version API**: 1.1
 **Ruta Laravel**: `pricings.bulk.update`

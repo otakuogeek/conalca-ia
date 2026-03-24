@@ -285,6 +285,12 @@ export default function TransitGroupModal({ open, onClose, group }) {
                                 <span className="truncate">${parseFloat(quote.valor).toLocaleString('es-CO')}</span>
                               </span>
                             )}
+                            {quote.flete && (
+                              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-100 text-purple-700 border border-purple-300 font-semibold text-xs shadow-sm max-w-full">
+                                <span className="text-sm">🚛</span>
+                                <span className="truncate">Flete: ${parseFloat(quote.flete).toLocaleString('es-CO')}</span>
+                              </span>
+                            )}
                           </div>
                           
                           <div className="flex flex-col items-end gap-2 min-w-0 flex-shrink-0">
@@ -395,6 +401,18 @@ export default function TransitGroupModal({ open, onClose, group }) {
                             cot.valor_declarado
                               ? `$${parseFloat(
                                   cot.valor_declarado
+                                ).toLocaleString('es-CO')}`
+                              : '--'
+                          }
+                          highlight="green"
+                        />
+                        <Field
+                          small
+                          label="Flete"
+                          value={
+                            cot.flete
+                              ? `$${parseFloat(
+                                  cot.flete
                                 ).toLocaleString('es-CO')}`
                               : '--'
                           }

@@ -28,7 +28,7 @@ class GroupQuotationController extends Controller
             // Columnas necesarias de cotizaciones (tarjeta + detalle modal)
             $cotizacionColumns = [
                 'id', 'group_cotization_id', 'client_id', 'pricing_id',
-                'ciudad_origen', 'ciudad_destino', 'valor', 'porcentaje',
+                'ciudad_origen', 'ciudad_destino', 'valor', 'flete', 'porcentaje',
                 'decision_cliente', 'created_at',
                 // Campos de carga (usados por TransitGroupModal)
                 'tipo_mercancia', 'tipo_producto', 'peso_mercancia',

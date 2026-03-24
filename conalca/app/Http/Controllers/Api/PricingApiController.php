@@ -10,9 +10,24 @@ use Illuminate\Support\Facades\DB;
 class PricingApiController extends Controller
 {
     /* ============ LISTAR ============ */
-    public function index()
+    public function index(Request $request)
     {
-        return Pricing::all();
+        $perPage = min((int) $request->input('per_page', 100), 500);
+
+        // Filtros opcionales
+        $query = Pricing::query();
+
+        if ($request->filled('origin')) {
+            $query->where('origin', 'LIKE', '%' . $request->input('origin') . '%');
+        }
+        if ($request->filled('destination')) {
+            $query->where('destination', 'LIKE', '%' . $request->input('destination') . '%');
+        }
+        if ($request->filled('vehicle_type')) {
+            $query->where('vehicle_type', 'LIKE', '%' . $request->input('vehicle_type') . '%');
+        }
+
+        return $query->paginate($perPage);
     }
 
     /* ============ CREAR (uno) ============ */
