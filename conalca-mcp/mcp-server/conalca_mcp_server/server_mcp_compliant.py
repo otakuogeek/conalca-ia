@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 import uvloop
 import json
 from datetime import datetime, date
+from decimal import Decimal
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +32,8 @@ class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, date)):
             return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
         return super().default(obj)
 
 class ConalcaMCPServer:
@@ -571,13 +574,13 @@ class ConalcaMCPServer:
                                 },
                                 {
                                     "name": "precioviaje",
-                                    "description": "Obtiene el precio específico de un viaje consultando la cotización y su precio asociado. Ideal para responder cuando el chofer pregunta el valor del viaje.",
+                                    "description": "Obtiene el valor del FLETE del viaje desde la cotización. El flete es el valor que se le paga al conductor por el transporte. Usa esta herramienta cuando el chofer pregunte cuánto se paga o el valor del viaje.",
                                     "inputSchema": {
                                         "type": "object",
                                         "properties": {
                                             "cotizacion_id": {
                                                 "type": "integer",
-                                                "description": "ID de la cotización para consultar el precio del viaje",
+                                                "description": "ID de la cotización para consultar el valor del flete del viaje",
                                                 "minimum": 1
                                             }
                                         },
@@ -1223,11 +1226,11 @@ class ConalcaMCPServer:
                         },
                         {
                             "name": "precioviaje",
-                            "description": "Obtiene el precio específico de un viaje consultando la cotización y su precio asociado. Ideal para responder cuando el chofer pregunta el valor del viaje.",
+                            "description": "Obtiene el valor del FLETE del viaje desde la cotización. El flete es el valor que se le paga al conductor por el transporte. Usa esta herramienta cuando el chofer pregunte cuánto se paga o el valor del viaje.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "cotizacion_id": {"type": "integer", "description": "ID de la cotización", "minimum": 1}
+                                    "cotizacion_id": {"type": "integer", "description": "ID de la cotización para consultar el valor del flete", "minimum": 1}
                                 },
                                 "required": ["cotizacion_id"]
                             }
@@ -1685,6 +1688,14 @@ class ConalcaMCPServer:
                     "mensaje_oferta": mensaje_oferta,
                     "mensaje_para_natalia": f"Aquí tienes el mensaje personalizado para el chofer {nombre_chofer}. Puedes usarlo directamente en tu conversación."
                 }
+                
+                # Agregar el valor del flete al resultado
+                flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                if flete_valor and float(flete_valor) > 0:
+                    flete_num = float(flete_valor)
+                    result["valor_flete"] = flete_num
+                    result["valor_flete_formateado"] = f"${flete_num:,.0f} COP"
+                    result["mensaje_precio"] = f"El valor del flete para este viaje es de ${flete_num:,.0f} pesos colombianos. Este es el valor que se le paga al conductor."
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
             
@@ -2285,20 +2296,20 @@ class ConalcaMCPServer:
                                 "fecha_descargue": str(cotizacion.fecha_descargue) if hasattr(cotizacion, 'fecha_descargue') and cotizacion.fecha_descargue else None
                             }
                             
-                            # PASO 3: Obtener precio si hay pricing_id
-                            if cotizacion.pricing_id:
-                                pricing = await repository.get_pricing_by_id(cotizacion.pricing_id)
-                                if pricing:
-                                    precio_data = {
-                                        "pricing_id": cotizacion.pricing_id,
-                                        "precio_viaje": pricing.price,
-                                        "origen": pricing.origin or cotizacion.ciudad_origen,
-                                        "destino": pricing.destination or cotizacion.ciudad_destino,
-                                        "tipo_vehiculo": pricing.vehicle_type,
-                                        "peso_desde": pricing.weight_from,
-                                        "peso_hasta": pricing.weight_to,
-                                        "mensaje_precio": f"${float(pricing.price):,.2f} COP"
-                                    }
+                            # PASO 3: Obtener el FLETE como precio del viaje para el conductor
+                            flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                            if flete_valor and float(flete_valor) > 0:
+                                flete_num = float(flete_valor)
+                                precio_data = {
+                                    "valor_flete": flete_num,
+                                    "precio_viaje": flete_num,
+                                    "precio_viaje_formateado": f"${flete_num:,.0f} COP",
+                                    "origen": cotizacion.ciudad_origen,
+                                    "destino": cotizacion.ciudad_destino,
+                                    "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                                    "mensaje_precio": f"${flete_num:,.0f} COP",
+                                    "nota": "Este es el valor del flete que se le paga al conductor por el transporte"
+                                }
                     
                     result = {
                         "success": True,
@@ -2322,7 +2333,7 @@ class ConalcaMCPServer:
                 if not cotizacion_id:
                     return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
                 
-                # Primero obtenemos la cotización para conseguir el pricing_id
+                # Obtenemos la cotización para usar el campo flete como precio del viaje
                 cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
                 if not cotizacion:
                     return json.dumps({
@@ -2330,34 +2341,28 @@ class ConalcaMCPServer:
                         "error": f"No se encontró cotización con ID: {cotizacion_id}"
                     }, ensure_ascii=False)
                 
-                # Verificamos si tiene pricing_id
-                if not cotizacion.pricing_id:
+                # El valor que se le paga al conductor es el FLETE
+                flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                if not flete_valor or float(flete_valor) == 0:
                     return json.dumps({
                         "success": False,
-                        "error": f"La cotización {cotizacion_id} no tiene precio asociado (pricing_id es null)"
+                        "error": f"La cotización {cotizacion_id} no tiene valor de flete asignado"
                     }, ensure_ascii=False)
                 
-                # Buscamos el precio en la tabla pricings
-                pricing = await repository.get_pricing_by_id(cotizacion.pricing_id)
-                if not pricing:
-                    return json.dumps({
-                        "success": False,
-                        "error": f"No se encontró precio con ID: {cotizacion.pricing_id}"
-                    }, ensure_ascii=False)
+                flete_num = float(flete_valor)
                 
-                # Preparamos la respuesta con información completa del viaje
+                # Preparamos la respuesta con el flete como precio del viaje
                 result = {
                     "success": True,
                     "cotizacion_id": cotizacion_id,
-                    "pricing_id": cotizacion.pricing_id,
-                    "precio_viaje": pricing.price,
+                    "precio_viaje": flete_num,
+                    "precio_viaje_formateado": f"${flete_num:,.0f} COP",
                     "informacion_viaje": {
-                        "origen": pricing.origin or cotizacion.ciudad_origen,
-                        "destino": pricing.destination or cotizacion.ciudad_destino,
-                        "tipo_vehiculo": pricing.vehicle_type,
-                        "tipo_precio": pricing.type_pricing,
-                        "peso_desde": pricing.weight_from,
-                        "peso_hasta": pricing.weight_to
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                        "tipo_carroceria": cotizacion.tipo_carroceria,
+                        "peso_mercancia": cotizacion.peso_mercancia
                     },
                     "informacion_cotizacion": {
                         "vehiculo_requerido": cotizacion.vehiculo_requerido,
@@ -2367,7 +2372,7 @@ class ConalcaMCPServer:
                         "peso_mercancia": cotizacion.peso_mercancia,
                         "tipo_mercancia": cotizacion.tipo_mercancia
                     },
-                    "mensaje_chofer": f"El precio del viaje desde {pricing.origin or cotizacion.ciudad_origen} hasta {pricing.destination or cotizacion.ciudad_destino} es de ${float(pricing.price):,.2f} COP"
+                    "mensaje_chofer": f"El valor del flete del viaje desde {cotizacion.ciudad_origen} hasta {cotizacion.ciudad_destino} es de ${flete_num:,.0f} pesos colombianos"
                 }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)

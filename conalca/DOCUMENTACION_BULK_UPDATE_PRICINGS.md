@@ -1,7 +1,7 @@
 # Documentacion API - Pricings
 
 > **Ultima actualizacion**: 24 de Marzo, 2026
-> **Version API**: 1.1
+> **Version API**: 1.2
 > **Base URL Produccion**: `https://conalcaia.conalca.com.co`
 
 ---
@@ -94,24 +94,133 @@ curl -X GET "https://conalcaia.conalca.com.co/api/pricings/58727" \
 
 ---
 
-## 3. Bulk Update (PUT)
+## 3. Bulk Create (POST)
 
-## Endpoint
+### Endpoint
+```
+POST /api/pricings/bulk
+```
+
+### Descripcion
+Crea multiples registros de pricing en una sola transaccion.
+
+### Payload (Request Body)
+
+```json
+{
+  "items": [
+    {
+      "origin": "BOGOTA",
+      "destination": "CALI",
+      "vehicle_type": "SENCILLO",
+      "weight": 1500,
+      "price": 500000
+    },
+    {
+      "origin": "MEDELLIN",
+      "destination": "CARTAGENA",
+      "vehicle_type": "DOBLETROQUE",
+      "weight": 3000,
+      "price": 1200000
+    }
+  ]
+}
+```
+
+### Parametros
+
+| Campo | Tipo | Requerido | Descripcion |
+|-------|------|-----------|-------------|
+| `items` | array | ✅ Si | Array con los registros a crear (minimo 1) |
+| `items[].origin` | string | ✅ Si | Ciudad de origen (max. 255 caracteres) |
+| `items[].destination` | string | ✅ Si | Ciudad de destino (max. 255 caracteres) |
+| `items[].vehicle_type` | string | ✅ Si | Tipo de vehiculo (max. 255 caracteres) |
+| `items[].weight` | numeric | ✅ Si | Peso en kilogramos |
+| `items[].price` | numeric | ✅ Si | Precio en pesos colombianos |
+
+### Validaciones
+- ✅ Todos los campos son obligatorios para cada item
+- ✅ Se debe enviar al menos 1 item
+- ✅ Transaccional: si falla uno, no se crea ninguno
+
+### Respuesta Exitosa (201 Created)
+
+```json
+{
+  "message": "Registros creados correctamente",
+  "total": 2,
+  "pricings": [
+    {
+      "origin": "BOGOTA",
+      "destination": "CALI",
+      "vehicle_type": "SENCILLO",
+      "weight": 1500,
+      "price": 500000,
+      "updated_at": "2026-03-24T16:35:49.000000Z",
+      "created_at": "2026-03-24T16:35:49.000000Z",
+      "id": 278770
+    },
+    {
+      "origin": "MEDELLIN",
+      "destination": "CARTAGENA",
+      "vehicle_type": "DOBLETROQUE",
+      "weight": 3000,
+      "price": 1200000,
+      "updated_at": "2026-03-24T16:35:49.000000Z",
+      "created_at": "2026-03-24T16:35:49.000000Z",
+      "id": 278771
+    }
+  ]
+}
+```
+
+### Error 422 - Campos faltantes
+
+```json
+{
+  "message": "The items.0.destination field is required. (and 3 more errors)",
+  "errors": {
+    "items.0.destination": ["The items.0.destination field is required."],
+    "items.0.vehicle_type": ["The items.0.vehicle_type field is required."],
+    "items.0.weight": ["The items.0.weight field is required."],
+    "items.0.price": ["The items.0.price field is required."]
+  }
+}
+```
+
+### Ejemplo: curl
+
+```bash
+curl -X POST "https://conalcaia.conalca.com.co/api/pricings/bulk" \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "items": [
+      {
+        "origin": "BOGOTA",
+        "destination": "CALI",
+        "vehicle_type": "SENCILLO",
+        "weight": 1500,
+        "price": 500000
+      }
+    ]
+  }'
+```
+
+---
+
+## 4. Bulk Update (PUT)
+
+### Endpoint
 ```
 PUT /api/pricings/bulk
 ```
 
-## Descripcion
+### Descripcion
 Actualiza multiples registros de pricing en una sola transaccion. Permite actualizar solo los campos especificados para cada registro.
 
-## Headers
-```
-Authorization: Bearer {tu_token_sanctum}
-Content-Type: application/json
-Accept: application/json
-```
-
-## Payload (Request Body)
+### Payload (Request Body)
 
 ```json
 {
@@ -376,5 +485,5 @@ const bulkUpdate = async () => {
 
 **Fecha de creacion**: 17 de Noviembre, 2025
 **Ultima actualizacion**: 24 de Marzo, 2026
-**Version API**: 1.1
-**Ruta Laravel**: `pricings.bulk.update`
+**Version API**: 1.2
+**Rutas Laravel**: `pricings.bulk.store`, `pricings.bulk.update`, `pricings.bulk.delete`

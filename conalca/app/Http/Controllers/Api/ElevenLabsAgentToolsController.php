@@ -140,6 +140,7 @@ class ElevenLabsAgentToolsController extends Controller
                         'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
                         'tipo_carroceria' => $cotizacion->tipo_carroceria,
                         'valor_declarado' => $cotizacion->valor_declarado,
+                        'flete' => $cotizacion->flete,
                         'consolidado_expreso' => $cotizacion->consolidado_expreso,
                         'regimen_nacionalizado' => $cotizacion->regimen_nacionalizado,
                         'temperatura_mercancia' => $cotizacion->temperatura_mercancia,
@@ -170,6 +171,7 @@ class ElevenLabsAgentToolsController extends Controller
                     'vehiculo_requerido' => $c->vehiculo_requerido,
                     'tipo_carroceria' => $c->tipo_carroceria,
                     'valor_declarado' => $c->valor_declarado,
+                    'flete' => $c->flete,
                     'decision_cliente' => $c->decision_cliente,
                     'created_at' => $c->created_at?->format('Y-m-d H:i:s'),
                 ];
@@ -216,15 +218,15 @@ class ElevenLabsAgentToolsController extends Controller
                 return response()->json(['error' => 'Cotización no encontrada'], 404);
             }
 
-            // Formatear el valor como moneda colombiana
-            $valorNumerico = floatval(str_replace(['.', ',', '$', ' '], '', $cotizacion->valor ?? '0'));
-            $valorFormateado = '$' . number_format($valorNumerico, 0, ',', '.');
+            // El valor que se le paga al conductor es el FLETE
+            $fleteNumerico = floatval($cotizacion->flete ?? 0);
+            $fleteFormateado = '$' . number_format($fleteNumerico, 0, ',', '.');
 
             return response()->json([
                 'success' => true,
                 'cotizacion_id' => $cotizacion->id,
-                'valor' => $cotizacion->valor,
-                'valor_formateado' => $valorFormateado,
+                'valor_flete' => $fleteNumerico,
+                'valor_flete_formateado' => $fleteFormateado,
                 'ciudad_origen' => $cotizacion->ciudad_origen,
                 'ciudad_destino' => $cotizacion->ciudad_destino,
                 'vehiculo_requerido' => $cotizacion->vehiculo_requerido,

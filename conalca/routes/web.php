@@ -436,9 +436,18 @@ Route::group(['middleware' => 'auth'], function () {
         return $controller->getAnalysisDataApi();
     })->name('analysis.data');
 
+    Route::get('analysis/calls', function () {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->show();
+    })->name('analysis.calls');
+
+    Route::get('analysis/calls/export', function () {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->export();
+    })->name('analysis.calls.export');
+
     Route::get('pricing', function () {
-        $pricings = Pricing::all();
-        return view('pricing.show', compact('pricings'));
+        return view('pricing.show');
     })->name('pricing.show');
 
     Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar.show');

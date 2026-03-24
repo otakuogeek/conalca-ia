@@ -59,6 +59,7 @@ class CotizacionModel(BaseModel):
     tipo_carroceria: Optional[str] = None
     valor: Optional[str] = None
     valor_declarado: Optional[str] = None
+    flete: Optional[Any] = None
     tipo_mercancia: Optional[str] = None
     ventanas_horarios_recibidos: Optional[str] = None
     seguro: Optional[str] = None

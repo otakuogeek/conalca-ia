@@ -40,27 +40,22 @@ class PricingApiController extends Controller
     }
 
     /* ============ CREAR (varios)  ============ */
-    public function bulkStore(Request $request)           //  ← ← NUEVO
+    public function bulkStore(Request $request)
     {
+        // Validación a nivel de request (como bulkUpdate) — retorna 422 JSON automáticamente
         $request->validate([
-            'items'   => 'required|array|min:1',
-            'items.*' => 'required|array',
+            'items'                  => 'required|array|min:1',
+            'items.*.origin'         => 'required|string|max:255',
+            'items.*.destination'    => 'required|string|max:255',
+            'items.*.vehicle_type'   => 'required|string|max:255',
+            'items.*.weight'         => 'required|numeric',
+            'items.*.price'          => 'required|numeric',
         ]);
 
         $created = [];
 
         DB::transaction(function () use ($request, &$created) {
-            foreach ($request->input('items') as $index => $row) {
-
-                // Validamos cada “item” de forma individual
-                $validator = validator($row, $this->rules());
-                if ($validator->fails()) {
-                    abort(response()->json([
-                        'message' => "Error en el item #{$index}",
-                        'errors'  => $validator->errors()
-                    ], 422));
-                }
-
+            foreach ($request->input('items') as $row) {
                 $created[] = Pricing::create($row);
             }
         });
@@ -68,7 +63,7 @@ class PricingApiController extends Controller
         return response()->json([
             'message'  => 'Registros creados correctamente',
             'total'    => count($created),
-            'pricings' => $created
+            'pricings' => $created,
         ], 201);
     }
 
