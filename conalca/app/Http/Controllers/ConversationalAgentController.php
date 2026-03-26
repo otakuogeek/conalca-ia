@@ -2547,6 +2547,25 @@ class ConversationalAgentController extends Controller
                     if ($llamada->call_answered_at) {
                         $updateData['talk_duration_seconds'] = now()->diffInSeconds($llamada->call_answered_at);
                     }
+
+                    // Fetch transcript from ElevenLabs after call ends
+                    if ($llamada->elevenlabs_conversation_id) {
+                        try {
+                            $callService = app(\App\Services\ElevenLabsCallService::class);
+                            $convDetails = $callService->getConversationDetails($llamada->elevenlabs_conversation_id);
+                            if ($convDetails['success'] && !empty($convDetails['data'])) {
+                                $transcript = $this->extractTranscript($convDetails['data']);
+                                if ($transcript) {
+                                    $updateData['transcript'] = $transcript;
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning('No se pudo obtener transcripción de ElevenLabs', [
+                                'conversation_id' => $llamada->elevenlabs_conversation_id,
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
                     break;
 
                 case 'call_failed':
@@ -2599,6 +2618,39 @@ class ConversationalAgentController extends Controller
             
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Extraer transcripción formateada de los datos de conversación de ElevenLabs
+     */
+    private function extractTranscript(array $conversationData): ?string
+    {
+        $transcript = '';
+
+        // ElevenLabs API returns transcript in different possible formats
+        $messages = $conversationData['transcript'] 
+            ?? $conversationData['messages'] 
+            ?? $conversationData['conversation']['messages'] 
+            ?? $conversationData['conversation']['transcript'] 
+            ?? null;
+
+        if (is_array($messages)) {
+            foreach ($messages as $msg) {
+                $role = $msg['role'] ?? $msg['speaker'] ?? 'unknown';
+                $content = $msg['message'] ?? $msg['content'] ?? $msg['text'] ?? '';
+                if ($content) {
+                    $label = ($role === 'agent' || $role === 'assistant') ? 'Agente' : 'Conductor';
+                    $transcript .= "[{$label}]: {$content}\n";
+                }
+            }
+        }
+
+        // Also check for 'analysis' field which sometimes contains summary
+        if (empty($transcript) && !empty($conversationData['analysis']['transcript_summary'])) {
+            $transcript = $conversationData['analysis']['transcript_summary'];
+        }
+
+        return $transcript ?: null;
     }
 
     /**

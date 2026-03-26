@@ -99,6 +99,7 @@ class CallAnalyticsController extends Controller
                 'call_type',
                 'elevenlabs_conversation_id',
                 'call_notes',
+                'transcript',
                 'observaciones',
                 'created_at'
             );
@@ -111,6 +112,47 @@ class CallAnalyticsController extends Controller
         }
 
         $data['rawLlamadas'] = $llamadasQuery->orderByDesc('created_at')->get();
+
+        // Group calls with transcripts for export
+        $groupTranscriptsQuery = DB::table('llamadas_conductores as lc')
+            ->leftJoin('group_cotizations as gc', 'lc.group_cotization_id', '=', 'gc.id')
+            ->leftJoin('clients as cl', 'gc.client_id', '=', 'cl.id')
+            ->leftJoin('llamadas as l', function ($join) {
+                $join->on('lc.elevenlabs_conversation_id', '=', 'l.elevenlabs_conversation_id')
+                     ->whereNotNull('lc.elevenlabs_conversation_id');
+            })
+            ->select(
+                'lc.group_cotization_id',
+                'gc.reference as grupo_referencia',
+                'gc.type as grupo_tipo',
+                'cl.cliente',
+                'lc.nombre_conductor',
+                'lc.telefono',
+                'lc.tipo_vehiculo',
+                'lc.placa',
+                'lc.estado_llamada',
+                'lc.disponible',
+                'lc.elevenlabs_conversation_id',
+                'lc.fecha_llamada',
+                'lc.created_at as lc_created_at',
+                'l.call_status',
+                'l.talk_duration_seconds',
+                'l.transcript'
+            )
+            ->whereNotNull('lc.group_cotization_id')
+            ->whereNull('lc.deleted_at');
+
+        if ($from) {
+            $groupTranscriptsQuery->where('lc.created_at', '>=', $from . ' 00:00:00');
+        }
+        if ($to) {
+            $groupTranscriptsQuery->where('lc.created_at', '<=', $to . ' 23:59:59');
+        }
+
+        $data['groupTranscripts'] = $groupTranscriptsQuery
+            ->orderBy('lc.group_cotization_id', 'desc')
+            ->orderByDesc('lc.created_at')
+            ->get();
 
         $suffix = '';
         if ($from && $to) {
@@ -265,5 +307,149 @@ class CallAnalyticsController extends Controller
             'driverResponses' => $driverResponses,
             'topDrivers' => $topDrivers,
         ];
+    }
+
+    /**
+     * Obtener la transcripción de una llamada específica
+     */
+    public function getTranscript(Request $request, $llamadaId)
+    {
+        $llamada = Llamada::where('id_llamada', $llamadaId)->first();
+
+        if (!$llamada) {
+            return response()->json(['success' => false, 'message' => 'Llamada no encontrada'], 404);
+        }
+
+        // If transcript is already stored, return it
+        if ($llamada->transcript) {
+            return response()->json([
+                'success' => true,
+                'transcript' => $llamada->transcript,
+                'source' => 'database',
+                'llamada' => [
+                    'id' => $llamada->id_llamada,
+                    'numero_destino' => $llamada->numero_destino,
+                    'call_status' => $llamada->call_status,
+                    'duration' => $llamada->talk_duration_seconds,
+                    'date' => $llamada->call_initiated_at,
+                ],
+            ]);
+        }
+
+        // Try to fetch from ElevenLabs API if conversation_id exists
+        if ($llamada->elevenlabs_conversation_id) {
+            try {
+                $callService = app(\App\Services\ElevenLabsCallService::class);
+                $convDetails = $callService->getConversationDetails($llamada->elevenlabs_conversation_id);
+
+                if ($convDetails['success'] && !empty($convDetails['data'])) {
+                    $controller = app(\App\Http\Controllers\ConversationalAgentController::class);
+                    $transcript = $this->parseTranscriptFromApi($convDetails['data']);
+
+                    if ($transcript) {
+                        // Save for future requests
+                        $llamada->update(['transcript' => $transcript]);
+
+                        return response()->json([
+                            'success' => true,
+                            'transcript' => $transcript,
+                            'source' => 'elevenlabs_api',
+                            'llamada' => [
+                                'id' => $llamada->id_llamada,
+                                'numero_destino' => $llamada->numero_destino,
+                                'call_status' => $llamada->call_status,
+                                'duration' => $llamada->talk_duration_seconds,
+                                'date' => $llamada->call_initiated_at,
+                            ],
+                        ]);
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::warning('Error obteniendo transcripción de ElevenLabs', [
+                    'llamada_id' => $llamadaId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'No hay transcripción disponible para esta llamada',
+            'llamada' => [
+                'id' => $llamada->id_llamada,
+                'numero_destino' => $llamada->numero_destino,
+                'call_status' => $llamada->call_status,
+            ],
+        ]);
+    }
+
+    /**
+     * Obtener las llamadas de un grupo específico con transcripciones
+     */
+    public function getGroupCalls($groupId)
+    {
+        $calls = DB::table('llamadas_conductores as lc')
+            ->leftJoin('llamadas as l', function ($join) {
+                $join->on('lc.elevenlabs_conversation_id', '=', 'l.elevenlabs_conversation_id')
+                     ->whereNotNull('lc.elevenlabs_conversation_id');
+            })
+            ->where('lc.group_cotization_id', $groupId)
+            ->select(
+                'lc.id',
+                'lc.nombre_conductor',
+                'lc.telefono',
+                'lc.tipo_vehiculo',
+                'lc.placa',
+                'lc.estado_llamada',
+                'lc.disponible',
+                'lc.elevenlabs_conversation_id',
+                'lc.created_at',
+                'l.id_llamada',
+                'l.call_status',
+                'l.call_duration_seconds',
+                'l.talk_duration_seconds',
+                'l.transcript',
+                'l.call_initiated_at',
+                'l.call_completed_at'
+            )
+            ->orderByDesc('lc.created_at')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'group_id' => $groupId,
+            'calls' => $calls,
+        ]);
+    }
+
+    /**
+     * Parse transcript from ElevenLabs API response
+     */
+    private function parseTranscriptFromApi(array $data): ?string
+    {
+        $transcript = '';
+
+        $messages = $data['transcript']
+            ?? $data['messages']
+            ?? $data['conversation']['messages']
+            ?? $data['conversation']['transcript']
+            ?? null;
+
+        if (is_array($messages)) {
+            foreach ($messages as $msg) {
+                $role = $msg['role'] ?? $msg['speaker'] ?? 'unknown';
+                $content = $msg['message'] ?? $msg['content'] ?? $msg['text'] ?? '';
+                if ($content) {
+                    $label = ($role === 'agent' || $role === 'assistant') ? 'Agente' : 'Conductor';
+                    $transcript .= "[{$label}]: {$content}\n";
+                }
+            }
+        }
+
+        if (empty($transcript) && !empty($data['analysis']['transcript_summary'])) {
+            $transcript = $data['analysis']['transcript_summary'];
+        }
+
+        return $transcript ?: null;
     }
 }

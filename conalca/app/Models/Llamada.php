@@ -29,6 +29,7 @@ class Llamada extends Model
         'call_started_at',
         'call_ended_at',
         'call_notes',
+        'transcript',
         'call_initiated_at',
         'call_ringing_at',
         'call_answered_at',

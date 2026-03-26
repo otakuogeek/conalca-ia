@@ -443,8 +443,18 @@ Route::group(['middleware' => 'auth'], function () {
 
     Route::get('analysis/calls/export', function () {
         $controller = new App\Http\Controllers\CallAnalyticsController();
-        return $controller->export();
+        return $controller->export(request());
     })->name('analysis.calls.export');
+
+    Route::get('analysis/calls/transcript/{llamadaId}', function ($llamadaId) {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->getTranscript(request(), $llamadaId);
+    })->name('analysis.calls.transcript');
+
+    Route::get('analysis/calls/group/{groupId}', function ($groupId) {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->getGroupCalls($groupId);
+    })->name('analysis.calls.group');
 
     Route::get('pricing', function () {
         return view('pricing.show');

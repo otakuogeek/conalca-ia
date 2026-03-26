@@ -32,6 +32,10 @@ class CallAnalyticsExport implements WithMultipleSheets
             $sheets['Data Completa Llamadas'] = new CallAnalyticsRawLlamadasSheet($this->data['rawLlamadas']);
         }
 
+        if (!empty($this->data['groupTranscripts'])) {
+            $sheets['Llamadas y Transcripciones'] = new CallAnalyticsGroupTranscriptsSheet($this->data['groupTranscripts']);
+        }
+
         return $sheets;
     }
 }

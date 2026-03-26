@@ -52,6 +52,7 @@ class CallAnalyticsRawLlamadasSheet implements FromCollection, WithHeadings, Wit
             'ElevenLabs ID',
             'Notas Llamada',
             'Observaciones',
+            'Transcripción',
             'Creado',
         ];
     }
@@ -78,6 +79,7 @@ class CallAnalyticsRawLlamadasSheet implements FromCollection, WithHeadings, Wit
             $row->elevenlabs_conversation_id ?? '',
             $row->call_notes ?? '',
             $row->observaciones ?? '',
+            $row->transcript ?? '',
             $row->created_at,
         ];
     }
