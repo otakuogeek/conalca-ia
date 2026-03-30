@@ -1635,7 +1635,67 @@ class ConalcaMCPServer:
                 if not conversation_id:
                     return json.dumps({"error": "conversation_id es requerido"}, ensure_ascii=False)
                 
-                # Buscar la llamada por conversation_id
+                # Primero intentar obtener datos desde llamadas_conductores (sistema nuevo con datos reales de Arcangel)
+                conductor_data = await repository.get_conductor_by_conversation_id(conversation_id)
+                
+                if conductor_data:
+                    # Flujo nuevo: datos directos de llamadas_conductores con tipo_vehiculo real del conductor
+                    nombre_conductor = conductor_data.get('nombre_conductor', 'estimado conductor')
+                    identificador_unico = conductor_data.get('identificador_unico')
+                    cotizacion_id = conductor_data.get('cotizacion_id')
+                    
+                    tipo_embalaje_nombre = conductor_data.get('tipo_embajale', 'N/A')
+                    tipo_producto_nombre = conductor_data.get('tipo_producto', 'N/A')
+                    
+                    if conductor_data.get('tipo_embajale') and str(conductor_data.get('tipo_embajale')).isdigit():
+                        nombre_embalaje = await repository.get_packing_name(int(conductor_data.get('tipo_embajale')))
+                        if nombre_embalaje:
+                            tipo_embalaje_nombre = nombre_embalaje
+                    
+                    if conductor_data.get('tipo_producto') and str(conductor_data.get('tipo_producto')).isdigit():
+                        nombre_producto = await repository.get_product_name(int(conductor_data.get('tipo_producto')))
+                        if nombre_producto:
+                            tipo_producto_nombre = nombre_producto
+                    
+                    result = {
+                        "success": True,
+                        "conversation_id": conversation_id,
+                        "llamada_info": {
+                            "identificador_unico": identificador_unico,
+                            "id_cotizacion": cotizacion_id,
+                            "driver_id": identificador_unico
+                        },
+                        "chofer": {
+                            "nombre": nombre_conductor,
+                            "chofer_id": identificador_unico,
+                            "telefono": conductor_data.get('telefono'),
+                            "placa": conductor_data.get('placa'),
+                            "tipo_vehiculo": conductor_data.get('tipo_vehiculo'),
+                            "peso_maximo": float(conductor_data.get('peso_maximo', 0)) if conductor_data.get('peso_maximo') else None,
+                            "ciudad_actual": conductor_data.get('ciudad_actual')
+                        },
+                        "chofer_nombre": nombre_conductor,
+                        "viaje": {
+                            "origen": conductor_data.get('ciudad_origen'),
+                            "destino": conductor_data.get('ciudad_destino'),
+                            "peso_kg": float(conductor_data.get('peso_carga', 0)) if conductor_data.get('peso_carga') else None,
+                            "tipo_embalaje": tipo_embalaje_nombre,
+                            "tipo_producto": tipo_producto_nombre,
+                            "mercancia": conductor_data.get('mercancia', tipo_producto_nombre),
+                            "vehiculo_requerido": conductor_data.get('vehiculo_requerido')
+                        },
+                        "cotizacion_datos": {
+                            "ciudad_origen": conductor_data.get('ciudad_origen'),
+                            "ciudad_destino": conductor_data.get('ciudad_destino'),
+                            "peso_mercancia": conductor_data.get('peso_carga'),
+                            "tipo_embalaje": tipo_embalaje_nombre,
+                            "tipo_producto": tipo_producto_nombre,
+                        }
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+                
+                # Fallback: flujo legacy via tabla llamadas
                 llamada = await repository.get_llamada_by_conversation_id(conversation_id)
                 
                 if not llamada:

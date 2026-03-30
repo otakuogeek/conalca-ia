@@ -900,41 +900,51 @@ class DatabaseRepository:
     async def get_conductor_by_conversation_id(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """
         Obtiene información completa del conductor y cotización mediante conversation_id.
-        Busca primero en la tabla llamadas y luego en llamadas_conductores.
+        Busca directamente en llamadas_conductores por elevenlabs_conversation_id,
+        que ya fue almacenado al iniciar la llamada en ProcessElevenLabsCall.
         """
-        # Primero buscar en llamadas para obtener cotizacion_id
-        query_llamada = """
-        SELECT id_llamada, id_cotizacion, chofer_id, elevenlabs_conversation_id, status
-        FROM llamadas 
-        WHERE elevenlabs_conversation_id = %s 
-        LIMIT 1
-        """
-        llamada_results = await self.db.execute_query(query_llamada, (conversation_id,))
-        
-        if not llamada_results or len(llamada_results) == 0:
-            return None
-            
-        llamada = llamada_results[0]
-        cotizacion_id = llamada.get('id_cotizacion')
-        
-        if not cotizacion_id:
-            return None
-        
-        # Ahora buscar el conductor en llamadas_conductores que esté pendiente
+        # Buscar directamente el conductor por su elevenlabs_conversation_id
         query_conductor = """
         SELECT lc.*, cm.ciudad_origen, cm.ciudad_destino, cm.tipo_producto, cm.tipo_embajale,
                cm.peso_carga, cm.vehiculo_requerido
         FROM llamadas_conductores lc
         LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
-        WHERE lc.cotizacion_id = %s 
-        AND lc.estado_llamada = 'pendiente'
-        AND lc.disponible = 1
-        ORDER BY lc.score DESC
+        WHERE lc.elevenlabs_conversation_id = %s
         LIMIT 1
         """
-        conductor_results = await self.db.execute_query(query_conductor, (cotizacion_id,))
+        conductor_results = await self.db.execute_query(query_conductor, (conversation_id,))
         
         if not conductor_results or len(conductor_results) == 0:
+            # Fallback: buscar via tabla llamadas si no se encuentra directamente
+            query_llamada = """
+            SELECT id_llamada, id_cotizacion, conductor_id, elevenlabs_conversation_id, status
+            FROM llamadas 
+            WHERE elevenlabs_conversation_id = %s 
+            LIMIT 1
+            """
+            llamada_results = await self.db.execute_query(query_llamada, (conversation_id,))
+            
+            if not llamada_results or len(llamada_results) == 0:
+                return None
+                
+            llamada = llamada_results[0]
+            conductor_id = llamada.get('conductor_id')
+            
+            if conductor_id:
+                # Buscar por conductor_id (FK directa)
+                query_by_id = """
+                SELECT lc.*, cm.ciudad_origen, cm.ciudad_destino, cm.tipo_producto, cm.tipo_embajale,
+                       cm.peso_carga, cm.vehiculo_requerido
+                FROM llamadas_conductores lc
+                LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
+                WHERE lc.id = %s
+                LIMIT 1
+                """
+                conductor_results = await self.db.execute_query(query_by_id, (conductor_id,))
+                
+                if conductor_results and len(conductor_results) > 0:
+                    return conductor_results[0]
+            
             return None
             
         return conductor_results[0]

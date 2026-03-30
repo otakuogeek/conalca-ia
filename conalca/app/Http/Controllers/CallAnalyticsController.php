@@ -6,8 +6,10 @@ use App\Models\LlamadaConductor;
 use App\Models\Llamada;
 use App\Models\DriverCallResponse;
 use App\Exports\CallAnalyticsExport;
+use App\Services\ElevenLabsCallService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use Carbon\Carbon;
 
@@ -70,13 +72,13 @@ class CallAnalyticsController extends Controller
             ->whereNull('lc.deleted_at');
 
         if ($from) {
-            $query->where('lc.created_at', '>=', $from . ' 00:00:00');
+            $query->where(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'), '>=', $from . ' 00:00:00');
         }
         if ($to) {
-            $query->where('lc.created_at', '<=', $to . ' 23:59:59');
+            $query->where(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'), '<=', $to . ' 23:59:59');
         }
 
-        $data['rawData'] = $query->orderByDesc('lc.created_at')->get();
+        $data['rawData'] = $query->orderByDesc(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'))->get();
 
         // Raw llamadas table
         $llamadasQuery = DB::table('llamadas')
@@ -105,13 +107,13 @@ class CallAnalyticsController extends Controller
             );
 
         if ($from) {
-            $llamadasQuery->where('created_at', '>=', $from . ' 00:00:00');
+            $llamadasQuery->where(DB::raw('COALESCE(call_initiated_at, created_at)'), '>=', $from . ' 00:00:00');
         }
         if ($to) {
-            $llamadasQuery->where('created_at', '<=', $to . ' 23:59:59');
+            $llamadasQuery->where(DB::raw('COALESCE(call_initiated_at, created_at)'), '<=', $to . ' 23:59:59');
         }
 
-        $data['rawLlamadas'] = $llamadasQuery->orderByDesc('created_at')->get();
+        $data['rawLlamadas'] = $llamadasQuery->orderByDesc(DB::raw('COALESCE(call_initiated_at, created_at)'))->get();
 
         // Group calls with transcripts for export
         $groupTranscriptsQuery = DB::table('llamadas_conductores as lc')
@@ -143,16 +145,19 @@ class CallAnalyticsController extends Controller
             ->whereNull('lc.deleted_at');
 
         if ($from) {
-            $groupTranscriptsQuery->where('lc.created_at', '>=', $from . ' 00:00:00');
+            $groupTranscriptsQuery->where(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'), '>=', $from . ' 00:00:00');
         }
         if ($to) {
-            $groupTranscriptsQuery->where('lc.created_at', '<=', $to . ' 23:59:59');
+            $groupTranscriptsQuery->where(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'), '<=', $to . ' 23:59:59');
         }
 
         $data['groupTranscripts'] = $groupTranscriptsQuery
             ->orderBy('lc.group_cotization_id', 'desc')
-            ->orderByDesc('lc.created_at')
+            ->orderByDesc(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'))
             ->get();
+
+        // Backfill missing transcripts from ElevenLabs API
+        $data['groupTranscripts'] = $this->backfillTranscripts($data['groupTranscripts']);
 
         $suffix = '';
         if ($from && $to) {
@@ -170,30 +175,73 @@ class CallAnalyticsController extends Controller
 
     private function getCallAnalyticsData(?string $from = null, ?string $to = null): array
     {
-        // 1. KPIs generales
-        $totalCalls = LlamadaConductor::count();
-        $totalLlamadas = Llamada::count();
-        $completedCalls = LlamadaConductor::where('estado_llamada', 'completada')->count();
-        $failedCalls = LlamadaConductor::where('estado_llamada', 'fallida')->count();
-        $pendingCalls = LlamadaConductor::where('estado_llamada', 'pendiente')->count();
-        $inProgressCalls = LlamadaConductor::where('estado_llamada', 'en_progreso')->count();
-        $answeredCalls = Llamada::where('call_status', 'answered')
-            ->orWhere('call_status', 'completed')
-            ->count();
-        $noAnswerCalls = Llamada::where('call_status', 'no_answer')
-            ->orWhere('call_status', 'busy')
-            ->orWhere('call_status', 'failed')
-            ->count();
+        // Helper: apply date range filter consistently using COALESCE(fecha_llamada, created_at)
+        // This ensures filtering matches the actual call date, not just record creation
+        $applyDateFilter = function ($query, string $table = 'llamadas_conductores', string $dateCol = 'fecha_llamada', string $fallbackCol = 'created_at') use ($from, $to) {
+            if ($from) {
+                $query->where(DB::raw("COALESCE({$table}.{$dateCol}, {$table}.{$fallbackCol})"), '>=', $from . ' 00:00:00');
+            }
+            if ($to) {
+                $query->where(DB::raw("COALESCE({$table}.{$dateCol}, {$table}.{$fallbackCol})"), '<=', $to . ' 23:59:59');
+            }
+            return $query;
+        };
+
+        $applyDateFilterAlias = function ($query, string $alias = 'lc') use ($from, $to) {
+            if ($from) {
+                $query->where(DB::raw("COALESCE({$alias}.fecha_llamada, {$alias}.created_at)"), '>=', $from . ' 00:00:00');
+            }
+            if ($to) {
+                $query->where(DB::raw("COALESCE({$alias}.fecha_llamada, {$alias}.created_at)"), '<=', $to . ' 23:59:59');
+            }
+            return $query;
+        };
+
+        $applyLlamadaDateFilter = function ($query) use ($from, $to) {
+            if ($from) {
+                $query->where(DB::raw('COALESCE(call_initiated_at, created_at)'), '>=', $from . ' 00:00:00');
+            }
+            if ($to) {
+                $query->where(DB::raw('COALESCE(call_initiated_at, created_at)'), '<=', $to . ' 23:59:59');
+            }
+            return $query;
+        };
+
+        // 1. KPIs generales (filtered by date range)
+        $conductorQuery = LlamadaConductor::query();
+        $applyDateFilter($conductorQuery);
+        $totalCalls = (clone $conductorQuery)->count();
+        $completedCalls = (clone $conductorQuery)->where('estado_llamada', 'completada')->count();
+        $failedCalls = (clone $conductorQuery)->where('estado_llamada', 'fallida')->count();
+        $pendingCalls = (clone $conductorQuery)->where('estado_llamada', 'pendiente')->count();
+        $inProgressCalls = (clone $conductorQuery)->where('estado_llamada', 'en_progreso')->count();
+
+        $llamadaQuery = Llamada::query();
+        $applyLlamadaDateFilter($llamadaQuery);
+        $totalLlamadas = (clone $llamadaQuery)->count();
+        $answeredCalls = (clone $llamadaQuery)->where(function ($q) {
+            $q->where('call_status', 'answered')
+              ->orWhere('call_status', 'completed');
+        })->count();
+        $noAnswerCalls = (clone $llamadaQuery)->where(function ($q) {
+            $q->where('call_status', 'no_answer')
+              ->orWhere('call_status', 'busy')
+              ->orWhere('call_status', 'failed');
+        })->count();
 
         // 2. Distribución por estado de llamada
-        $statusDistribution = LlamadaConductor::select('estado_llamada', DB::raw('COUNT(*) as total'))
+        $statusQuery = LlamadaConductor::select('estado_llamada', DB::raw('COUNT(*) as total'));
+        $applyDateFilter($statusQuery);
+        $statusDistribution = $statusQuery
             ->groupBy('estado_llamada')
             ->orderByDesc('total')
             ->get();
 
         // 3. Distribución detallada (call_status de tabla llamadas)
-        $callStatusDistribution = Llamada::select('call_status', DB::raw('COUNT(*) as total'))
-            ->whereNotNull('call_status')
+        $callStatusQuery = Llamada::select('call_status', DB::raw('COUNT(*) as total'))
+            ->whereNotNull('call_status');
+        $applyLlamadaDateFilter($callStatusQuery);
+        $callStatusDistribution = $callStatusQuery
             ->groupBy('call_status')
             ->orderByDesc('total')
             ->get();
@@ -214,15 +262,18 @@ class CallAnalyticsController extends Controller
                 DB::raw("SUM(CASE WHEN lc.estado_llamada = 'en_progreso' THEN 1 ELSE 0 END) as en_progreso"),
                 DB::raw("SUM(CASE WHEN lc.disponible = 1 THEN 1 ELSE 0 END) as disponibles"),
                 DB::raw('COUNT(DISTINCT lc.telefono) as conductores_unicos'),
-                DB::raw('MIN(lc.created_at) as primera_llamada'),
-                DB::raw('MAX(lc.created_at) as ultima_llamada')
+                DB::raw('MIN(COALESCE(lc.fecha_llamada, lc.created_at)) as primera_llamada'),
+                DB::raw('MAX(COALESCE(lc.fecha_llamada, lc.created_at)) as ultima_llamada')
             )
             ->whereNotNull('lc.group_cotization_id')
+            ->whereNull('lc.deleted_at');
+        $applyDateFilterAlias($groupAnalysis);
+        $groupAnalysis = $groupAnalysis
             ->groupBy('lc.group_cotization_id', 'gc.reference', 'gc.type', 'cl.cliente')
             ->orderByDesc('total_llamadas')
             ->get();
 
-        // 5. Detalle de conductores llamados (quiénes, cuántas veces, respondieron?)
+        // 5. Detalle de conductores llamados
         $driverDetails = DB::table('llamadas_conductores as lc')
             ->leftJoin('group_cotizations as gc', 'lc.group_cotization_id', '=', 'gc.id')
             ->select(
@@ -237,26 +288,37 @@ class CallAnalyticsController extends Controller
                 DB::raw("SUM(CASE WHEN lc.estado_llamada IN ('fallida', 'pendiente') THEN 1 ELSE 0 END) as no_respondio"),
                 DB::raw("SUM(CASE WHEN lc.disponible = 1 THEN 1 ELSE 0 END) as veces_disponible"),
                 DB::raw('GROUP_CONCAT(DISTINCT lc.group_cotization_id) as grupos'),
-                DB::raw('MAX(lc.created_at) as ultima_llamada')
+                DB::raw('MAX(COALESCE(lc.fecha_llamada, lc.created_at)) as ultima_llamada')
             )
+            ->whereNull('lc.deleted_at');
+        $applyDateFilterAlias($driverDetails);
+        $driverDetails = $driverDetails
             ->groupBy('lc.nombre_conductor', 'lc.telefono', 'lc.tipo_vehiculo', 'lc.ciudad_actual', 'lc.ciudad_origen', 'lc.ciudad_destino')
             ->orderByDesc('veces_llamado')
             ->get();
 
-        // 6. Llamadas por día (últimos 30 días)
-        $dailyCalls = LlamadaConductor::select(
-                DB::raw('DATE(created_at) as fecha'),
+        // 6. Llamadas por día
+        $dailyQuery = LlamadaConductor::select(
+                DB::raw('DATE(COALESCE(fecha_llamada, created_at)) as fecha'),
                 DB::raw('COUNT(*) as total'),
                 DB::raw("SUM(CASE WHEN estado_llamada = 'completada' THEN 1 ELSE 0 END) as completadas"),
                 DB::raw("SUM(CASE WHEN estado_llamada = 'fallida' THEN 1 ELSE 0 END) as fallidas")
-            )
-            ->where('created_at', '>=', Carbon::now()->subDays(30))
+            );
+        if ($from) {
+            $dailyQuery->where(DB::raw('COALESCE(fecha_llamada, created_at)'), '>=', $from . ' 00:00:00');
+        } else {
+            $dailyQuery->where(DB::raw('COALESCE(fecha_llamada, created_at)'), '>=', Carbon::now()->subDays(30));
+        }
+        if ($to) {
+            $dailyQuery->where(DB::raw('COALESCE(fecha_llamada, created_at)'), '<=', $to . ' 23:59:59');
+        }
+        $dailyCalls = $dailyQuery
             ->groupBy('fecha')
             ->orderBy('fecha')
             ->get();
 
         // 7. Respuestas de conductores (driver_call_responses)
-        $driverResponses = DriverCallResponse::select(
+        $driverResponsesQuery = DriverCallResponse::select(
                 'driver_name',
                 'driver_phone',
                 'vehicle_type',
@@ -267,12 +329,17 @@ class CallAnalyticsController extends Controller
                 'cotizacion_id',
                 'elevenlabs_conversation_id',
                 'created_at'
-            )
-            ->orderByDesc('created_at')
-            ->get();
+            );
+        if ($from) {
+            $driverResponsesQuery->where('created_at', '>=', $from . ' 00:00:00');
+        }
+        if ($to) {
+            $driverResponsesQuery->where('created_at', '<=', $to . ' 23:59:59');
+        }
+        $driverResponses = $driverResponsesQuery->orderByDesc('created_at')->get();
 
         // 8. Top conductores más contactados
-        $topDrivers = DB::table('llamadas_conductores')
+        $topDriversQuery = DB::table('llamadas_conductores')
             ->select(
                 'nombre_conductor',
                 'telefono',
@@ -280,14 +347,18 @@ class CallAnalyticsController extends Controller
                 DB::raw("SUM(CASE WHEN estado_llamada = 'completada' THEN 1 ELSE 0 END) as completadas"),
                 DB::raw("ROUND(SUM(CASE WHEN estado_llamada = 'completada' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as tasa_respuesta")
             )
+            ->whereNull('deleted_at');
+        $applyDateFilter($topDriversQuery);
+        $topDrivers = $topDriversQuery
             ->groupBy('nombre_conductor', 'telefono')
             ->orderByDesc('total_llamadas')
             ->limit(10)
             ->get();
 
         // 9. Conversations de ElevenLabs
-        $elevenlabsCalls = LlamadaConductor::whereNotNull('elevenlabs_conversation_id')
-            ->count();
+        $elevenlabsQuery = LlamadaConductor::whereNotNull('elevenlabs_conversation_id');
+        $applyDateFilter($elevenlabsQuery);
+        $elevenlabsCalls = $elevenlabsQuery->count();
 
         return [
             'totalCalls' => $totalCalls,
@@ -451,5 +522,69 @@ class CallAnalyticsController extends Controller
         }
 
         return $transcript ?: null;
+    }
+
+    /**
+     * Backfill missing transcripts from ElevenLabs API for export.
+     * Fetches conversation details for calls that have an elevenlabs_conversation_id
+     * but no transcript stored yet, saves them to DB, and updates the collection.
+     */
+    private function backfillTranscripts($groupTranscripts)
+    {
+        $missing = $groupTranscripts->filter(function ($call) {
+            return !empty($call->elevenlabs_conversation_id) && empty($call->transcript);
+        });
+
+        if ($missing->isEmpty()) {
+            return $groupTranscripts;
+        }
+
+        // Deduplicate by conversation_id to avoid fetching the same conversation multiple times
+        $uniqueConversationIds = $missing->pluck('elevenlabs_conversation_id')->unique()->values();
+
+        Log::info("Backfilling {$uniqueConversationIds->count()} missing transcripts for export");
+
+        $fetchedTranscripts = [];
+
+        try {
+            $callService = app(ElevenLabsCallService::class);
+
+            foreach ($uniqueConversationIds as $conversationId) {
+                try {
+                    $convDetails = $callService->getConversationDetails($conversationId);
+
+                    if ($convDetails['success'] && !empty($convDetails['data'])) {
+                        $transcript = $this->parseTranscriptFromApi($convDetails['data']);
+                        if ($transcript) {
+                            $fetchedTranscripts[$conversationId] = $transcript;
+
+                            // Save to llamadas table for future use
+                            Llamada::where('elevenlabs_conversation_id', $conversationId)
+                                ->whereNull('transcript')
+                                ->update(['transcript' => $transcript]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::warning("Failed to fetch transcript for conversation {$conversationId}: {$e->getMessage()}");
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error("Error initializing ElevenLabsCallService for backfill: {$e->getMessage()}");
+        }
+
+        if (empty($fetchedTranscripts)) {
+            return $groupTranscripts;
+        }
+
+        Log::info("Successfully fetched " . count($fetchedTranscripts) . " transcripts from ElevenLabs");
+
+        // Update the collection with fetched transcripts
+        return $groupTranscripts->map(function ($call) use ($fetchedTranscripts) {
+            if (empty($call->transcript) && !empty($call->elevenlabs_conversation_id)
+                && isset($fetchedTranscripts[$call->elevenlabs_conversation_id])) {
+                $call->transcript = $fetchedTranscripts[$call->elevenlabs_conversation_id];
+            }
+            return $call;
+        });
     }
 }

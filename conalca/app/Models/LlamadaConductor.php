@@ -214,7 +214,7 @@ class LlamadaConductor extends Model
                 'nombre_conductor' => $vehiculo['conductor'] ?? 'N/A',
                 'telefono' => $vehiculo['telefono'] ?? null,
                 'placa' => $vehiculo['placa'] ?? null,
-                'tipo_vehiculo' => $vehiculo['tipo_vehiculo'] ?? $vehiculo['clase'] ?? null,
+                'tipo_vehiculo' => $vehiculo['clase'] ?? $vehiculo['tipo_vehiculo'] ?? null,
                 'vehiculo_silogtran' => $cotizacion['vehiculo_requerido'] ?? null,
                 'peso_maximo' => $vehiculo['peso_maximo'] ?? null,
                 'clase_vehiculo' => $vehiculo['clase'] ?? null,

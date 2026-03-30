@@ -239,7 +239,8 @@ class ProcessElevenLabsCall implements ShouldQueue
                         'group_cotization_id' => $cotizacion->group_cotization_id ?? null,
                         'ciudad_origen' => $cotizacion->ciudad_origen,
                         'ciudad_destino' => $cotizacion->ciudad_destino,
-                        'tipo_vehiculo' => $cotizacion->vehiculo_requerido,
+                        // tipo_vehiculo NO se sobreescribe: debe mantener el valor real del conductor (Arcangel)
+                        'vehiculo_silogtran' => $cotizacion->vehiculo_requerido,
                         'mercancia' => $cotizacion->tipo_mercancia,
                         'peso_carga' => $cotizacion->peso_mercancia,
                         'empaque' => $cotizacion->tipo_embajale,

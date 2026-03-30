@@ -1574,7 +1574,7 @@ class ConversationalAgentController extends Controller
                                 'placa' => $conductor->placa,
                                 'conductor' => $conductor->nombre_conductor,
                                 'telefono' => $conductor->telefono,
-                                'clase' => $conductor->tipo_vehiculo ?? $conductor->clase_vehiculo,
+                                'clase' => $conductor->clase_vehiculo ?? $conductor->tipo_vehiculo,
                                 'carroceria' => $conductor->carroceria,
                                 'capacidad' => $conductor->capacidad,
                                 'score' => $conductor->score,
