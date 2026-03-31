@@ -3,10 +3,12 @@
 namespace App\Jobs;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use App\Models\VehicleOwnerHolderDriver;
 use App\Models\LlamadaConductor;
@@ -14,13 +16,17 @@ use App\Models\CotizacionModel;
 use App\Models\Llamada;
 use App\Services\ElevenLabsCallService;
 
-class ProcessElevenLabsCall implements ShouldQueue
+class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $driverId;
     public $cotizacionId;
     public $llamadaId;
+
+    public $tries = 1;
+    public $timeout = 120;
+    public $uniqueFor = 300;
 
     /**
      * Create a new job instance.
@@ -30,6 +36,12 @@ class ProcessElevenLabsCall implements ShouldQueue
         $this->driverId = $driverId;
         $this->cotizacionId = $cotizacionId;
         $this->llamadaId = $llamadaId;
+        $this->onQueue('calls');
+    }
+
+    public function uniqueId(): string
+    {
+        return "elevenlabs_call_{$this->llamadaId}";
     }
 
     /**
@@ -37,32 +49,67 @@ class ProcessElevenLabsCall implements ShouldQueue
      */
     public function handle(): void
     {
+        $lock = null;
+        $lockAcquired = false;
+
         try {
-            Log::info('==================================================');
-            Log::info('ProcessElevenLabsCall: INICIANDO PROCESAMIENTO');
-            Log::info('==================================================');
-            Log::info('IDs recibidos', [
-                'driver_id' => $this->driverId,
-                'cotizacion_id' => $this->cotizacionId,
+            $lock = Cache::lock("processing_call_{$this->llamadaId}", 120);
+            $lockAcquired = $lock->get();
+        } catch (\Throwable $e) {
+            Log::warning('ProcessElevenLabsCall: Error al adquirir lock, continuando sin lock', [
+                'llamada_id' => $this->llamadaId,
+                'error' => $e->getMessage()
+            ]);
+            $lockAcquired = true;
+            $lock = null;
+        }
+
+        if (!$lockAcquired) {
+            Log::warning('ProcessElevenLabsCall: No se obtuvo lock, llamada ya en proceso', [
                 'llamada_id' => $this->llamadaId
             ]);
-            
+            return;
+        }
+
+        try {
+            // Verificar que la llamada sigue en estado procesable
             $llamada = Llamada::find($this->llamadaId);
-            
+
             if (!$llamada) {
                 Log::error('ProcessElevenLabsCall: Llamada no encontrada', [
                     'llamada_id' => $this->llamadaId
                 ]);
                 return;
             }
-            
-            Log::info('Llamada encontrada', [
-                'id_llamada' => $llamada->id_llamada,
-                'conductor_id' => $llamada->conductor_id,
-                'chofer_id' => $llamada->chofer_id,
-                'numero_destino' => $llamada->numero_destino,
-                'status' => $llamada->status
-            ]);
+
+            if (!in_array($llamada->queue_status, ['pending', 'processing'])) {
+                Log::info('ProcessElevenLabsCall: Llamada ya procesada, saltando', [
+                    'llamada_id' => $this->llamadaId,
+                    'queue_status' => $llamada->queue_status
+                ]);
+                return;
+            }
+
+            // Verificar si el conductor ya fue contactado y tiene respuesta (última línea de defensa)
+            if ($llamada->conductor_id) {
+                $conductorCheck = LlamadaConductor::find($llamada->conductor_id);
+                if ($conductorCheck && $conductorCheck->hasBeenContacted()) {
+                    Log::info('ProcessElevenLabsCall: Conductor ya tiene respuesta - cancelando llamada', [
+                        'llamada_id' => $this->llamadaId,
+                        'conductor_id' => $llamada->conductor_id,
+                        'conductor' => $conductorCheck->nombre_conductor,
+                        'respuesta_llamada' => $conductorCheck->respuesta_llamada,
+                        'driver_call_response_id' => $conductorCheck->driver_call_response_id
+                    ]);
+
+                    $llamada->update([
+                        'queue_status' => 'cancelled',
+                        'call_notes' => 'Cancelada: conductor ya tiene respuesta registrada',
+                        'processing_completed_at' => now()
+                    ]);
+                    return;
+                }
+            }
             
             // Intentar obtener conductor de la nueva tabla primero
             $conductor = null;
@@ -302,6 +349,39 @@ class ProcessElevenLabsCall implements ShouldQueue
                     'processing_completed_at' => now()
                 ]);
             }
+        } finally {
+            if ($lock) {
+                try {
+                    $lock->release();
+                } catch (\Throwable $e) {
+                    // Ignorar errores al liberar lock
+                }
+            }
         }
+    }
+
+    public function failed(?\Throwable $exception): void
+    {
+        Log::error('ProcessElevenLabsCall: Job FAILED definitivamente', [
+            'llamada_id' => $this->llamadaId,
+            'error' => $exception?->getMessage()
+        ]);
+
+        try {
+            Llamada::where('id_llamada', $this->llamadaId)
+                ->update([
+                    'status' => 'failed',
+                    'queue_status' => 'failed',
+                    'failure_reason' => 'Job falló: ' . ($exception?->getMessage() ?? 'Error desconocido'),
+                    'processing_completed_at' => now()
+                ]);
+        } catch (\Exception $e) {
+            Log::error('ProcessElevenLabsCall: Error actualizando estado en failed()', [
+                'llamada_id' => $this->llamadaId,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        Cache::lock("processing_call_{$this->llamadaId}")->forceRelease();
     }
 }

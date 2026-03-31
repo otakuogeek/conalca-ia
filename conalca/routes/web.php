@@ -812,6 +812,11 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::get('calls/{cotizacionId}', [CallStatusController::class, 'show']);
     Route::post('calls/{cotizacionId}/select-driver', [CallStatusController::class, 'selectDriver']);
     
+    // Vista de detalles del conductor
+    Route::get('conductor-details/{driverId}', function ($driverId) {
+        return view('conductor-details', ['driverId' => $driverId]);
+    })->name('conductor.details');
+    
     Route::prefix('/solicitud')->group(function () {
         // ①  Guardado parcial (ya existe)
         Route::post('/progreso', [SolicitudTransporteController::class,'guardarParcial'])

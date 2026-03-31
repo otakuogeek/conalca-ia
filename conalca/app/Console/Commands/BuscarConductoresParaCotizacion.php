@@ -132,8 +132,7 @@ class BuscarConductoresParaCotizacion extends Command
                     clases: $vehiculoRequerido,
                     minScore: $minScore,
                     limit: $limit,
-                    useCache: true,
-                    cacheTTL: 30
+                    useCache: false
                 );
                 
                 $vehiculosArcangel = $resultadoArcangel['vehiculos'] ?? [];

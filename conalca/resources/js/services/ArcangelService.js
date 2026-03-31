@@ -51,7 +51,7 @@ class ArcangelService {
    * @param {boolean} useCache - Usar caché
    * @returns {Promise<Object>}
    */
-  async obtenerCiudades(useCache = true) {
+  async obtenerCiudades(useCache = false) {
     return await this.get('/ciudades', { use_cache: useCache });
   }
 
@@ -61,7 +61,7 @@ class ArcangelService {
    * @param {boolean} useCache - Usar caché
    * @returns {Promise<Object>}
    */
-  async obtenerVehiculosCercanos(ciudad, useCache = true) {
+  async obtenerVehiculosCercanos(ciudad, useCache = false) {
     return await this.get('/vehiculos/cercanos', {
       ciudad,
       use_cache: useCache
@@ -74,7 +74,7 @@ class ArcangelService {
    * @param {boolean} useCache - Usar caché
    * @returns {Promise<Object>}
    */
-  async obtenerClasesDisponibles(ciudad, useCache = true) {
+  async obtenerClasesDisponibles(ciudad, useCache = false) {
     return await this.get('/vehiculos/clases', {
       ciudad,
       use_cache: useCache
@@ -97,7 +97,7 @@ class ArcangelService {
     clases = null,
     minScore = null,
     limit = null,
-    useCache = true
+    useCache = false
   }) {
     const params = {
       ciudad,

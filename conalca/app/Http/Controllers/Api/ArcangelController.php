@@ -276,7 +276,7 @@ class ArcangelController extends Controller
             $clase = $request->input('clase');
             $minScore = $request->input('min_score');
             $limit = $request->input('limit');
-            $useCache = $request->input('use_cache', true);
+            $useCache = $request->input('use_cache', false);
 
             // Si se envió 'clase' (singular), convertirlo a array
             if ($clase && !$clases) {
@@ -328,7 +328,7 @@ class ArcangelController extends Controller
             }
 
             $ciudad = $request->input('ciudad');
-            $useCache = $request->input('use_cache', true);
+            $useCache = $request->input('use_cache', false);
 
             $result = $this->arcangelService->getClasesDisponibles($ciudad, $useCache);
 
@@ -355,7 +355,7 @@ class ArcangelController extends Controller
     public function obtenerCiudades(Request $request)
     {
         try {
-            $useCache = $request->input('use_cache', true);
+            $useCache = $request->input('use_cache', false);
             $result = $this->arcangelService->getCiudades($useCache);
 
             return response()->json([
@@ -395,7 +395,7 @@ class ArcangelController extends Controller
             }
 
             $ciudad = $request->input('ciudad');
-            $useCache = $request->input('use_cache', true);
+            $useCache = $request->input('use_cache', false);
 
             $result = $this->arcangelService->getVehiculosCercanos($ciudad, $useCache);
 

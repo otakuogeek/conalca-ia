@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Services\ArcangelService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class VehiculoController extends Controller
@@ -144,6 +145,7 @@ class VehiculoController extends Controller
                 'totalVehiculos' => count($vehiculos),
                 'tiposUnicos' => count($vehiculosPorTipo),
                 'vehiculosPorTipo' => array_values($vehiculosPorTipo),
+                'usingFallback' => (bool) ($response['fallback'] ?? false),
                 'timestamp' => now()->format('Y-m-d H:i:s')
             ]);
             
@@ -155,7 +157,7 @@ class VehiculoController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error al buscar vehículos: ' . $e->getMessage()
+                'message' => 'No fue posible consultar Arcángel en este momento. Intenta nuevamente en unos minutos.'
             ], 500);
         }
     }
@@ -558,8 +560,17 @@ class VehiculoController extends Controller
 
             file_put_contents($envPath, $envContent);
 
-            // Limpiar caché de configuración
+            // Limpiar caches específicos de Arcángel (tokens, ciudades, vehículos de ambos modos)
+            foreach (['production', 'development'] as $m) {
+                Cache::forget("arcangel_auth_token_{$m}");
+                Cache::forget("arcangel_token_expires_at_{$m}");
+                Cache::forget("arcangel_ciudades_{$m}");
+                Cache::forget("arcangel_ciudades_stale_{$m}");
+            }
+
+            // Limpiar caché de configuración y re-cachear con los nuevos valores
             \Artisan::call('config:clear');
+            \Artisan::call('config:cache');
             \Artisan::call('cache:clear');
 
             // SIEMPRE ejecutar eliminación del archivo hot para restablecer CSS
@@ -611,13 +622,13 @@ class VehiculoController extends Controller
     public function obtenerModoActual()
     {
         try {
-            $modo = env('ARCANGEL_MODE', 'production');
+            $modo = config('arcangel.mode', 'production');
             $baseUrl = $modo === 'production' 
-                ? env('ARCANGEL_BASE_URL') 
-                : env('ARCANGEL_BASE_URL_DEV');
+                ? config('arcangel.base_url') 
+                : config('arcangel.base_url_dev');
             $apiKey = $modo === 'production' 
-                ? env('ARCANGEL_API_KEY') 
-                : env('ARCANGEL_API_KEY_DEV');
+                ? config('arcangel.api_key') 
+                : config('arcangel.api_key_dev');
 
             return response()->json([
                 'success' => true,

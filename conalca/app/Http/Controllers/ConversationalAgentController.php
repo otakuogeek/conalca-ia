@@ -961,8 +961,7 @@ class ConversationalAgentController extends Controller
                 clases: $variantesVehiculo,
                 minScore: 0, // Sin filtro de score para llamadas
                 limit: 5, // Máximo 5 conductores
-                useCache: true,
-                cacheTTL: 15
+                useCache: false
             );
             
             $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1042,6 +1041,27 @@ class ConversationalAgentController extends Controller
                         'clase' => $conductor->clase_vehiculo,
                         'cotizacion_id' => $cotizacionId
                     ]);
+
+                    // Verificar si el conductor ya fue contactado y tiene respuesta
+                    if ($conductor->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacionId,
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'respuesta_llamada' => $conductor->respuesta_llamada,
+                            'driver_call_response_id' => $conductor->driver_call_response_id
+                        ]);
+                        
+                        $callResults[] = [
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'placa' => $conductor->placa,
+                            'phone' => $formattedPhone,
+                            'call_result' => ['success' => false, 'reason' => 'already_contacted'],
+                            'status' => 'skipped_already_contacted'
+                        ];
+                        continue;
+                    }
 
                     // Crear registro de llamada en tabla llamadas
                     Log::info('Creando registro de llamada en BD...');
@@ -1449,6 +1469,31 @@ class ConversationalAgentController extends Controller
             $groupCotizationId = $request->input('group_cotization_id');
             $singleCotizationId = $request->input('cotizacion_model_id');
 
+            // Protección contra doble clic: lock de cache
+            $lockId = $groupCotizationId ?? $singleCotizationId;
+            $lockKey = "register_calls_lock_{$lockId}";
+            if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
+                Log::warning('Doble registro detectado - llamadas ya fueron registradas', [
+                    'group_cotization_id' => $groupCotizationId,
+                    'cotizacion_model_id' => $singleCotizationId
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Las llamadas ya fueron registradas para este grupo',
+                    'duplicate_protection' => true,
+                    'total_cotizaciones' => 0,
+                    'calls_scheduled' => 0,
+                    'summary' => [
+                        'total_drivers_called' => 0,
+                        'successful_cotizaciones' => 0,
+                        'failed_cotizaciones' => 0,
+                        'execution_mode' => 'duplicate_blocked'
+                    ]
+                ], 200);
+            }
+            // Lock por 60 segundos para evitar doble clic
+            \Illuminate\Support\Facades\Cache::put($lockKey, true, 60);
+
             // Si se proporciona un ID individual, usarlo como un "grupo de uno"
             if ($singleCotizationId && !$groupCotizationId) {
                 Log::info('Procesando cotización individual como grupo', [
@@ -1555,8 +1600,7 @@ class ConversationalAgentController extends Controller
                             clases: $variantesVehiculo,
                             minScore: 0,
                             limit: 10,
-                            useCache: true,
-                            cacheTTL: 15
+                            useCache: false
                         );
                         
                         $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1590,8 +1634,8 @@ class ConversationalAgentController extends Controller
                         ]);
                     }
 
-                    // Sistema de lotes: máximo 3 llamadas concurrentes
-                    $maxConcurrentCalls = 3;
+                    // Sistema de lotes: máximo 2 llamadas concurrentes (de 2 en 2)
+                    $maxConcurrentCalls = 2;
                     $totalVehiculos = count($vehiculos);
                     $batchCount = ceil($totalVehiculos / $maxConcurrentCalls);
                     
@@ -1635,9 +1679,38 @@ class ConversationalAgentController extends Controller
                             $cotizacionData
                         );
 
+                        // Verificar si el conductor ya fue contactado y tiene respuesta (positiva o negativa)
+                        if ($conductor->hasBeenContacted()) {
+                            Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'conductor_id' => $conductor->id,
+                                'conductor' => $conductor->nombre_conductor,
+                                'respuesta_llamada' => $conductor->respuesta_llamada,
+                                'driver_call_response_id' => $conductor->driver_call_response_id
+                            ]);
+                            continue;
+                        }
+
+                        // Verificar si ya existe una llamada activa para este conductor+cotización
+                        $llamadaExistente = \App\Models\Llamada::where('id_cotizacion', $cotizacion->id)
+                            ->where('conductor_id', $conductor->id)
+                            ->whereIn('queue_status', ['pending', 'processing', 'completed'])
+                            ->first();
+
+                        if ($llamadaExistente) {
+                            Log::info('Llamada duplicada detectada - saltando conductor', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'conductor_id' => $conductor->id,
+                                'conductor' => $conductor->nombre_conductor,
+                                'llamada_existente_id' => $llamadaExistente->id_llamada,
+                                'queue_status' => $llamadaExistente->queue_status
+                            ]);
+                            continue;
+                        }
+
                         // Calcular número de lote (1, 2, 3, etc.)
-                        $batchNumber = floor($index / $maxConcurrentCalls) + 1;
-                        $batchPosition = ($index % $maxConcurrentCalls) + 1;
+                        $batchNumber = floor($callsScheduled / $maxConcurrentCalls) + 1;
+                        $batchPosition = ($callsScheduled % $maxConcurrentCalls) + 1;
 
                         // Crear registro de llamada con información de lote
                         $llamada = \App\Models\Llamada::create([
@@ -1765,8 +1838,7 @@ class ConversationalAgentController extends Controller
                 clases: $variantesVehiculo,
                 minScore: 0,
                 limit: 5,
-                useCache: true,
-                cacheTTL: 15
+                useCache: false
             );
             
             $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1868,6 +1940,34 @@ class ConversationalAgentController extends Controller
                         'batch_position' => $batchPosition
                     ]);
 
+                    // Verificar si el conductor ya fue contactado y tiene respuesta (positiva o negativa)
+                    if ($conductor->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'respuesta_llamada' => $conductor->respuesta_llamada,
+                            'driver_call_response_id' => $conductor->driver_call_response_id
+                        ]);
+                        continue;
+                    }
+
+                    // Verificar si ya existe una llamada activa para este conductor+cotización
+                    $llamadaExistente = \App\Models\Llamada::where('id_cotizacion', $cotizacion->id)
+                        ->where('conductor_id', $conductor->id)
+                        ->whereIn('queue_status', ['pending', 'processing', 'completed'])
+                        ->first();
+
+                    if ($llamadaExistente) {
+                        Log::info('Llamada duplicada detectada en registerCalls - saltando conductor', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'conductor_id' => $conductor->id,
+                            'llamada_existente_id' => $llamadaExistente->id_llamada,
+                            'queue_status' => $llamadaExistente->queue_status
+                        ]);
+                        continue;
+                    }
+
                     // Crear registro en la tabla llamadas CON información de lote
                     $llamada = \App\Models\Llamada::create([
                         'id_cotizacion' => $cotizacion->id,
@@ -1916,31 +2016,17 @@ class ConversationalAgentController extends Controller
             ]);
 
             // ======================================
-            // EJECUTAR LAS LLAMADAS DESPUÉS DEL REGISTRO
+            // NO EJECUTAR LLAMADAS AUTOMÁTICAMENTE
+            // Las llamadas se iniciarán solo cuando el usuario confirme
+            // via startElevenLabsCalls()
             // ======================================
             
             if (!empty($registeredCalls)) {
-                Log::info('Iniciando ejecución de llamadas para cotización', [
+                Log::info('Llamadas registradas - pendientes de confirmación del usuario', [
                     'cotizacion_id' => $cotizacion->id,
-                    'total_calls_to_execute' => count($registeredCalls),
-                    'batch_count' => $batchCount
-                ]);
-
-                // Programar las llamadas comenzando por el primer lote
-                // El job se auto-encadenará para procesar los siguientes lotes
-                \App\Jobs\ProcessBatchElevenLabsCalls::dispatch(
-                    $cotizacion->id,
-                    1, // Comenzar con batch número 1
-                    $maxConcurrentCalls,
-                    150 // Delay de 150 segundos entre lotes (2.5 minutos)
-                )->onQueue('calls');
-
-                Log::info('Job de llamadas despachado', [
-                    'cotizacion_id' => $cotizacion->id,
-                    'job' => 'ProcessBatchElevenLabsCalls',
-                    'queue' => 'calls',
-                    'starting_batch' => 1,
-                    'total_batches' => $batchCount
+                    'total_calls_registered' => count($registeredCalls),
+                    'batch_count' => $batchCount,
+                    'nota' => 'Las llamadas se iniciarán cuando el usuario confirme via startElevenLabsCalls'
                 ]);
             }
 
@@ -2053,6 +2139,29 @@ class ConversationalAgentController extends Controller
                         'phone' => $firstPhone,
                         'cotizacion_id' => $cotizacion->id
                     ]);
+
+                    // Verificar si este conductor ya fue contactado y tiene respuesta para esta cotización
+                    $conductorContactado = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacion->id)
+                        ->where('telefono', 'LIKE', '%' . substr($firstPhone, -10) . '%')
+                        ->first();
+
+                    if ($conductorContactado && $conductorContactado->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta (legacy flow) - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'driver_id' => $driver->id,
+                            'conductor' => $conductorContactado->nombre_conductor,
+                            'respuesta_llamada' => $conductorContactado->respuesta_llamada
+                        ]);
+                        
+                        $callResults[] = [
+                            'driver_id' => $driver->id,
+                            'driver_name' => $vehiculo['conductor'] ?? 'N/A',
+                            'phone' => $firstPhone,
+                            'call_result' => ['success' => false, 'reason' => 'already_contacted'],
+                            'status' => 'skipped_already_contacted'
+                        ];
+                        continue;
+                    }
 
                     // Crear registro de llamada en tabla llamadas
                     $llamada = Llamada::create([
@@ -2266,6 +2375,30 @@ class ConversationalAgentController extends Controller
                 'cotizacion_id' => $cotizacionId
             ]);
 
+            // Protección contra doble despacho: usar lock de cache (resiliente a errores de cache)
+            $lockKey = "start_calls_lock_{$cotizacionId}";
+            try {
+                if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
+                    Log::warning('Doble despacho detectado - llamadas ya están siendo procesadas', [
+                        'cotizacion_id' => $cotizacionId
+                    ]);
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Las llamadas ya están siendo procesadas para esta cotización',
+                        'cotizacion_id' => $cotizacionId,
+                        'llamadas_programadas' => 0,
+                        'duplicate_protection' => true
+                    ], 200);
+                }
+                // Lock por 120 segundos para evitar doble clic
+                \Illuminate\Support\Facades\Cache::put($lockKey, true, 120);
+            } catch (\Exception $cacheException) {
+                Log::warning('No se pudo verificar/crear lock de cache, continuando sin protección de doble despacho', [
+                    'cotizacion_id' => $cotizacionId,
+                    'error' => $cacheException->getMessage()
+                ]);
+            }
+
             // Verificar que la cotización existe
             $cotizacion = CotizacionModel::find($cotizacionId);
             if (!$cotizacion) {
@@ -2303,7 +2436,8 @@ class ConversationalAgentController extends Controller
             }
 
             // Procesar llamadas de forma asíncrona para evitar timeouts
-            $maxConcurrentCalls = 3;
+            // Sistema actualizado: 2 en 2 con 1 minuto de diferencia
+            $maxConcurrentCalls = 2;
             $totalLlamadas = $llamadas->count();
             $batchCount = ceil($totalLlamadas / $maxConcurrentCalls);
             $callsScheduled = 0;
@@ -2380,15 +2514,17 @@ class ConversationalAgentController extends Controller
             }
 
             // Iniciar el procesamiento del primer lote si hay llamadas
+            // Delay entre lotes: 60 segundos (1 minuto)
             if ($callsScheduled > 0) {
-                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 90)
+                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 60)
                     ->delay(now()->addSeconds(5)); // Pequeño delay inicial
                 
                 Log::info('Sistema de lotes iniciado para cotización existente', [
                     'cotizacion_id' => $cotizacionId,
                     'total_batches' => $batchCount,
                     'calls_per_batch' => $maxConcurrentCalls,
-                    'delay_between_batches' => 90
+                    'delay_between_batches' => 60,
+                    'nota' => 'Sistema configurado: 2 en 2 con 1 minuto entre lotes'
                 ]);
             }
 

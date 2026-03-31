@@ -22,7 +22,8 @@ export default defineConfig({
                 "resources/js/editCalendarModal.js",
                 "resources/js/analysis.js",
                 'resources/js/app.jsx',
-                'resources/js/quotes-react.jsx'
+                'resources/js/quotes-react.jsx',
+                'resources/js/pages/driver-details.jsx'
             ],
             refresh: true,
         }),

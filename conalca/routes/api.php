@@ -191,6 +191,7 @@ Route::get('/calls/{callId}/status', [CallController::class, 'getCallStatus'])->
 // Ruta para obtener el estado de conductores aceptados por cotización
 Route::get('/calls/{cotizacionId}', [CallStatusController::class, 'show'])->name('api.calls.accepted');
 Route::post('/calls/{cotizacionId}/select-driver', [CallStatusController::class, 'selectDriver'])->name('api.calls.select-driver');
+Route::get('/conductor-details/{driverId}', [CallStatusController::class, 'getDriverDetails'])->name('api.conductor.details');
 
 // Client assignment routes
 Route::middleware('auth:sanctum')->group(function () {
