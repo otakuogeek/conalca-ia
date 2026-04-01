@@ -120,8 +120,17 @@ class CallStatusController extends Controller
             : 0;
         $queueSummary['active'] = $queueSummary['processing'] > 0 || $queueSummary['pending'] > 0;
 
-        $recentCalls = $llamadas->take(10)->map(function ($llamada) {
+        $totalRegistered = $llamadas->count();
+        $totalBatches = $llamadas->max('batch_number') ?? 1;
+
+        $recentCalls = $llamadas->take(10)->map(function ($llamada) use ($totalRegistered, $totalBatches) {
             $conductor = $llamada->conductor;
+
+            // Calcular posición global en la cola
+            $globalPosition = null;
+            if ($llamada->batch_number && $llamada->batch_position) {
+                $globalPosition = (($llamada->batch_number - 1) * 2) + $llamada->batch_position;
+            }
 
             return [
                 'id_llamada' => $llamada->id_llamada,
@@ -135,6 +144,9 @@ class CallStatusController extends Controller
                 'call_status' => $llamada->call_status,
                 'batch_number' => $llamada->batch_number,
                 'batch_position' => $llamada->batch_position,
+                'total_batches' => $totalBatches,
+                'global_position' => $globalPosition,
+                'total_registered' => $totalRegistered,
                 'queued_at' => $llamada->queued_at?->format('Y-m-d H:i:s'),
                 'processing_started_at' => $llamada->processing_started_at?->format('Y-m-d H:i:s'),
                 'processing_completed_at' => $llamada->processing_completed_at?->format('Y-m-d H:i:s'),

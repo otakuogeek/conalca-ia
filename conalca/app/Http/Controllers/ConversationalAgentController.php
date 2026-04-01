@@ -2519,12 +2519,22 @@ class ConversationalAgentController extends Controller
                 ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 60)
                     ->delay(now()->addSeconds(5)); // Pequeño delay inicial
                 
+                // Disparar el monitor de cola en background para que procese continuamente
+                // hasta que no queden llamadas pendientes
+                \Illuminate\Support\Facades\Artisan::queue('calls:monitor', [
+                    '--once' => true,
+                    '--stuck-timeout' => 180,
+                    '--max-global' => 5,
+                    '--max-per-order' => 2,
+                ]);
+                
                 Log::info('Sistema de lotes iniciado para cotización existente', [
                     'cotizacion_id' => $cotizacionId,
                     'total_batches' => $batchCount,
                     'calls_per_batch' => $maxConcurrentCalls,
                     'delay_between_batches' => 60,
-                    'nota' => 'Sistema configurado: 2 en 2 con 1 minuto entre lotes'
+                    'monitor_dispatched' => true,
+                    'nota' => 'Sistema configurado: 2 en 2 con 1 minuto entre lotes + monitor automático'
                 ]);
             }
 

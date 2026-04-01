@@ -320,6 +320,16 @@ class CallController extends Controller
                 'queue_stats' => $queueStats
             ]);
 
+            // Disparar monitor de cola automáticamente para procesar las llamadas
+            if ($enqueuedCalls > 0) {
+                \Illuminate\Support\Facades\Artisan::queue('calls:monitor', [
+                    '--once' => true,
+                    '--stuck-timeout' => 180,
+                    '--max-global' => 5,
+                    '--max-per-order' => 2,
+                ]);
+            }
+
             return response()->json([
                 'message' => 'Llamadas agregadas al sistema de cola',
                 'total_drivers' => $totalDrivers,
@@ -337,7 +347,7 @@ class CallController extends Controller
                     'estimated_wait_time' => $queueStats['wait_time'] . ' segundos',
                     'can_process_now' => $queueStats['can_process']
                 ],
-                'next_steps' => 'Las llamadas se procesarán automáticamente en lotes de 3 con 90 segundos entre lotes. Use: php artisan calls:process-queue --continuous'
+                'next_steps' => 'Las llamadas se procesarán automáticamente. El monitor está activo.'
             ]);
 
         } catch (\Exception $e) {

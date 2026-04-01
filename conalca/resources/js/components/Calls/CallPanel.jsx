@@ -376,10 +376,13 @@ export default function CallPanel({ cotizacion, onModalClose }) {
                     <div className="text-xs text-gray-600 truncate">
                       {call.driver_phone || 'Sin telefono'}
                       {call.placa ? ` · ${call.placa}` : ''}
-                      {call.batch_number ? ` · Lote ${call.batch_number}-${call.batch_position}` : ''}
+                      {call.batch_number ? ` · Lote ${call.batch_number}` : ''}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {call.call_notes || call.failure_reason || 'Esperando actualizacion del proceso'}
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {call.global_position
+                        ? `Llamada en lote ${call.batch_number}, posición ${call.batch_position}`
+                        : (call.call_notes || call.failure_reason || 'Esperando actualizacion del proceso')
+                      }
                     </div>
                   </div>
                   <div className={`shrink-0 rounded-full border px-2 py-1 text-xs font-medium ${getQueueStatusClasses(call)}`}>

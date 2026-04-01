@@ -30,6 +30,13 @@ class Kernel extends ConsoleKernel
             ->everyFiveMinutes()
             ->withoutOverlapping()
             ->appendOutputTo(storage_path('logs/system-monitor.log'));
+            
+        // Monitor continuo de cola de llamadas - cada minuto verifica y resuelve llamadas atascadas
+        // Soporta múltiples órdenes simultáneas con concurrencia global de 5 y max 2 por orden
+        $schedule->command('calls:monitor --once --stuck-timeout=180 --max-global=5 --max-per-order=2')
+            ->everyMinute()
+            ->withoutOverlapping()
+            ->appendOutputTo(storage_path('logs/call-queue-monitor.log'));
     }
 
     /**
