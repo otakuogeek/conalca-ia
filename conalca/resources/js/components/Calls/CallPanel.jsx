@@ -67,7 +67,7 @@ export default function CallPanel({ cotizacion, onModalClose }) {
     try {
       // PASO 1: Buscar conductores disponibles en Arcángel
       console.log('🔍 Buscando conductores disponibles...');
-      const searchResponse = await buscarConductores(cotizacion.id, 7, 50);
+      const searchResponse = await buscarConductores(cotizacion.id, 0, 50);
       
       if (!searchResponse.data || !searchResponse.data.success) {
         throw new Error(searchResponse.data?.message || 'Error al buscar conductores');

@@ -126,6 +126,7 @@ class VehiculoController extends Controller
                         'conductor' => $vehiculo['conductor'] ?? 'N/A',
                         'telefono' => $vehiculo['celular'] ?? $vehiculo['telefono'] ?? 'N/A',
                         'empresa' => $vehiculo['empresa'] ?? 'N/A',
+                        'score' => $vehiculo['score'] ?? 0,
                         'disponibilidad' => $vehiculo['disponibilidad'] ?? 'Disponible',
                         'ubicacion' => $vehiculo['ubicacion'] ?? $ciudad,
                         'latitud' => $vehiculo['latitud'] ?? null,

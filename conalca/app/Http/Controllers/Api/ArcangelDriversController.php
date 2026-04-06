@@ -50,7 +50,7 @@ class ArcangelDriversController extends Controller
             }
             
             $cotizacionId = $request->input('cotizacion_id');
-            $minScore = $request->input('min_score', 7);
+            $minScore = $request->input('min_score', 0);
             $limit = $request->input('limit', 50);
             
             // Obtener cotización
@@ -297,8 +297,8 @@ class ArcangelDriversController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error al buscar conductores: ' . $e->getMessage(),
-                'error' => config('app.debug') ? $e->getTraceAsString() : null
+                'message' => 'No se pudo completar la búsqueda de conductores. Intente de nuevo.',
+                'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
     }
@@ -376,7 +376,7 @@ class ArcangelDriversController extends Controller
             
             $ciudad = $this->normalizarTexto($request->input('ciudad'));
             $vehiculo = $this->normalizarTexto($request->input('vehiculo'));
-            $minScore = $request->input('min_score', 7);
+            $minScore = $request->input('min_score', 0);
             $limit = $request->input('limit', 50);
             
             $resultado = $this->arcangelService->getVehiculosFiltrados(

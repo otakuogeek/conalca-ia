@@ -12,6 +12,8 @@ use App\Models\Product;
 use App\Models\Packing;
 use App\Models\VehicleClass;
 use App\Models\Bodywork;
+use App\Models\TipoValorRemesa;
+use App\Models\Proveedor;
 
 
 class CatalogController extends Controller
@@ -199,6 +201,33 @@ class CatalogController extends Controller
                 ->where('estado', 'ACTIVO')
                 ->limit(15)
                 ->get(['id', 'codigo', 'documento', 'cliente', 'direccion', 'telefono', 'contacto']);
+    }
+
+    /**
+     * Tipos de valor remesa (Costos) para autocompletado
+     */
+    public function costos(Request $r)
+    {
+        $q = $r->input('q', '');
+
+        return TipoValorRemesa::where('tipvalrem_nombre', 'like', "%$q%")
+                    ->orWhere('tipvalrem_codigo', 'like', "%$q%")
+                    ->limit(15)
+                    ->get(['tipvalrem_codigo', 'tipvalrem_nombre']);
+    }
+
+    /**
+     * Proveedores para autocompletado
+     */
+    public function proveedores(Request $r)
+    {
+        $q = $r->input('q', '');
+
+        return Proveedor::where('nombre', 'like', "%$q%")
+                    ->orWhere('tercero_documento', 'like', "%$q%")
+                    ->orWhere('tercero_codigo', 'like', "%$q%")
+                    ->limit(15)
+                    ->get(['tercero_codigo', 'nombre', 'tipdoc_nombre', 'tercero_documento']);
     }
 
 }

@@ -11,6 +11,7 @@ use App\Models\SolicitudTransporteAcompanamiento;
 use App\Models\SolicitudTransporteCargue;
 use App\Models\SolicitudTransporteCondicionesFactura;
 use App\Models\SolicitudTransporteContenedor;
+use App\Models\SolicitudTransporteCosto;
 use App\Models\SolicitudTransporteDetalle;
 use App\Models\SolicitudTransporteEntrega;
 use App\Models\SolicitudTransporteEquipos;
@@ -314,56 +315,66 @@ class SolicitudTransporteController extends Controller
                 );
                 break;
 
-            /* ------------   STEP 6 (Acompañamiento) ------------- */
+            /* ------------   STEP 6 (Costos) ------------- */
             case 'step_6':
-                $step6Data = $data;
-                
-                // Solo usar campos básicos que probablemente existen (marcados como legacy en migración)
-                $allowedFields = [
-                    'vehiculo_acom',
-                    'tipo_vehiculo_acom', 
-                    'acompanamiento_cuenta_acom',
-                    'valor_acompanante_acom'
-                ];
-                
-                $filteredData = [];
-                
-                foreach ($allowedFields as $field) {
-                    if (isset($step6Data[$field])) {
-                        $filteredData[$field] = $step6Data[$field];
-                    }
-                }
-                
-                // Agregar campos por defecto para import/export
-                if ($isImportExport) {
-                    $defaults = [
-                        'vehiculo_acom' => $filteredData['vehiculo_acom'] ?? 'SI',
-                        'tipo_vehiculo_acom' => $filteredData['tipo_vehiculo_acom'] ?? 'MOTORIZADO',
-                        'acompanamiento_cuenta_acom' => $filteredData['acompanamiento_cuenta_acom'] ?? 'CLIENTE',
-                        'valor_acompanante_acom' => $filteredData['valor_acompanante_acom'] ?? '1'
-                    ];
-                    
-                    // Completar solo campos que no están ya definidos
-                    foreach ($defaults as $key => $defaultValue) {
-                        if (!array_key_exists($key, $filteredData) || empty($filteredData[$key])) {
-                            $filteredData[$key] = $defaultValue;
+                $costosData = $data['costos'] ?? [];
+
+                // Eliminar costos previos de esta solicitud y recrear
+                SolicitudTransporteCosto::where('solicitud_transporte_id', $solicitud->id)->delete();
+
+                foreach ($costosData as $costo) {
+                    $tipCodigo = $costo['tipvalrem_codigo'] ?? 0;
+                    $tipNombre = $costo['tipvalrem_nombre'] ?? '';
+
+                    // If tipvalrem_codigo came as a name/string, resolve the real code
+                    if ($tipCodigo && !is_numeric($tipCodigo)) {
+                        $found = \App\Models\TipoValorRemesa::where('tipvalrem_nombre', 'LIKE', "%{$tipCodigo}%")->first();
+                        if ($found) {
+                            $tipNombre = $found->tipvalrem_nombre;
+                            $tipCodigo = $found->tipvalrem_codigo;
+                        } else {
+                            $tipNombre = $tipCodigo;
+                            $tipCodigo = 0;
                         }
                     }
+
+                    // Resolve proveedor if it came as a name
+                    $provCodigo = $costo['proveedor_codigo'] ?? null;
+                    $provNombre = $costo['proveedor_nombre'] ?? '';
+                    if ($provCodigo && !is_numeric($provCodigo)) {
+                        $foundProv = \App\Models\Proveedor::where('nombre', 'LIKE', "%{$provCodigo}%")->first();
+                        if ($foundProv) {
+                            $provNombre = $foundProv->nombre;
+                            $provCodigo = $foundProv->tercero_codigo;
+                        } else {
+                            $provNombre = $provCodigo;
+                            $provCodigo = null;
+                        }
+                    }
+
+                    SolicitudTransporteCosto::create([
+                        'solicitud_transporte_id' => $solicitud->id,
+                        'tipvalrem_codigo'        => (int) ($tipCodigo ?: 0),
+                        'tipvalrem_nombre'        => $tipNombre,
+                        'valor_unitario'          => $costo['valor_unitario'] ?? 0,
+                        'valor_costo_unitario'    => $costo['valor_costo_unitario'] ?? 0,
+                        'facturable'              => $costo['facturable'] ?? 'NO',
+                        'observacion_costo'       => $costo['observacion_costo'] ?? '',
+                        'aplica_flete'            => $costo['aplica_flete'] ?? 'NO',
+                        'proveedor_codigo'        => $provCodigo ?: null,
+                        'proveedor_nombre'        => $provNombre,
+                    ]);
                 }
-                
-                // Si no hay datos válidos, crear al menos el registro mínimo
-                if (empty($filteredData)) {
-                    $filteredData = [
-                        'vehiculo_acom' => 'SI',
-                        'tipo_vehiculo_acom' => 'MOTORIZADO',
-                        'acompanamiento_cuenta_acom' => 'CLIENTE',
-                        'valor_acompanante_acom' => '1'
-                    ];
-                }
-                
+
+                // Keep acompanamiento defaults so existing flow doesn't break
                 SolicitudTransporteAcompanamiento::updateOrCreate(
                     ['solicitud_transporte_id' => $solicitud->id],
-                    $filteredData
+                    [
+                        'vehiculo_acom'                => 'SI',
+                        'tipo_vehiculo_acom'           => 'MOTORIZADO',
+                        'acompanamiento_cuenta_acom'   => 'CLIENTE',
+                        'valor_acompanante_acom'       => '1',
+                    ]
                 );
                 break;
 
@@ -504,6 +515,7 @@ class SolicitudTransporteController extends Controller
         $i  = $solicitud->internacional;        // Paso 5
         $ac = $solicitud->acompanamiento;       // Paso 6
         $cf = $solicitud->condiciones_factura;  // Condiciones factura y cumplido
+        $cs = $solicitud->costos;               // Costos (Paso 6)
 
         /* ----------- DETALLE  (toma lo que haya y normaliza los valores) ----------- */
         $detalle = [[
@@ -560,6 +572,7 @@ class SolicitudTransporteController extends Controller
             'detalle_condicion_factura'       => ST::condicionFactura($cf?->toArray() ?? []),
             'detalle_condicion_cumplido'      => ST::cumplido($cf?->toArray() ?? []),
             'detalle_acompanamiento'          => ST::acompanamiento($ac?->toArray() ?? []),
+            'detalle_costos'                  => ST::costos($cs?->toArray() ?? []),
         ]];
 
         /* ---------------- ENCABEZADO (normalizado) ---------------- */

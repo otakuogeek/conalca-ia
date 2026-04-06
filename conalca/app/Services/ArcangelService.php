@@ -471,12 +471,19 @@ class ArcangelService
                 'ciudad' => strtoupper($ciudad),
             ];
 
-            if ($useCache && !empty($vehiculos)) {
-                Cache::put($cacheKey, $result, now()->addMinutes($cacheTTL));
-            }
+            try {
+                if ($useCache && !empty($vehiculos)) {
+                    Cache::put($cacheKey, $result, now()->addMinutes($cacheTTL));
+                }
 
-            if (!empty($vehiculos)) {
-                Cache::put($staleCacheKey, $result, now()->addDays(2));
+                if (!empty($vehiculos)) {
+                    Cache::put($staleCacheKey, $result, now()->addDays(2));
+                }
+            } catch (\Exception $cacheEx) {
+                Log::warning('ArcangelService: Error escribiendo caché (no crítico)', [
+                    'ciudad' => $ciudad,
+                    'error' => $cacheEx->getMessage(),
+                ]);
             }
 
             Log::info('ArcangelService: Vehículos cercanos obtenidos', [

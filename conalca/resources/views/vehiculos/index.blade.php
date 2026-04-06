@@ -1017,6 +1017,7 @@
                                 <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Conductor</th>
                                 <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Teléfono</th>
                                 <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Empresa</th>
+                                <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Score</th>
                                 <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                             </tr>
                         </thead>
@@ -1029,6 +1030,15 @@
                                         <a href="tel:${v.telefono}" class="text-blue-600 hover:underline">${v.telefono}</a>
                                     </td>
                                     <td class="px-4 py-3 text-sm text-gray-600">${v.empresa}</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                                            v.score >= 9 ? 'bg-green-100 text-green-800' :
+                                            v.score >= 7 ? 'bg-yellow-100 text-yellow-800' :
+                                            'bg-red-100 text-red-800'
+                                        }">
+                                            ⭐ ${Number(v.score).toFixed(1)}
+                                        </span>
+                                    </td>
                                     <td class="px-4 py-3">
                                         <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">
                                             ${v.disponibilidad}

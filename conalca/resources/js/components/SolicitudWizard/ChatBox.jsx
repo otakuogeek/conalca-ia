@@ -130,11 +130,6 @@ const ALIAS = {
   'contenedor'         : 'contenedor',
   'modalidad internacional' : 'modalidad_internacional',
   'modalidad'               : 'modalidad_internacional',
-  'vehiculo acompañamiento' : 'vehiculo_acom',
-  'vehículo acompañamiento' : 'vehiculo_acom',
-  'vehiculos acompañamiento': 'vehiculo_acom',
-  'vehículos acompañamiento': 'vehiculo_acom',
-  'vehiculo_acom'           : 'vehiculo_acom',
 
 
     // ---- Step 3 – Cargue ----
@@ -170,28 +165,38 @@ const ALIAS = {
   'email'                  : 'email',
   'correo'                 : 'email',
 
-    // ---- Step 6 – Acompañamiento ----
-  'vehiculoacompanamiento'   : 'vehiculo_acom',
-  'vehículoacompañamiento'   : 'vehiculo_acom',
-  'vehiculo_acompanamiento'  : 'vehiculo_acom',
+    // ---- Step 6 – Costos ----
+  'costo'                    : 'tipvalrem_codigo',
+  'tipo costo'               : 'tipvalrem_codigo',
+  'tipo de costo'            : 'tipvalrem_codigo',
+  'tipvalrem'                : 'tipvalrem_codigo',
+  'tipo valor remesa'        : 'tipvalrem_codigo',
+  'valor remesa'             : 'tipvalrem_codigo',
 
-  'tipaco_codigo'            : 'tipo_vehiculo_acom',
-  'tipo acc'                 : 'tipo_vehiculo_acom',
-  'tipo acompañamiento'      : 'tipo_vehiculo_acom',
+  'valor unitario'           : 'valor_unitario',
+  'unitario'                 : 'valor_unitario',
+  'valor_unitario'           : 'valor_unitario',
 
-  'acompanamientocuentade'   : 'acompanamiento_cuenta_acom',
-  'acompañamientocuentade'   : 'acompanamiento_cuenta_acom',
-  'acompanamiento cuenta de' : 'acompanamiento_cuenta_acom',
-  'acompañamiento cuenta de' : 'acompanamiento_cuenta_acom',
+  'valor costo unitario'     : 'valor_costo_unitario',
+  'costo unitario'           : 'valor_costo_unitario',
+  'valor_costo_unitario'     : 'valor_costo_unitario',
 
-  'acompanamientovalor'      : 'valor_acompanante_acom',
-  'acompañamientovalor'      : 'valor_acompanante_acom',
-  'valor acompanamiento'     : 'valor_acompanante_acom',
-  'valor acompañamiento'     : 'valor_acompanante_acom',
-  'acompanamiento_valor'     : 'valor_acompanante_acom',      
-  'acompañamiento_valor'     : 'valor_acompanante_acom',      
-  'acompanamiento valor'     : 'valor_acompanante_acom',      
-  'acompañamiento valor'     : 'valor_acompanante_acom'       
+  'facturable'               : 'facturable',
+  'es facturable'            : 'facturable',
+
+  'observacion costo'        : 'observacion_costo',
+  'observación costo'        : 'observacion_costo',
+  'observacion_costo'        : 'observacion_costo',
+  'observación del costo'    : 'observacion_costo',
+
+  'aplica flete'             : 'aplica_flete',
+  'aplica_flete'             : 'aplica_flete',
+  'aplicaflete'              : 'aplica_flete',
+
+  'proveedor'                : 'proveedor_codigo',
+  'proveedor_codigo'         : 'proveedor_codigo',
+  'codigo proveedor'         : 'proveedor_codigo',
+  'código proveedor'         : 'proveedor_codigo'
 };
 
 /* ---------- normalizar campos ---------- */
@@ -323,16 +328,23 @@ function normalizeValue(field, rawValue) {
     case 'valor_mercancia':
     case 'cantidad_mercancia':
     case 'cantidad_vehiculos':
-    case 'vehiculo_acom':
     case 'tarifa_cliente':
     case 'flete_conductor':
     case 'flete_ministerio':
-    
-    // STEP 6
-    case 'valor_acompanante_acom':
+    // STEP 6 – Costos
+    case 'valor_unitario':
+    case 'valor_costo_unitario':
       // Extraer solo números y puntos/comas
       const number = value.replace(/[^\d.,]/g, '').replace(',', '.');
       return number;
+
+    case 'facturable':
+    case 'aplica_flete': {
+      const upper = value.toUpperCase();
+      if (upper.includes('SI') || upper.includes('SÍ') || upper.includes('YES')) return 'SI';
+      if (upper.includes('NO')) return 'NO';
+      return upper;
+    }
 
     default:
       return value;
@@ -481,11 +493,14 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 //   "ponle DTA", "mejor en nacionalizada", asume que se refiere a modalidad_internacional.
 // • No vuelvas a escribir tipo_carga con esos valores a menos que el usuario lo indique claramente.
 
-// PASO 6 - Acompañamiento
-// vehiculo_acom: número entero (cantidad de vehículos)
-// tipo_vehiculo_acom: uno de [MOTORIZADO, VEHICULAR, CABINA]
-// acompanamiento_cuenta_acom: uno de [CLIENTE, EMPRESA]
-// valor_acompanante_acom: valor numérico
+// PASO 6 - Costos
+// tipvalrem_codigo: código o nombre del tipo de costo (buscar por nombre p.ej. "FLETE", "SEGURO", "DESCARGUE")
+// valor_unitario: valor unitario numérico (p.ej. "50000")
+// valor_costo_unitario: valor costo unitario numérico (p.ej. "45000")
+// facturable: uno de [SI, NO]
+// observacion_costo: texto libre con observaciones del costo
+// aplica_flete: uno de [SI, NO]
+// proveedor_codigo: código o nombre del proveedor
 
 // Instrucciones:
 
@@ -495,7 +510,11 @@ Busca clientes en el sistema. Ejemplo: buscar_clientes("transportes")
 // • "en dólares" / "USD" -> moneda = "DOLARES"
 // • "no se requiere el uso del contenedor", "sin contenedor" -> contenedor = "NO"
 // • "sí requiere contenedor", "usa contenedor" -> contenedor = "SI"
-// • "la cantidad de vehículos de acompañamiento es 2" -> vehiculo_acom = "2"
+// • "valor unitario es 54000" -> valor_unitario = "54000"
+// • "facturable es si" -> facturable = "SI"
+// • "aplica flete no" -> aplica_flete = "NO"
+// • "el costo es flete" -> tipvalrem_codigo = "FLETE"
+// • "observacion del costo es transporte especial" -> observacion_costo = "transporte especial"
 // Cuando detectes varios campos en un mismo mensaje, llama a "rellenar" múltiples veces, una por cada campo.
 // `;
 
@@ -540,8 +559,14 @@ PASO 4 - Contenedor:
 PASO 5 - Internacional:
 - modalidad_internacional: "OTM"
 
-PASO 6 - Acompañamiento:
-- vehiculo_acom: "0"
+PASO 6 - Costos:
+- tipvalrem_codigo: "FLETE"
+- valor_unitario: "50000"
+- valor_costo_unitario: "45000"
+- facturable: "SI"
+- observacion_costo: "Costo ejemplo"
+- aplica_flete: "NO"
+- proveedor_codigo: "EJEMPLO PROVEEDOR"
 
 Cuando detectes la solicitud de llenado completo, llama a "rellenar" una vez por cada campo de la lista anterior.
 
@@ -556,7 +581,8 @@ Campos principales para detección normal:
 - cargue_cuenta_de, descargue_cuenta_de, seguro_cuenta_de
 - kit_seguridad, tipo_remesa_rndc
 - modalidad_internacional
-- contenedor, modalidad_internacional, vehiculo_acom
+- contenedor, modalidad_internacional
+- tipvalrem_codigo, valor_unitario, valor_costo_unitario, facturable, observacion_costo, aplica_flete, proveedor_codigo
 
 **CENTRO DE COSTO DESPACHO - Valores válidos:**
 Para el campo centro_costo_despacho, SIEMPRE usa el valor EXACTO de esta lista (en MAYÚSCULAS tal cual):
@@ -800,7 +826,7 @@ export default function ChatBox() {
 
     const lastUserMessage = history[history.length - 1]?.content?.toLowerCase() || '';
     const isCompleteFormRequest = /\b(llena todo|completa el formulario|llena.*ejemplo|llena.*campos|formulario.*ejemplo|datos.*ejemplo|llena.*completo)\b/.test(lastUserMessage);
-    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|acompanamiento|acompañamiento|motorizado|vehicular|cabina|centro.?de.?costo|despacho|translidher|conalca|maersk|bavaria|global|almacenamiento|pantos|conenvios|conalog|transifront)\b/.test(lastUserMessage);
+    const containsData = /\b(envío|envio|nacional|internacional|urbano|kilos?|kg|toneladas?|bogotá|medellín|cali|barranquilla|alimentos|textiles|pesos|dolares|usd|contenedor|carga|recogida|descripcion|descripción|cargue|remitente|destinatario|promesa|documento|contacto|correo|email|hora|modalidad|otm|dta|dtai|nacionalizada|centro.?de.?costo|despacho|translidher|conalca|maersk|bavaria|global|almacenamiento|pantos|conenvios|conalog|transifront|costo|costos|unitario|facturable|aplica.?flete|proveedor|observacion.?costo|observación.?costo|valor.?unitario|valor.?costo)\b/.test(lastUserMessage);
     const functionCallSetting = (isCompleteFormRequest || containsData) ? { name: 'rellenar' } : 'auto';
     console.log('🎯 Function call setting:', functionCallSetting, 'for message:', lastUserMessage);
     console.log('🔄 Complete form request:', isCompleteFormRequest, '| Contains data:', containsData);
@@ -832,35 +858,37 @@ export default function ChatBox() {
         let value = normalizeValue(field, valueRaw);
 
         const MODALITY_VALUES = ['OTM', 'DTA', 'DTAI', 'NACIONALIZADA'];
-        const ACC_VALUES      = ['MOTORIZADO', 'VEHICULAR', 'CABINA'];
 
         if (field === 'tipo_carga' && MODALITY_VALUES.includes(value.toUpperCase())) {
           field = 'modalidad_internacional';
         }
 
-        if (field === 'tipo_carga' && ACC_VALUES.includes(value.toUpperCase())) {
-          field = 'tipo_vehiculo_acom';
-        }
-
+        // Step 6 – Costos: remap ambiguous fields when on step 6
         const activeStep = currentStepRef.current;
-        const wantsStep6 = activeStep === 6 || rawClean.includes('acompanamiento');
-        if (wantsStep6) {
-          if (['cargue_cuenta_de', 'descargue_cuenta_de', 'seguro_cuenta_de'].includes(field)) {
-            field = 'acompanamiento_cuenta_acom';
+        if (activeStep === 6 || rawClean.includes('costo')) {
+          if (field === 'valor_mercancia' || field === 'valor') {
+            field = 'valor_unitario';
           }
-          if (['valor_mercancia', 'tarifa_cliente'].includes(field)) {
-            field = 'valor_acompanante_acom';
-          }
-          if (['tipo_carga', 'tipo_remesa_rndc'].includes(field) || ACC_VALUES.includes(value.toUpperCase())) {
-            field = 'tipo_vehiculo_acom';
+          if (rawClean.includes('costo unitario') || rawClean.includes('valorcostounitario')) {
+            field = 'valor_costo_unitario';
           }
         }
 
-        if (rawClean.includes('acompanamientocuent') && field !== 'acompanamiento_cuenta_acom') {
-          field = 'acompanamiento_cuenta_acom';
+        // Direct raw-name overrides for Step 6 fields
+        if (rawClean.includes('valor_unitario') || rawClean.includes('valorunitario')) {
+          field = 'valor_unitario';
         }
-        if (rawClean.includes('acompanamientoval') && field !== 'valor_acompanante_acom') {
-          field = 'valor_acompanante_acom';
+        if (rawClean.includes('valor_costo_unitario') || rawClean.includes('valorcostounitario')) {
+          field = 'valor_costo_unitario';
+        }
+        if (rawClean.includes('observacion_costo') || rawClean.includes('observacioncosto')) {
+          field = 'observacion_costo';
+        }
+        if (rawClean.includes('aplica_flete') || rawClean.includes('aplicaflete')) {
+          field = 'aplica_flete';
+        }
+        if (rawClean.includes('tipvalrem') && field !== 'tipvalrem_codigo') {
+          field = 'tipvalrem_codigo';
         }
 
         chatBus.emit('fill-field', field, value);
