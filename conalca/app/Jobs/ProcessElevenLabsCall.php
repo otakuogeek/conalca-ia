@@ -264,14 +264,16 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
             ]);
 
             if ($response['success']) {
+                // IMPORTANTE: Mantener queue_status='processing' porque la llamada está ACTIVA
+                // en la línea SIP de Zadarma. Solo el webhook de finalización (onCallCompleted/onCallFailed)
+                // la cambiará a 'completed'/'failed', liberando el slot para la siguiente llamada.
                 $llamada->update([
                     'status' => Llamada::STATUS_EN_CURSO,
                     'call_status' => Llamada::CALL_STATUS_INITIATED,
-                    'queue_status' => 'completed',
+                    'queue_status' => 'processing', // ← Se mantiene processing hasta webhook
                     'elevenlabs_conversation_id' => $response['conversation_id'] ?? null,
                     'elevenlabs_sip_call_id' => $response['sip_call_id'] ?? null,
                     'call_initiated_at' => now(),
-                    'processing_completed_at' => now()
                 ]);
 
                 // Actualizar también llamadas_conductores con el conversation_id Y datos de la orden
@@ -331,6 +333,9 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'llamada_id' => $this->llamadaId,
                     'error' => $response['error'] ?? 'Error desconocido'
                 ]);
+
+                // Liberar slot y despachar siguiente llamada
+                \App\Services\CallQueueManager::dispatchNextCalls($this->cotizacionId);
             }
 
         } catch (\Exception $e) {
@@ -348,6 +353,9 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'failure_reason' => $e->getMessage(),
                     'processing_completed_at' => now()
                 ]);
+
+                // Liberar slot y despachar siguiente llamada
+                \App\Services\CallQueueManager::dispatchNextCalls($this->cotizacionId);
             }
         } finally {
             if ($lock) {
@@ -375,6 +383,9 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'failure_reason' => 'Job falló: ' . ($exception?->getMessage() ?? 'Error desconocido'),
                     'processing_completed_at' => now()
                 ]);
+
+            // Despachar siguiente llamada en cola (liberar slot)
+            \App\Services\CallQueueManager::dispatchNextCalls($this->cotizacionId);
         } catch (\Exception $e) {
             Log::error('ProcessElevenLabsCall: Error actualizando estado en failed()', [
                 'llamada_id' => $this->llamadaId,

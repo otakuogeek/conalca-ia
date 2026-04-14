@@ -49,6 +49,11 @@ return [
         'agent_phone_number_id' => env('ELEVENLABS_AGENT_PHONE_NUMBER_ID'),
         'agent_phone_number' => env('ELEVENLABS_AGENT_PHONE_NUMBER', '+576017564145'),
         'agent_name' => env('ELEVENLABS_AGENT_NAME', 'Conalca'),
+        // Twilio provider (alternativo a Zadarma SIP Trunk)
+        'twilio_phone_number_id' => env('ELEVENLABS_TWILIO_PHONE_NUMBER_ID'),
+        'twilio_phone_number' => env('ELEVENLABS_TWILIO_PHONE_NUMBER', '+573105672307'),
+        // Proveedor activo: 'zadarma' o 'twilio'
+        'call_provider' => env('ELEVENLABS_CALL_PROVIDER', 'zadarma'),
     ],
 
     'openai' => [

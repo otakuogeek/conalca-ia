@@ -18,7 +18,6 @@ use App\Models\VehicleClass;
 use App\Models\Llamada;
 use App\Models\LlamadaConductor;
 use App\Jobs\ProcessElevenLabsCall;
-use App\Jobs\ProcessBatchElevenLabsCalls;
 
 class ConversationalAgentController extends Controller
 {
@@ -1580,7 +1579,6 @@ class ConversationalAgentController extends Controller
                         ->where('estado_llamada', 'pendiente')
                         ->where('disponible', true)
                         ->orderBy('score', 'desc')
-                        ->limit(10)
                         ->get();
                     
                     // Si no hay conductores en BD, intentar buscar en Arcángel como respaldo
@@ -1599,7 +1597,7 @@ class ConversationalAgentController extends Controller
                             ciudad: $ciudadOrigen,
                             clases: $variantesVehiculo,
                             minScore: 0,
-                            limit: 10,
+                            limit: null,
                             useCache: false
                         );
                         
@@ -2513,42 +2511,31 @@ class ConversationalAgentController extends Controller
                 ]);
             }
 
-            // Iniciar el procesamiento del primer lote si hay llamadas
-            // Delay entre lotes: 60 segundos (1 minuto)
+            // Iniciar el procesamiento usando CallQueueManager basado en webhooks
+            // En lugar de lotes con delays fijos, el QueueManager despacha hasta 2 llamadas
+            // simultáneas y espera webhooks de ElevenLabs para despachar las siguientes
             if ($callsScheduled > 0) {
-                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 60)
-                    ->delay(now()->addSeconds(5)); // Pequeño delay inicial
+                $dispatchResult = \App\Services\CallQueueManager::dispatchNextCalls($cotizacionId);
                 
-                // Disparar el monitor de cola en background para que procese continuamente
-                // hasta que no queden llamadas pendientes
-                \Illuminate\Support\Facades\Artisan::queue('calls:monitor', [
-                    '--once' => true,
-                    '--stuck-timeout' => 180,
-                    '--max-global' => 5,
-                    '--max-per-order' => 2,
-                ]);
-                
-                Log::info('Sistema de lotes iniciado para cotización existente', [
+                Log::info('Sistema de cola webhook iniciado para cotización', [
                     'cotizacion_id' => $cotizacionId,
-                    'total_batches' => $batchCount,
-                    'calls_per_batch' => $maxConcurrentCalls,
-                    'delay_between_batches' => 60,
-                    'monitor_dispatched' => true,
-                    'nota' => 'Sistema configurado: 2 en 2 con 1 minuto entre lotes + monitor automático'
+                    'total_llamadas' => $callsScheduled,
+                    'dispatched_now' => $dispatchResult['dispatched'],
+                    'max_concurrent' => \App\Services\CallQueueManager::getMaxConcurrentCalls(),
+                    'nota' => 'Cola controlada por webhooks: cuando una llamada termina, se despacha la siguiente'
                 ]);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Llamadas organizadas en lotes y programadas exitosamente',
+                'message' => 'Llamadas programadas con control de cola por webhooks',
                 'cotizacion_id' => $cotizacionId,
                 'calls_scheduled' => $callsScheduled,
-                'total_batches' => $batchCount,
-                'calls_per_batch' => $maxConcurrentCalls,
-                'delay_between_batches_seconds' => 90,
-                'estimated_completion_time' => now()->addSeconds($batchCount * 90),
+                'calls_dispatched_now' => $dispatchResult['dispatched'] ?? 0,
+                'max_concurrent' => \App\Services\CallQueueManager::getMaxConcurrentCalls(),
+                'queue_status' => \App\Services\CallQueueManager::getQueueStatus($cotizacionId),
                 'drivers' => $drivers,
-                'execution_mode' => 'batch_asynchronous'
+                'execution_mode' => 'webhook_queue'
             ]);
 
         } catch (\Exception $e) {

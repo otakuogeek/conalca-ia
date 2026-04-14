@@ -259,6 +259,16 @@ Route::post('/start-elevenlabs-calls/{cotizacionId}', [App\Http\Controllers\Conv
     ->name('api.start-elevenlabs-calls');
 
 // ============================================================================
+// ElevenLabs Post-Call Webhooks - Control de cola con máximo 2 llamadas simultáneas
+// Estos webhooks son llamados por ElevenLabs cuando una llamada termina o falla
+// Configurar la URL en ElevenLabs Dashboard > Seguridad > Webhook posterior a la llamada
+// ============================================================================
+Route::post('/elevenlabs-webhook', [App\Http\Controllers\Api\ElevenLabsWebhookController::class, 'handleWebhook'])
+    ->name('api.elevenlabs-webhook');
+Route::get('/elevenlabs-queue-status', [App\Http\Controllers\Api\ElevenLabsWebhookController::class, 'getQueueStatus'])
+    ->name('api.elevenlabs-queue-status');
+
+// ============================================================================
 // ElevenLabs Agent Tools - Endpoints que el agente de voz usa como herramientas
 // Estos endpoints son llamados vía webhook por el agente durante las conversaciones
 // ============================================================================

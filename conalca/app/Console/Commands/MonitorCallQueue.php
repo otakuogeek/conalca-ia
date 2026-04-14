@@ -6,7 +6,6 @@ use Illuminate\Console\Command;
 use App\Models\Llamada;
 use App\Models\LlamadaConductor;
 use App\Jobs\ProcessElevenLabsCall;
-use App\Jobs\ProcessBatchElevenLabsCalls;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -170,9 +169,12 @@ class MonitorCallQueue extends Command
                 ]);
                 $this->warn("  → Llamada #{$call->id_llamada}: tenía conversation_id, marcada como completada");
             } elseif ($call->processing_attempts < $maxRetries) {
-                // Re-encolar para reintento
+                // Re-encolar para reintento - resetear TODOS los campos para que el dispatch la recoja
                 $call->update([
                     'queue_status' => 'pending',
+                    'status' => Llamada::STATUS_PENDIENTE,
+                    'call_status' => null,
+                    'failure_reason' => null,
                     'processing_started_at' => null,
                     'processing_completed_at' => null,
                     'internal_notes' => ($call->internal_notes ?? '') . 
@@ -249,156 +251,64 @@ class MonitorCallQueue extends Command
     }
 
     /**
-     * Despachar llamadas pendientes de TODAS las órdenes con control de concurrencia global
+     * Despachar llamadas pendientes usando CallQueueManager centralizado.
      * 
-     * - Límite global de llamadas en processing simultáneamente
-     * - Distribución round-robin: cada orden recibe slots equitativamente
-     * - Prioriza las órdenes que llevan más tiempo esperando
+     * El CallQueueManager controla el límite de 2 llamadas simultáneas (Zadarma SIP).
+     * El monitor solo actúa como trigger de seguridad por si un webhook no disparó el siguiente despacho.
      */
     private function dispatchPendingCalls(): int
     {
         $dispatched = 0;
 
-        // 1. Obtener cuántas llamadas están activamente en processing (global)
-        $globalActive = Llamada::where('queue_status', 'processing')
-            ->where('processing_started_at', '>', Carbon::now()->subMinutes(5))
-            ->count();
-
-        $slotsDisponibles = $this->maxGlobalConcurrent - $globalActive;
-
-        if ($slotsDisponibles <= 0) {
-            $this->line("  [dispatch] Sin slots globales ({$globalActive}/{$this->maxGlobalConcurrent} activas)");
-            return 0;
-        }
-
-        // 2. Obtener TODAS las órdenes (cotizaciones) con llamadas pendientes
+        // Obtener todas las cotizaciones con llamadas pendientes
         $ordenesPendientes = Llamada::where('queue_status', 'pending')
-            ->select('id_cotizacion', DB::raw('MIN(created_at) as primera_pendiente'), DB::raw('COUNT(*) as total_pendientes'))
+            ->select('id_cotizacion', DB::raw('COUNT(*) as total_pendientes'))
             ->groupBy('id_cotizacion')
-            ->orderBy('primera_pendiente') // Priorizar las que llevan más tiempo esperando
+            ->orderBy(DB::raw('MIN(created_at)'))
             ->get();
 
         if ($ordenesPendientes->isEmpty()) {
             return 0;
         }
 
-        $this->line("  [dispatch] {$ordenesPendientes->count()} órdenes con pendientes | {$slotsDisponibles} slots disponibles (global {$globalActive}/{$this->maxGlobalConcurrent})");
+        $activeNow = \App\Services\CallQueueManager::getActiveCallsCount();
+        $slotsDisponibles = \App\Services\CallQueueManager::getAvailableSlots();
+        
+        $this->line("  [dispatch] {$ordenesPendientes->count()} órdenes con pendientes | {$slotsDisponibles} slots disponibles (activas: {$activeNow}/" . \App\Services\CallQueueManager::getMaxConcurrentCalls() . ")");
 
-        // 3. Calcular cuántas llamadas ya están en processing por cada orden
-        $processingByOrder = Llamada::where('queue_status', 'processing')
-            ->where('processing_started_at', '>', Carbon::now()->subMinutes(5))
-            ->select('id_cotizacion', DB::raw('COUNT(*) as active_count'))
-            ->groupBy('id_cotizacion')
-            ->pluck('active_count', 'id_cotizacion');
-
-        // 4. Distribuir slots con round-robin entre todas las órdenes
-        //    Cada iteración asigna 1 slot a cada orden que pueda recibirlo
-        $ordenesElegibles = [];
-        foreach ($ordenesPendientes as $orden) {
-            $activeForOrder = $processingByOrder->get($orden->id_cotizacion, 0);
-            if ($activeForOrder < $this->maxPerOrder) {
-                $ordenesElegibles[] = [
-                    'id_cotizacion' => $orden->id_cotizacion,
-                    'total_pendientes' => $orden->total_pendientes,
-                    'active' => $activeForOrder,
-                    'slots_usados' => 0,
-                ];
-            }
-        }
-
-        if (empty($ordenesElegibles)) {
-            $this->line("  [dispatch] Todas las órdenes ya tienen max llamadas activas");
+        if ($slotsDisponibles <= 0) {
+            $this->line("  [dispatch] Sin slots disponibles, esperando que termine una llamada");
             return 0;
         }
 
-        // Round-robin: dar slots equitativamente
-        $slotsAsignados = 0;
-        $ronda = 0;
-        while ($slotsAsignados < $slotsDisponibles) {
-            $asignadosEnRonda = 0;
-            foreach ($ordenesElegibles as &$orden) {
-                if ($slotsAsignados >= $slotsDisponibles) break;
-                
-                // Verificar que esta orden aún puede recibir slots
-                $totalActiveForOrder = $orden['active'] + $orden['slots_usados'];
-                if ($totalActiveForOrder >= $this->maxPerOrder) continue;
-                if ($orden['slots_usados'] >= $orden['total_pendientes']) continue;
+        // Usar CallQueueManager para despachar respetando el límite de 2 concurrentes
+        foreach ($ordenesPendientes as $orden) {
+            if ($slotsDisponibles <= 0) break;
 
-                $orden['slots_usados']++;
-                $slotsAsignados++;
-                $asignadosEnRonda++;
-            }
-            unset($orden);
-            
-            // Si nadie recibió slots en esta ronda, ya no hay más por asignar
-            if ($asignadosEnRonda === 0) break;
-            
-            $ronda++;
-            if ($ronda > 50) break; // safety
-        }
+            try {
+                $result = \App\Services\CallQueueManager::dispatchNextCalls($orden->id_cotizacion);
+                $dispatchedNow = $result['dispatched'] ?? 0;
 
-        // 5. Despachar lotes según los slots asignados
-        foreach ($ordenesElegibles as $orden) {
-            if ($orden['slots_usados'] <= 0) continue;
-
-            $cotizacionId = $orden['id_cotizacion'];
-
-            // Buscar lotes pendientes de esta orden
-            $batchesPendientes = Llamada::where('id_cotizacion', $cotizacionId)
-                ->where('queue_status', 'pending')
-                ->select('batch_number', DB::raw('COUNT(*) as count'))
-                ->groupBy('batch_number')
-                ->orderBy('batch_number')
-                ->pluck('count', 'batch_number');
-
-            $slotsRestantes = $orden['slots_usados'];
-            
-            foreach ($batchesPendientes as $batchNum => $countInBatch) {
-                if ($slotsRestantes <= 0) break;
-
-                // Verificar que no haya un processing activo en este lote
-                $alreadyProcessing = Llamada::where('id_cotizacion', $cotizacionId)
-                    ->where('batch_number', $batchNum)
-                    ->where('queue_status', 'processing')
-                    ->exists();
-
-                if ($alreadyProcessing) continue;
-
-                // Despachar el lote con el número de llamadas asignadas
-                $callsToDispatch = min($slotsRestantes, $countInBatch);
-
-                try {
-                    ProcessBatchElevenLabsCalls::dispatch(
-                        $cotizacionId,
-                        $batchNum,
-                        $callsToDispatch,
-                        60
-                    );
-
-                    $this->info("  → Orden #{$cotizacionId} lote #{$batchNum}: {$callsToDispatch} llamadas despachadas (pendientes en lote: {$countInBatch})");
-                    Log::info('MonitorCallQueue: Lote despachado multi-orden', [
-                        'cotizacion_id' => $cotizacionId,
-                        'batch_number' => $batchNum,
-                        'calls_to_dispatch' => $callsToDispatch,
-                        'total_pending_for_order' => $orden['total_pendientes'],
-                        'global_active' => $globalActive,
-                    ]);
-
-                    $slotsRestantes -= $callsToDispatch;
-                    $dispatched++;
-                } catch (\Exception $e) {
-                    Log::error('MonitorCallQueue: Error despachando lote', [
-                        'cotizacion_id' => $cotizacionId,
-                        'batch_number' => $batchNum,
-                        'error' => $e->getMessage()
-                    ]);
+                if ($dispatchedNow > 0) {
+                    $this->info("  → Orden #{$orden->id_cotizacion}: {$dispatchedNow} llamada(s) despachada(s) (pendientes: {$orden->total_pendientes})");
+                    $dispatched += $dispatchedNow;
+                    $slotsDisponibles -= $dispatchedNow;
                 }
+
+                // Si la razón es 7_confirmed, informar
+                if (($result['reason'] ?? '') === '7_confirmed') {
+                    $this->info("  → Orden #{$orden->id_cotizacion}: 7 conductores confirmados, pendientes canceladas");
+                }
+            } catch (\Exception $e) {
+                Log::error('MonitorCallQueue: Error despachando via CallQueueManager', [
+                    'cotizacion_id' => $orden->id_cotizacion,
+                    'error' => $e->getMessage()
+                ]);
             }
         }
 
         return $dispatched;
     }
-
     /**
      * Re-encolar llamadas fallidas que aún tienen reintentos disponibles
      */
@@ -422,6 +332,9 @@ class MonitorCallQueue extends Command
             $ts = $this->timestamp();
             $call->update([
                 'queue_status' => 'pending',
+                'status' => Llamada::STATUS_PENDIENTE,
+                'call_status' => null,
+                'failure_reason' => null,
                 'processing_started_at' => null,
                 'processing_completed_at' => null,
                 'processing_attempts' => $nextAttempt,

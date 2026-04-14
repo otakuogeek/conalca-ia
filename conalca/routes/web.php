@@ -456,6 +456,47 @@ Route::group(['middleware' => 'auth'], function () {
         return $controller->getGroupCalls($groupId);
     })->name('analysis.calls.group');
 
+    // Auditoría de Llamadas
+    Route::get('auditoria-llamadas', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->index(request());
+    })->name('auditoria.llamadas');
+
+    Route::get('auditoria-llamadas/api', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->apiData(request());
+    })->name('auditoria.llamadas.api');
+
+    Route::get('auditoria-llamadas/batch/{groupId}', function ($groupId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->batchDetail(request(), $groupId);
+    })->name('auditoria.llamadas.batch');
+
+    Route::get('auditoria-llamadas/transcript/{conversationId}', function ($conversationId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->getTranscript($conversationId);
+    })->name('auditoria.llamadas.transcript');
+
+    Route::get('auditoria-llamadas/audio/{conversationId}', function ($conversationId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->getAudio($conversationId);
+    })->name('auditoria.llamadas.audio');
+
+    Route::get('auditoria-llamadas/queue-status', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->queueStatus();
+    })->name('auditoria.llamadas.queue-status');
+
+    Route::get('auditoria-llamadas/timeline/{llamadaId}', function ($llamadaId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->callTimeline($llamadaId);
+    })->name('auditoria.llamadas.timeline');
+
+    Route::get('auditoria-llamadas/export-csv', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->exportCsv(request());
+    })->name('auditoria.llamadas.export-csv');
+
     Route::get('pricing', function () {
         return view('pricing.show');
     })->name('pricing.show');

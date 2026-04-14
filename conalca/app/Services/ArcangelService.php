@@ -42,7 +42,7 @@ class ArcangelService
         $this->retryTimes = config('arcangel.retry_times', 3);
         $this->retryDelay = config('arcangel.retry_delay', 100);
 
-        Log::info('ArcangelService initialized', [
+        Log::debug('ArcangelService initialized', [
             'mode' => $this->mode,
             'base_url' => $this->baseUrl,
         ]);
