@@ -12,6 +12,11 @@ import {
 import { requestPricingRoute } from '../../services/solicitations';
 import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle, FaCopy, FaPlus } from 'react-icons/fa';
 
+// Póliza excedente thresholds
+const POLIZA_THRESHOLD_OPTIONAL = 1_000_000_000;  // 1.000 millones
+const POLIZA_THRESHOLD_MANDATORY = 1_500_000_000; // 1.500 millones
+const IVA_RATE = 0.19; // 19%
+
 const PricingModal = ({ 
   onClose, 
   onNext,
@@ -492,6 +497,56 @@ const requestAISuggestions = async (currentKey) => {
     return (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
   };
 
+  // --- Póliza excedente (valor declarado) ---
+  const getValorDeclarado = (route) => {
+    // Handle multiple possible field names and formatted strings
+    const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+    // Remove dots/commas used as thousands separators (e.g. "2.000.000.000")
+    const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+    return Number(cleaned) || 0;
+  };
+
+  const calculatePolizaExcedente = (route) => {
+    const valorDeclarado = getValorDeclarado(route);
+    console.log('[PricingModal] Póliza check:', {
+      valor_declarado: route.valor_declarado,
+      valorMercancia: route.valorMercancia,
+      valorDeclaradoParsed: valorDeclarado,
+      threshold: POLIZA_THRESHOLD_OPTIONAL,
+    });
+    const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+    const isOptional = valorDeclarado > POLIZA_THRESHOLD_OPTIONAL && valorDeclarado <= POLIZA_THRESHOLD_MANDATORY;
+    const showPoliza = isMandatory || isOptional;
+
+    if (!showPoliza) return { show: false, mandatory: false, enabled: false, excedente: 0, tarifaValue: 0, iva: 0, total: 0 };
+
+    const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+    const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+    const tarifaRate = Number(route.tarifa_poliza) || 0;
+    const tarifaValue = excedente * (tarifaRate / 100);
+    const iva = tarifaValue * IVA_RATE;
+    const total = enabled ? tarifaValue + iva : 0;
+
+    return { show: true, mandatory: isMandatory, enabled, excedente, tarifaRate, tarifaValue, iva, total };
+  };
+
+  const handlePolizaToggle = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, poliza_excedente_enabled: !route.poliza_excedente_enabled }
+        : route
+    ));
+  };
+
+  const handleTarifaPolizaChange = (routeIndex, value) => {
+    const tarifa = parseFloat(value) || 0;
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, tarifa_poliza: tarifa }
+        : route
+    ));
+  };
+
   const getAutomaticParameters = (route) => {
     const parameters = [];
     
@@ -753,8 +808,12 @@ const requestAISuggestions = async (currentKey) => {
 
     const extrasTotal = getExtrasTotal(route);
 
+    // Póliza excedente
+    const poliza = calculatePolizaExcedente(route);
+    const polizaTotal = poliza.total;
+
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal;
+    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal + polizaTotal;
     // Redondear hacia arriba al múltiplo de 5000 más cercano
     return Math.ceil(total / 5000) * 5000;
   };
@@ -845,6 +904,9 @@ const requestAISuggestions = async (currentKey) => {
           vehiculo_requerido: route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
           vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
           valor_declarado: route.valor_declarado,
+          poliza_excedente_enabled: route.poliza_excedente_enabled || false,
+          tarifa_poliza: route.tarifa_poliza || 0,
+          poliza_excedente_total: calculatePolizaExcedente(route).total || 0,
           pricing_id: selectedPricings[index]?.id ?? null,
           porcentaje: route.porcentaje,
           valor_cliente: route.finalValue,
@@ -1360,6 +1422,85 @@ const requestAISuggestions = async (currentKey) => {
                           </div>
                         </td>
                       </tr>
+                      {/* --- Póliza Excedente sub-row --- */}
+                      {(() => {
+                        const poliza = calculatePolizaExcedente(route);
+                        if (!poliza.show) return null;
+                        return (
+                          <tr className={`border-b border-gray-100 ${poliza.mandatory ? 'bg-red-50/30' : 'bg-amber-50/30'}`}>
+                            <td colSpan="8" className="px-4 py-3">
+                              <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: poliza.mandatory ? '#f87171' : '#fbbf24', backgroundColor: poliza.mandatory ? '#fef2f2' : '#fffbeb' }}>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${poliza.mandatory ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                      {poliza.mandatory ? '⚠ OBLIGATORIO' : '⚡ OPCIONAL'}
+                                    </span>
+                                    <span className="text-sm font-600 text-gray-700 product-sans">
+                                      Póliza Valor Declarado Excedido
+                                    </span>
+                                    <span className="text-xs text-gray-500 product-sans">
+                                      (Valor declarado: ${getValorDeclarado(route).toLocaleString()})
+                                    </span>
+                                  </div>
+                                  {!poliza.mandatory && (
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={poliza.enabled}
+                                        onChange={() => handlePolizaToggle(index)}
+                                        className="sr-only peer"
+                                      />
+                                      <div className="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-400"></div>
+                                      <span className="ml-2 text-xs text-gray-600 product-sans">Aplicar</span>
+                                    </label>
+                                  )}
+                                </div>
+
+                                {(poliza.enabled || poliza.mandatory) && (
+                                  <div className="grid grid-cols-5 gap-4 items-end pt-1">
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">VALOR DECLARADO EXCEDIDO</label>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.excedente).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">TARIFA (%)</label>
+                                      <input
+                                        type="number"
+                                        value={route.tarifa_poliza || ''}
+                                        onChange={(e) => handleTarifaPolizaChange(index, e.target.value)}
+                                        className="w-full px-3 py-2 text-sm text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 product-sans"
+                                        placeholder="0.15"
+                                        min="0"
+                                        step="0.01"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">VALOR TARIFA</label>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.tarifaValue).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">IVA (19%)</label>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.iva).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-orange-600 product-sans block mb-1 font-bold">TOTAL PÓLIZA</label>
+                                      <div className="px-3 py-2 text-sm font-700 text-orange-600 bg-orange-50 border border-orange-200 rounded-lg product-sans">
+                                        ${Number(poliza.total).toLocaleString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })()}
                       </React.Fragment>
                     );
                   })}
@@ -1433,6 +1574,13 @@ const requestAISuggestions = async (currentKey) => {
   );
 };
 
+// Shared helper for póliza valor declarado parsing
+const parseValorDeclarado = (route) => {
+  const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+  const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+  return Number(cleaned) || 0;
+};
+
 const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quoteData, selectedPricings, clientData }) => {
   const calculateTotal = () => {
     return Object.keys(selectedPricings).reduce((total, index) => {
@@ -1450,7 +1598,22 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
         });
 
         const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
-        return total + withMargin + parametersTotal + extrasTotal;
+
+        // Póliza excedente
+        let polizaTotal = 0;
+        const valorDeclarado = parseValorDeclarado(route);
+        if (valorDeclarado > POLIZA_THRESHOLD_OPTIONAL) {
+          const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+          const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+          if (enabled) {
+            const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+            const tarifaRate = Number(route.tarifa_poliza) || 0;
+            const tarifaValue = excedente * (tarifaRate / 100);
+            polizaTotal = tarifaValue + (tarifaValue * IVA_RATE);
+          }
+        }
+
+        return total + withMargin + parametersTotal + extrasTotal + polizaTotal;
       }
 
       return total;
@@ -1549,7 +1712,22 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
                 });
 
                 const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
-                finalRoutePrice = withMargin + parametersTotal + extrasTotal;
+
+                // Póliza excedente
+                let polizaTotal = 0;
+                const valorDeclarado = parseValorDeclarado(route);
+                if (valorDeclarado > POLIZA_THRESHOLD_OPTIONAL) {
+                  const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+                  const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+                  if (enabled) {
+                    const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+                    const tarifaRate = Number(route.tarifa_poliza) || 0;
+                    const tarifaValue = excedente * (tarifaRate / 100);
+                    polizaTotal = tarifaValue + (tarifaValue * IVA_RATE);
+                  }
+                }
+
+                finalRoutePrice = withMargin + parametersTotal + extrasTotal + polizaTotal;
               }
 
               const isReturn = route.isReturnRoute;

@@ -5,6 +5,32 @@ import Modal from './ui/Modal';
 import { saveQuoteFromChat, sendQuoteEmail } from '../../services/cotizationsService';
 
 
+// Póliza excedente thresholds (same as PricingModal)
+const POLIZA_THRESHOLD_OPTIONAL = 1_000_000_000;
+const POLIZA_THRESHOLD_MANDATORY = 1_500_000_000;
+const IVA_RATE = 0.19;
+
+const parseValorDeclarado = (route) => {
+  const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+  const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+  return Number(cleaned) || 0;
+};
+
+const calculatePolizaExcedente = (route) => {
+  const valorDeclarado = parseValorDeclarado(route);
+  const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+  const isOptional = valorDeclarado > POLIZA_THRESHOLD_OPTIONAL && valorDeclarado <= POLIZA_THRESHOLD_MANDATORY;
+  const showPoliza = isMandatory || isOptional;
+  if (!showPoliza) return { show: false, enabled: false, excedente: 0, tarifaValue: 0, iva: 0, total: 0 };
+  const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+  const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+  const tarifaRate = Number(route.tarifa_poliza) || 0;
+  const tarifaValue = excedente * (tarifaRate / 100);
+  const iva = tarifaValue * IVA_RATE;
+  const total = enabled ? tarifaValue + iva : 0;
+  return { show: showPoliza, mandatory: isMandatory, enabled, excedente, tarifaRate, tarifaValue, iva, total };
+};
+
 const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings }) => {
   const [emailData, setEmailData] = useState({
     clientName: clientData.clientName || '',
@@ -171,7 +197,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     });
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal;
+
+    // Póliza excedente
+    const poliza = calculatePolizaExcedente(route);
+    const polizaTotal = poliza.total;
+
+    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal;
     const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
     
     // 🆕 Cantidad de contenedores (solo para sistema interno)
@@ -192,6 +223,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       containerQuantity,
       basePrice,
       valueWithMargin,
+      polizaTotal,
       valuePerUnit,
       totalValueInternal,
       '📋 AL CLIENTE': valuePerUnit,
@@ -205,6 +237,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       parametersTotal,
       acompanamiento,
       valueWithMargin,
+      poliza,
+      polizaTotal,
       finalValue: valuePerUnit, // 🔥 Al cliente se muestra valor POR UNIDAD
       valuePerUnit, // Valor unitario (por contenedor)
       totalValueInternal, // 🆕 Valor total para sistema interno
@@ -258,7 +292,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       });
 
       const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal;
+
+      // Póliza excedente
+      const poliza = calculatePolizaExcedente(route);
+      const polizaTotal = poliza.total;
+
+      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal;
       const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
       
       // 🆕 Detectar si es contenedor y calcular valores
@@ -283,6 +322,10 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         precio_base: basePrice,
         valor_parametros: parametersTotal,
         valor_acompanamiento: acompanamiento,
+        // Póliza excedente
+        poliza_excedente_enabled: route.poliza_excedente_enabled || false,
+        tarifa_poliza: route.tarifa_poliza || 0,
+        poliza_excedente_total: poliza.total || 0,
         // 🔥 Sistema interno recibe el TOTAL (cantidad * valor unitario)
         finalValue: totalValueInternal,
         valor: totalValueInternal,
@@ -580,7 +623,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                 </h3>
 
                 {quoteData.map((route, index) => {
-                  const { finalValue } = buildRouteFinancials(route, index);
+                  const { finalValue, poliza } = buildRouteFinancials(route, index);
                   const cargoLabels = {
                     general: 'General', refrigerado: 'Refrigerada',
                     dangerous: 'Peligrosa', sobredimensionada: 'Sobredimensionada',
@@ -638,6 +681,31 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                               ${Number(finalValue).toLocaleString()}
                             </td>
                           </tr>
+                          {poliza.show && poliza.enabled && poliza.total > 0 && (
+                            <>
+                              <tr className="bg-red-50">
+                                <td className="px-2 py-1 border-b border-red-100 text-red-600 font-semibold" colSpan="2">
+                                  Póliza Valor Declarado Excedido {poliza.mandatory ? '(Obligatorio)' : '(Opcional)'}
+                                </td>
+                              </tr>
+                              <tr className="bg-red-50/50">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">Excedente</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.excedente).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50/30">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">Tarifa ({poliza.tarifaRate}%)</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.tarifaValue).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50/30">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">IVA (19%)</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.iva).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50">
+                                <td className="px-2 py-1 border-b border-red-100 text-red-700 font-bold">Total Póliza</td>
+                                <td className="px-2 py-1 border-b border-red-100 text-red-700 font-bold">${Number(poliza.total).toLocaleString()}</td>
+                              </tr>
+                            </>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -669,6 +737,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           parametersTotal,
                           acompanamiento,
                           valueWithMargin,
+                          poliza,
+                          polizaTotal,
                           finalValue,
                           valuePerUnit,
                           totalValueInternal,
@@ -769,6 +839,11 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                                 {(parametersTotal + acompanamiento) > 0 && (
                                   <div className="text-[10px] text-gray-500">
                                     Parámetros/Acomp.: ${(parametersTotal + acompanamiento).toLocaleString()}
+                                  </div>
+                                )}
+                                {poliza.show && poliza.enabled && polizaTotal > 0 && (
+                                  <div className="text-[10px] text-red-600 font-medium mt-0.5">
+                                    Póliza excedente: ${Number(polizaTotal).toLocaleString()}
                                   </div>
                                 )}
                               </div>
