@@ -514,6 +514,8 @@
                             auth()->user()->hasRole('SUPER ADMIN') ||
                             auth()->user()->hasRole('JEFE COMERCIAL') ||
                             auth()->user()->hasRole('GERENTE DE CUENTA') ||
+                            auth()->user()->hasRole('ASISTENTE COMERCIAL') ||
+                            auth()->user()->hasRole('PRICING') ||
                             auth()->user()->hasRole('SAC')
                         )
                             <div x-data="{ open: false }">
@@ -667,6 +669,19 @@
                                             <span class="ml-2 text-sm"> Vehículos </span>
                                         </a>
                                     @endif
+
+                                    {{-- Esquema de Seguridad --}}
+                                    <a href="{{ route('security-schema.index') }}"
+                                        class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                                        text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
+                                        role="button" aria-haspopup="true" data-button="security-schema">
+                                        <span aria-hidden="true">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                            </svg>
+                                        </span>
+                                        <span class="ml-2 text-sm"> Esquema de Seguridad </span>
+                                    </a>
                                 </div>
                             </div>
                         @endif
@@ -1068,6 +1083,8 @@
                                 auth()->user()->hasRole('SUPER ADMIN') ||
                                 auth()->user()->hasRole('JEFE COMERCIAL') ||
                                 auth()->user()->hasRole('GERENTE DE CUENTA') ||
+                                auth()->user()->hasRole('ASISTENTE COMERCIAL') ||
+                                auth()->user()->hasRole('PRICING') ||
                                 auth()->user()->hasRole('SAC')
                             )
                                 <div x-data="{ isActive: false, open: false }">
@@ -1196,6 +1213,18 @@
                                                 <span class="ml-2 text-sm"> Tara </span>
                                             </a>
                                         @endif
+
+                                        {{-- Esquema de Seguridad --}}
+                                        <a href="{{ route('security-schema.index') }}"
+                                            class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                            role="button" aria-haspopup="true">
+                                            <span aria-hidden="true">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Esquema de Seguridad </span>
+                                        </a>
                                     </div>
                                 </div>
                             @endif

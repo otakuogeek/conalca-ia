@@ -10,7 +10,9 @@ import {
   fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
 import { requestPricingRoute } from '../../services/solicitations';
-import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle, FaCopy, FaPlus } from 'react-icons/fa';
+import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle, FaCopy, FaPlus, FaShieldAlt } from 'react-icons/fa';
+import { getSecurityProtocol } from './utils/securityProtocol';
+import { fetchSchemaForPricing } from '../../services/securitySchemaService';
 
 // Póliza excedente thresholds
 const POLIZA_THRESHOLD_OPTIONAL = 1_000_000_000;  // 1.000 millones
@@ -44,6 +46,7 @@ const PricingModal = ({
   const [missingPricingRoutes, setMissingPricingRoutes] = useState([]);
   const [pricingRequestSent, setPricingRequestSent] = useState(false);
   const [sendingPricingRequest, setSendingPricingRequest] = useState(false);
+  const [userSecuritySchema, setUserSecuritySchema] = useState(null);
   const [rentabilityDefaults, setRentabilityDefaults] = useState({
     min: 17,
     avg: 24,
@@ -99,6 +102,12 @@ const PricingModal = ({
 
   useEffect(() => {
     loadPercentageSettings();
+  }, []);
+
+  useEffect(() => {
+    fetchSchemaForPricing()
+      .then(({ data }) => setUserSecuritySchema(data))
+      .catch(() => setUserSecuritySchema(null));
   }, []);
 
   useEffect(() => {
@@ -521,7 +530,9 @@ const requestAISuggestions = async (currentKey) => {
     if (!showPoliza) return { show: false, mandatory: false, enabled: false, excedente: 0, tarifaValue: 0, iva: 0, total: 0 };
 
     const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
-    const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+    const useLowerThreshold = Boolean(route.poliza_use_lower_threshold);
+    const baseThreshold = useLowerThreshold ? POLIZA_THRESHOLD_OPTIONAL : POLIZA_THRESHOLD_MANDATORY;
+    const excedente = valorDeclarado - baseThreshold;
     const tarifaRate = Number(route.tarifa_poliza) || 0;
     const tarifaValue = excedente * (tarifaRate / 100);
     const iva = tarifaValue * IVA_RATE;
@@ -538,6 +549,14 @@ const requestAISuggestions = async (currentKey) => {
     ));
   };
 
+  const handlePolizaThresholdToggle = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, poliza_use_lower_threshold: !route.poliza_use_lower_threshold }
+        : route
+    ));
+  };
+
   const handleTarifaPolizaChange = (routeIndex, value) => {
     const tarifa = parseFloat(value) || 0;
     setQuoteData(prev => prev.map((route, index) =>
@@ -545,6 +564,190 @@ const requestAISuggestions = async (currentKey) => {
         ? { ...route, tarifa_poliza: tarifa }
         : route
     ));
+  };
+
+  // --- Security protocol value fields ---
+  const handleSecurityValueChange = (routeIndex, fieldName, value) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, [fieldName]: parseFloat(value) || 0 }
+        : route
+    ));
+  };
+
+  // Metropolitan areas / nearby towns → treated as URBANO
+  const METRO_AREAS = [
+    ['BOGOTA', 'SOACHA', 'CHIA', 'ZIPAQUIRA', 'MOSQUERA', 'FUNZA', 'COTA', 'CAJICA', 'TOCANCIPA', 'SOPO', 'LA CALERA', 'TABIO', 'TENJO', 'GACHANCIPA', 'SIBATE', 'FACATATIVA', 'MADRID', 'BOJACA', 'CHOCONTA'],
+    ['MEDELLIN', 'ENVIGADO', 'ITAGUI', 'BELLO', 'SABANETA', 'COPACABANA', 'LA ESTRELLA', 'CALDAS', 'GIRARDOTA', 'BARBOSA'],
+    ['CALI', 'YUMBO', 'PALMIRA', 'JAMUNDI', 'CANDELARIA'],
+    ['BARRANQUILLA', 'SOLEDAD', 'MALAMBO', 'GALAPA', 'PUERTO COLOMBIA'],
+    ['BUCARAMANGA', 'FLORIDABLANCA', 'GIRON', 'PIEDECUESTA'],
+    ['CARTAGENA', 'TURBACO', 'ARJONA'],
+    ['PEREIRA', 'DOSQUEBRADAS'],
+    ['MANIZALES', 'VILLAMARIA'],
+    ['CUCUTA', 'VILLA DEL ROSARIO', 'LOS PATIOS'],
+    ['IBAGUE', 'ALVARADO', 'PIEDRAS'],
+    ['SANTA MARTA', 'CIENAGA'],
+    ['VILLAVICENCIO', 'ACACIAS', 'RESTREPO'],
+    ['PASTO', 'CHACHAGUI'],
+    ['ARMENIA', 'CIRCASIA', 'CALARCA'],
+    ['POPAYAN', 'PIENDAMO', 'TIMBIO'],
+    ['MONTERIA', 'CERETE'],
+    ['NEIVA', 'RIVERA'],
+    ['TUNJA', 'COMBITA', 'OICATA', 'SORACÁ'],
+  ];
+
+  const isUrbanRoute = (origin, destination) => {
+    const o = (origin || '').toUpperCase().trim();
+    const d = (destination || '').toUpperCase().trim();
+    if (!o || !d) return false;
+    if (o === d) return true;
+    return METRO_AREAS.some(area => area.includes(o) && area.includes(d));
+  };
+
+  // Map security measure labels to route field names
+  const SECURITY_FIELD_MAP = {
+    'GPS': 'seguridad_gps',
+    'Candado satelital': 'seguridad_candado',
+    '1 Acompañante vehicular': 'seguridad_acompanante',
+    '2 Acompañantes vehiculares': 'seguridad_acompanante',
+    '1 Motorizado': 'seguridad_motorizado',
+    '2 Motorizados': 'seguridad_motorizado',
+  };
+
+  // Extended lookup to handle dynamic counts from user security schema
+  const getSecurityFieldName = (item) => {
+    if (SECURITY_FIELD_MAP[item]) return SECURITY_FIELD_MAP[item];
+    if (/Acompañante|Acompañantes/.test(item)) return 'seguridad_acompanante';
+    if (/Motorizado|Motorizados/.test(item)) return 'seguridad_motorizado';
+    return null;
+  };
+
+  const getSecurityTotal = (route) => {
+    return (Number(route.seguridad_candado) || 0)
+      + (Number(route.seguridad_acompanante) || 0)
+      + (Number(route.seguridad_motorizado) || 0);
+  };
+
+  // Build protocol from user's security schema configuration
+  const getUserSecurityProtocol = (route) => {
+    const COBERTURA_MAXIMA = 800_000_000;
+    const productName = (route.tipo_producto || route.producto || '').toUpperCase().trim();
+    const productCode = route.producto_codigo || null;
+    const valorDeclarado = getValorDeclarado(route);
+
+    if (!valorDeclarado) return null;
+
+    // Determine the exact category the product belongs to using products_by_category
+    const productsByCategory = userSecuritySchema.products_by_category || {};
+    let detectedCategory = 'bajo_riesgo'; // Default: if not found anywhere, it's bajo riesgo
+
+    const categoryPriority = ['alto_riesgo_nivel_1', 'alto_riesgo_nivel_2', 'no_amparada', 'bajo_riesgo'];
+    for (const cat of categoryPriority) {
+      const catProducts = productsByCategory[cat] || [];
+      const found = catProducts.some(p => {
+        const pName = (p.name || '').toUpperCase().trim();
+        const pCode = p.product_code;
+        // Match by product_code first (most reliable)
+        if (productCode && pCode && String(productCode) === String(pCode)) return true;
+        // Match by name
+        return productName === pName || productName.includes(pName) || pName.includes(productName);
+      });
+      if (found) {
+        detectedCategory = cat;
+        break;
+      }
+    }
+
+    // Category display config
+    const categoryConfig = {
+      alto_riesgo_nivel_1: { level: 'Alto Riesgo — Primer Nivel', label: 'ALTO RIESGO', color: 'red', rangeKey: 'alto_riesgo_nivel_1' },
+      alto_riesgo_nivel_2: { level: 'Alto Riesgo — Segundo Nivel', label: 'ALTO RIESGO', color: 'orange', rangeKey: 'alto_riesgo_nivel_2' },
+      bajo_riesgo:         { level: 'Bajo Riesgo', label: 'BAJO RIESGO', color: 'green', rangeKey: 'bajo_riesgo' },
+      bajo_riesgo_quimicos:{ level: 'Bajo Riesgo — Químicos', label: 'BAJO RIESGO', color: 'green', rangeKey: 'bajo_riesgo_quimicos' },
+      no_amparada:         { level: 'NO Amparada por Póliza', label: 'NO AMPARADA', color: 'purple', rangeKey: null },
+    };
+
+    const config = categoryConfig[detectedCategory] || categoryConfig.bajo_riesgo;
+
+    // If product is "no_amparada", show warning - no ranges apply
+    if (detectedCategory === 'no_amparada') {
+      return {
+        riskCategory: detectedCategory,
+        valorDeclarado,
+        exceedsCobertura: true,
+        coberturaMaxima: 0,
+        nacional: ['⚠ Mercancía NO amparada por nuestra póliza'],
+        urbano: ['⚠ Mercancía NO amparada por nuestra póliza'],
+        level: config.level,
+        color: config.color,
+        label: config.label,
+        noAmparada: true,
+      };
+    }
+
+    // Find matching price range for the valor declarado in the detected category
+    const ranges = userSecuritySchema[config.rangeKey] || [];
+    let matchedRange = ranges.find(r => {
+      const from = Number(r.price_from) || 0;
+      const to = Number(r.price_to);
+      return valorDeclarado >= from && valorDeclarado <= to;
+    });
+
+    // If no exact match but ranges exist, use the highest range (value exceeds all ranges)
+    if (!matchedRange && ranges.length > 0) {
+      matchedRange = ranges.reduce((max, r) => {
+        return (Number(r.price_to) || 0) > (Number(max.price_to) || 0) ? r : max;
+      }, ranges[0]);
+    }
+
+    // No ranges configured at all for this category
+    if (!matchedRange) {
+      // Still return the detected category info so we don't fall back to hardcoded protocol
+      const exceedsCobertura = valorDeclarado > COBERTURA_MAXIMA;
+      return {
+        riskCategory: detectedCategory,
+        valorDeclarado,
+        exceedsCobertura,
+        coberturaMaxima: COBERTURA_MAXIMA,
+        nacional: ['No aplica'],
+        urbano: ['No aplica'],
+        level: config.level,
+        color: config.color,
+        label: config.label,
+      };
+    }
+
+    // Convert boolean/integer measures to label arrays
+    const buildMeasureList = (measure) => {
+      if (!measure) return ['No aplica'];
+      const list = [];
+      if (measure.gps) list.push('GPS');
+      if (measure.candado_satelital) list.push('Candado satelital');
+      const vehicular = Number(measure.acompanamiento_vehicular) || 0;
+      if (vehicular === 1) list.push('1 Acompañante vehicular');
+      if (vehicular >= 2) list.push(`${vehicular} Acompañantes vehiculares`);
+      const motorizado = Number(measure.acompanamiento_motorizado) || 0;
+      if (motorizado === 1) list.push('1 Motorizado');
+      if (motorizado >= 2) list.push(`${motorizado} Motorizados`);
+      return list.length > 0 ? list : ['No aplica'];
+    };
+
+    const nacionalMeasure = matchedRange.measures?.find(m => m.scope === 'nacional');
+    const urbanoMeasure = matchedRange.measures?.find(m => m.scope === 'urbano');
+    const exceedsCobertura = valorDeclarado > COBERTURA_MAXIMA;
+
+    return {
+      riskCategory: detectedCategory,
+      valorDeclarado,
+      exceedsCobertura,
+      coberturaMaxima: COBERTURA_MAXIMA,
+      nacional: buildMeasureList(nacionalMeasure),
+      urbano: buildMeasureList(urbanoMeasure),
+      level: config.level,
+      color: config.color,
+      label: config.label,
+    };
   };
 
   const getAutomaticParameters = (route) => {
@@ -812,8 +1015,11 @@ const requestAISuggestions = async (currentKey) => {
     const poliza = calculatePolizaExcedente(route);
     const polizaTotal = poliza.total;
 
+    // Security protocol costs
+    const securityTotal = getSecurityTotal(route);
+
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal + polizaTotal;
+    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal + polizaTotal + securityTotal;
     // Redondear hacia arriba al múltiplo de 5000 más cercano
     return Math.ceil(total / 5000) * 5000;
   };
@@ -905,8 +1111,14 @@ const requestAISuggestions = async (currentKey) => {
           vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
           valor_declarado: route.valor_declarado,
           poliza_excedente_enabled: route.poliza_excedente_enabled || false,
+          poliza_use_lower_threshold: route.poliza_use_lower_threshold || false,
           tarifa_poliza: route.tarifa_poliza || 0,
           poliza_excedente_total: calculatePolizaExcedente(route).total || 0,
+          // Security protocol costs
+          seguridad_candado: route.seguridad_candado || 0,
+          seguridad_acompanante: route.seguridad_acompanante || 0,
+          seguridad_motorizado: route.seguridad_motorizado || 0,
+          seguridad_total: getSecurityTotal(route),
           pricing_id: selectedPricings[index]?.id ?? null,
           porcentaje: route.porcentaje,
           valor_cliente: route.finalValue,
@@ -1459,7 +1671,19 @@ const requestAISuggestions = async (currentKey) => {
                                 {(poliza.enabled || poliza.mandatory) && (
                                   <div className="grid grid-cols-5 gap-4 items-end pt-1">
                                     <div>
-                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">VALOR DECLARADO EXCEDIDO</label>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <label className="text-[10px] font-medium text-gray-500 product-sans">VALOR DECLARADO EXCEDIDO</label>
+                                        <label className="relative inline-flex items-center cursor-pointer" title={route.poliza_use_lower_threshold ? 'Base: $1.000M → Excedente mayor' : 'Base: $1.500M (default)'}>
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(route.poliza_use_lower_threshold)}
+                                            onChange={() => handlePolizaThresholdToggle(index)}
+                                            className="sr-only peer"
+                                          />
+                                          <div className="relative w-7 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500"></div>
+                                          <span className="ml-1 text-[9px] text-gray-500 product-sans">{route.poliza_use_lower_threshold ? '1B' : '1.5B'}</span>
+                                        </label>
+                                      </div>
                                       <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
                                         ${Number(poliza.excedente).toLocaleString()}
                                       </div>
@@ -1492,6 +1716,108 @@ const requestAISuggestions = async (currentKey) => {
                                       <label className="text-[10px] font-medium text-orange-600 product-sans block mb-1 font-bold">TOTAL PÓLIZA</label>
                                       <div className="px-3 py-2 text-sm font-700 text-orange-600 bg-orange-50 border border-orange-200 rounded-lg product-sans">
                                         ${Number(poliza.total).toLocaleString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })()}
+                      {/* --- Protocolo de Seguridad sub-row --- */}
+                      {(() => {
+                        const protocol = (userSecuritySchema?.has_schema
+                          ? getUserSecurityProtocol(route)
+                          : null) || getSecurityProtocol(route, clientData, getValorDeclarado);
+                        if (!protocol.valorDeclarado) return null;
+                        const colorMap = {
+                          red: { bg: 'bg-red-50', border: 'border-red-300', badge: 'bg-red-100 text-red-700', text: 'text-red-700', icon: 'text-red-500' },
+                          orange: { bg: 'bg-orange-50', border: 'border-orange-300', badge: 'bg-orange-100 text-orange-700', text: 'text-orange-700', icon: 'text-orange-500' },
+                          purple: { bg: 'bg-purple-50', border: 'border-purple-300', badge: 'bg-purple-100 text-purple-700', text: 'text-purple-700', icon: 'text-purple-500' },
+                          green: { bg: 'bg-green-50', border: 'border-green-300', badge: 'bg-green-100 text-green-700', text: 'text-green-700', icon: 'text-green-500' },
+                        };
+                        const c = colorMap[protocol.color] || colorMap.green;
+
+                        // Determine route scope: urban or nacional
+                        const urban = isUrbanRoute(route.ciudad_origen, route.ciudad_destino);
+                        const scopeLabel = urban ? 'Urbano' : 'Nacional';
+                        const scopeMeasures = urban ? protocol.urbano : protocol.nacional;
+
+                        // Build editable fields from the applicable scope's measures
+                        const securityFields = [];
+                        const addedFields = new Set();
+                        scopeMeasures.forEach(item => {
+                          if (item.startsWith('⚠') || item === 'No aplica' || item === 'GPS') return;
+                          const fieldName = getSecurityFieldName(item);
+                          if (fieldName && !addedFields.has(fieldName)) {
+                            addedFields.add(fieldName);
+                            securityFields.push({ label: item, field: fieldName });
+                          }
+                        });
+
+                        const secTotal = getSecurityTotal(route);
+
+                        return (
+                          <tr className={`border-b border-gray-100 ${c.bg}`}>
+                            <td colSpan="8" className="px-4 py-2">
+                              <div className={`rounded-lg border ${c.border} p-3 ${c.bg}`}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <FaShieldAlt className={`${c.icon} w-3.5 h-3.5`} />
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>
+                                      {protocol.label}
+                                    </span>
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${urban ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                      {scopeLabel}
+                                    </span>
+                                    <span className="text-xs text-gray-500 product-sans">
+                                      {protocol.level} — Valor: ${protocol.valorDeclarado.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  {protocol.exceedsCobertura && (
+                                    <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded flex items-center gap-1">
+                                      <FaExclamationTriangle className="w-2.5 h-2.5" />
+                                      Excede cobertura ($800M)
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Medidas requeridas - solo el scope aplicable */}
+                                <div className="mb-3">
+                                  <div className="text-[10px] font-semibold text-gray-500 mb-1 product-sans uppercase">{scopeLabel}</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    {scopeMeasures.map((item, i) => (
+                                      <span key={i} className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${item.startsWith('⚠') ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
+                                        {item}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Input fields for each security measure */}
+                                {securityFields.length > 0 && (
+                                  <div className="border-t border-gray-200 pt-2">
+                                    <div className="text-[10px] font-semibold text-gray-500 mb-2 product-sans uppercase">Ingrese costos de seguridad</div>
+                                    <div className="flex flex-wrap gap-3 items-end">
+                                      {securityFields.map(({ label, field }) => (
+                                        <div key={field} className="flex flex-col">
+                                          <label className="text-[10px] font-medium text-gray-500 product-sans mb-1">{label}</label>
+                                          <input
+                                            type="number"
+                                            value={route[field] || ''}
+                                            onChange={(e) => handleSecurityValueChange(index, field, e.target.value)}
+                                            className="w-28 px-2 py-1.5 text-sm text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 product-sans"
+                                            placeholder="$ 0"
+                                            min="0"
+                                          />
+                                        </div>
+                                      ))}
+                                      <div className="flex flex-col">
+                                        <label className="text-[10px] font-bold text-orange-600 product-sans mb-1">TOTAL SEGURIDAD</label>
+                                        <div className="w-28 px-2 py-1.5 text-sm text-center font-700 text-orange-600 bg-orange-50 border border-orange-200 rounded-lg product-sans">
+                                          ${Number(secTotal).toLocaleString()}
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
@@ -1613,7 +1939,12 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
           }
         }
 
-        return total + withMargin + parametersTotal + extrasTotal + polizaTotal;
+        // Security protocol costs
+        const securityTotal = (Number(route.seguridad_candado) || 0)
+          + (Number(route.seguridad_acompanante) || 0)
+          + (Number(route.seguridad_motorizado) || 0);
+
+        return total + withMargin + parametersTotal + extrasTotal + polizaTotal + securityTotal;
       }
 
       return total;
@@ -1727,7 +2058,12 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
                   }
                 }
 
-                finalRoutePrice = withMargin + parametersTotal + extrasTotal + polizaTotal;
+                // Security protocol costs
+                const securityTotal = (Number(route.seguridad_candado) || 0)
+                  + (Number(route.seguridad_acompanante) || 0)
+                  + (Number(route.seguridad_motorizado) || 0);
+
+                finalRoutePrice = withMargin + parametersTotal + extrasTotal + polizaTotal + securityTotal;
               }
 
               const isReturn = route.isReturnRoute;

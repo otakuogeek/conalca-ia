@@ -274,6 +274,40 @@
     </div>
     @endif
 
+    <!-- Buscador Global de Conductores/Placas -->
+    <div class="mb-6 bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF7C32] to-[#e06a28] flex items-center justify-center flex-shrink-0">
+                <svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            </div>
+            <div class="flex-1 relative">
+                <input type="text" id="global-search-conductor"
+                    placeholder="Buscar por placa, nombre del conductor o teléfono en todas las órdenes..."
+                    class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent focus:bg-white outline-none transition-all pr-20"
+                    autocomplete="off">
+                <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <span id="global-search-count" class="text-[10px] text-gray-400 hidden"></span>
+                    <button id="global-search-clear" onclick="clearGlobalSearch()" class="p-1 text-gray-300 hover:text-gray-500 rounded transition-colors hidden">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                    <div id="global-search-spinner" class="hidden">
+                        <div class="animate-spin rounded-full h-4 w-4 border-2 border-[#FF7C32] border-t-transparent"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Resultados de búsqueda global -->
+        <div id="global-search-results" class="hidden mt-4">
+            <div class="border-t border-gray-100 pt-3">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-bold text-gray-700" id="global-search-title">Resultados</h3>
+                    <button onclick="clearGlobalSearch()" class="text-xs text-gray-400 hover:text-[#FF7C32] transition-colors">Cerrar resultados</button>
+                </div>
+                <div id="global-search-list" class="space-y-2 max-h-[500px] overflow-y-auto pr-1"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Lotes -->
     <div class="space-y-3">
         <div class="flex items-center justify-between mb-2">
@@ -485,10 +519,13 @@
             </button>
         </div>
 
-        <!-- Speed + Volume -->
+        <!-- Speed + Volume + Download -->
         <div class="flex items-center justify-between mt-2">
             <button class="ap-speed" id="ap-speed" onclick="cycleSpeed()">1x</button>
             <div class="flex items-center gap-2">
+                <button id="ap-download-btn" onclick="downloadAudio()" class="ap-btn" title="Descargar audio" style="opacity:.7">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                </button>
                 <svg class="h-4 w-4 opacity-50" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
                 <input type="range" id="ap-volume" min="0" max="100" value="80" class="w-16 h-1 accent-purple-400" oninput="setVolume(this.value)">
             </div>
@@ -524,10 +561,13 @@ $chartBatchesData = $batches->map(function($b) {
 // ── Audio Player State ──
 let audioEl = null;
 let audioAnimFrame = null;
+let currentAudioUrl = null;
+let currentAudioName = null;
 const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
 let speedIdx = 2;
 
 // ── Search ──
+let globalSearchTimer = null;
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('search-batches');
     if (searchInput) {
@@ -536,6 +576,62 @@ document.addEventListener('DOMContentLoaded', function() {
             document.querySelectorAll('.batch-row-card').forEach(card => {
                 card.style.display = card.dataset.searchText.includes(q) ? '' : 'none';
             });
+        });
+    }
+
+    // Global conductor/placa search
+    const globalInput = document.getElementById('global-search-conductor');
+    if (globalInput) {
+        globalInput.addEventListener('input', function() {
+            clearTimeout(globalSearchTimer);
+            const q = this.value.trim();
+            const clearBtn = document.getElementById('global-search-clear');
+            const spinner = document.getElementById('global-search-spinner');
+            const results = document.getElementById('global-search-results');
+            const countEl = document.getElementById('global-search-count');
+
+            if (q.length < 2) {
+                clearBtn.classList.add('hidden');
+                results.classList.add('hidden');
+                countEl.classList.add('hidden');
+                return;
+            }
+            clearBtn.classList.remove('hidden');
+            spinner.classList.remove('hidden');
+
+            globalSearchTimer = setTimeout(() => {
+                fetch('/auditoria-llamadas/search?q=' + encodeURIComponent(q))
+                    .then(r => r.json())
+                    .then(data => {
+                        spinner.classList.add('hidden');
+                        if (data.success && data.results.length > 0) {
+                            results.classList.remove('hidden');
+                            countEl.classList.remove('hidden');
+                            countEl.textContent = data.total + ' resultado' + (data.total !== 1 ? 's' : '');
+                            document.getElementById('global-search-title').textContent = data.total + ' resultado' + (data.total !== 1 ? 's' : '') + ' encontrado' + (data.total !== 1 ? 's' : '');
+                            document.getElementById('global-search-list').innerHTML = renderSearchResults(data.results, q);
+                        } else {
+                            results.classList.remove('hidden');
+                            countEl.classList.remove('hidden');
+                            countEl.textContent = '0 resultados';
+                            document.getElementById('global-search-title').textContent = 'Sin resultados';
+                            document.getElementById('global-search-list').innerHTML =
+                                '<div class="text-center py-6 text-gray-400 text-sm">' +
+                                '<svg class="h-10 w-10 mx-auto mb-2 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>' +
+                                'No se encontraron conductores con "<b>' + esc(q) + '</b>"</div>';
+                        }
+                    })
+                    .catch(err => {
+                        spinner.classList.add('hidden');
+                        results.classList.remove('hidden');
+                        document.getElementById('global-search-list').innerHTML =
+                            '<p class="text-red-500 text-sm py-4">Error en la búsqueda: ' + err.message + '</p>';
+                    });
+            }, 350);
+        });
+
+        globalInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') clearGlobalSearch();
         });
     }
 });
@@ -697,6 +793,96 @@ function renderSingleCard(c, idx) {
 function failLabel(s) { return { 'failed':'Fallida', 'busy':'Ocupado', 'no_answer':'Sin respuesta', 'cancelled':'Cancelada' }[s] || s || 'Error'; }
 function formatDuration(s) { if (!s || s <= 0) return '0s'; var m = Math.floor(s/60), sec = s % 60; return m > 0 ? m+'m '+sec+'s' : sec+'s'; }
 function esc(str) { if (!str) return ''; var d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+// ── Búsqueda global de conductores ──
+function clearGlobalSearch() {
+    const input = document.getElementById('global-search-conductor');
+    if (input) input.value = '';
+    document.getElementById('global-search-results').classList.add('hidden');
+    document.getElementById('global-search-clear').classList.add('hidden');
+    document.getElementById('global-search-count').classList.add('hidden');
+    document.getElementById('global-search-spinner').classList.add('hidden');
+}
+
+function highlightMatch(text, query) {
+    if (!text || !query) return esc(text || '');
+    const escaped = esc(text);
+    const qEsc = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return escaped.replace(new RegExp('(' + qEsc + ')', 'gi'), '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>');
+}
+
+function renderSearchResults(results, query) {
+    const avatarColors = ['#6366f1','#8b5cf6','#ec4899','#f97316','#14b8a6','#3b82f6','#ef4444','#22c55e'];
+    let html = '';
+    results.forEach((r, i) => {
+        const initials = (r.nombre_conductor || '?').split(' ').map(w => w[0]).join('').substring(0,2).toUpperCase();
+        const bgColor = avatarColors[i % avatarColors.length];
+        const outcome = determineCallOutcome(r);
+        const durSec = r.talk_duration_seconds || r.call_duration_seconds || 0;
+        const duration = durSec > 0 ? formatDuration(durSec) : null;
+        const fecha = r.fecha_llamada || r.lc_created_at || '';
+        let fechaFmt = '';
+        if (fecha) {
+            try { fechaFmt = new Date(fecha).toLocaleDateString('es-CO', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); } catch(e) { fechaFmt = fecha; }
+        }
+        const groupRef = 'IDC' + String(r.group_cotization_id).padStart(6, '0');
+
+        html += '<div class="bg-gray-50 hover:bg-gray-100 rounded-xl border border-gray-100 p-3 transition-colors cursor-pointer" onclick="goToBatchFromSearch(' + r.group_cotization_id + ')">' +
+            '<div class="flex items-center gap-3">' +
+                '<div class="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style="background:' + bgColor + '">' + initials + '</div>' +
+                '<div class="flex-1 min-w-0">' +
+                    '<div class="flex items-center gap-2 flex-wrap">' +
+                        '<span class="font-semibold text-sm text-gray-800">' + highlightMatch(r.nombre_conductor || 'Desconocido', query) + '</span>' +
+                        (r.placa ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-md">' + highlightMatch(r.placa, query) + '</span>' : '') +
+                        outcome.badge +
+                    '</div>' +
+                    '<div class="flex items-center gap-3 mt-0.5 text-[11px] text-gray-400">' +
+                        '<span>' + highlightMatch(r.telefono || '', query) + '</span>' +
+                        (r.tipo_vehiculo ? '<span>' + esc(r.tipo_vehiculo) + '</span>' : '') +
+                        '<span>' + esc(r.ciudad_origen || '') + ' → ' + esc(r.ciudad_destino || '') + '</span>' +
+                        (duration ? '<span class="font-medium text-gray-500">' + duration + '</span>' : '') +
+                        (r.score ? '<span>⭐ ' + r.score + '</span>' : '') +
+                    '</div>' +
+                '</div>' +
+                '<div class="text-right flex-shrink-0">' +
+                    '<div class="text-[10px] font-bold text-indigo-600">' + groupRef + '</div>' +
+                    '<div class="text-[10px] text-gray-400">' + esc(r.cliente_nombre || '') + '</div>' +
+                    (fechaFmt ? '<div class="text-[10px] text-gray-300 mt-0.5">' + fechaFmt + '</div>' : '') +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    });
+    return html;
+}
+
+function goToBatchFromSearch(groupId) {
+    // Close search results
+    clearGlobalSearch();
+    // Find the batch card and scroll to it
+    const batchCards = document.querySelectorAll('.batch-row-card');
+    let found = false;
+    batchCards.forEach(card => {
+        card.style.display = ''; // ensure visible
+    });
+    // Clear batch filter
+    const batchSearch = document.getElementById('search-batches');
+    if (batchSearch) batchSearch.value = '';
+    // Find and open the batch
+    setTimeout(() => {
+        const batchEl = document.querySelector('[data-search-text*="' + groupId + '"]');
+        if (batchEl) {
+            batchEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            batchEl.style.boxShadow = '0 0 0 3px #FF7C32, 0 4px 16px rgba(255,124,50,0.2)';
+            batchEl.style.borderColor = '#FF7C32';
+            setTimeout(() => {
+                batchEl.style.boxShadow = '';
+                batchEl.style.borderColor = '';
+            }, 3000);
+            // Auto-expand the batch
+            toggleBatchCard(groupId);
+        }
+    }, 100);
+}
 
 // ── Determinar resultado REAL de la llamada ──
 function determineCallOutcome(c) {
@@ -864,9 +1050,12 @@ function openAudioPlayer(convId, name, phone) {
 
     if (audioEl) { audioEl.pause(); audioEl = null; }
     if (audioAnimFrame) cancelAnimationFrame(audioAnimFrame);
+    currentAudioUrl = null;
+    currentAudioName = name;
 
     fetch('/auditoria-llamadas/audio/' + convId).then(function(r){return r.json()}).then(function(data) {
         if (data.success && data.audio_url) {
+            currentAudioUrl = data.audio_url;
             audioEl = new Audio(data.audio_url);
             audioEl.volume = document.getElementById('ap-volume').value / 100;
             audioEl.playbackRate = speeds[speedIdx];
@@ -890,6 +1079,16 @@ function openAudioPlayer(convId, name, phone) {
     }).catch(function() {
         document.getElementById('ap-subtitle').textContent = 'Error al cargar audio';
     });
+}
+
+function downloadAudio() {
+    if (!currentAudioUrl) return;
+    const a = document.createElement('a');
+    a.href = currentAudioUrl;
+    a.download = (currentAudioName || 'audio').replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ ]/g, '_') + '.mp3';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 function togglePlayAudio() {

@@ -475,6 +475,68 @@ class AuditoriaLlamadasController extends Controller
     }
 
     /**
+     * Búsqueda global de conductores por placa o nombre en todas las órdenes procesadas
+     */
+    public function searchConductor(Request $request)
+    {
+        $query = trim($request->input('q', ''));
+
+        if (strlen($query) < 2) {
+            return response()->json(['success' => false, 'message' => 'Mínimo 2 caracteres para buscar']);
+        }
+
+        $results = DB::table('llamadas_conductores as lc')
+            ->leftJoin('llamadas as l', 'lc.id', '=', 'l.conductor_id')
+            ->leftJoin('group_cotizations as gc', 'lc.group_cotization_id', '=', 'gc.id')
+            ->leftJoin('clients as cl', 'gc.client_id', '=', 'cl.id')
+            ->where(function ($q) use ($query) {
+                $q->where('lc.nombre_conductor', 'LIKE', "%{$query}%")
+                  ->orWhere('lc.placa', 'LIKE', "%{$query}%")
+                  ->orWhere('lc.telefono', 'LIKE', "%{$query}%");
+            })
+            ->whereNull('lc.deleted_at')
+            ->where('lc.estado_llamada', '!=', 'pendiente')
+            ->select(
+                'lc.id',
+                'lc.nombre_conductor',
+                'lc.telefono',
+                'lc.tipo_vehiculo',
+                'lc.placa',
+                'lc.estado_llamada',
+                'lc.respuesta_llamada',
+                'lc.notas',
+                'lc.ciudad_origen',
+                'lc.ciudad_destino',
+                'lc.mercancia',
+                'lc.peso_carga',
+                'lc.score',
+                'lc.elevenlabs_conversation_id',
+                'lc.group_cotization_id',
+                'lc.fecha_llamada',
+                'lc.created_at as lc_created_at',
+                'l.id_llamada',
+                'l.call_status',
+                'l.call_duration_seconds',
+                'l.talk_duration_seconds',
+                'l.transcript',
+                'l.failure_reason',
+                'l.internal_notes',
+                'gc.reference as grupo_referencia',
+                'gc.type as grupo_tipo',
+                'cl.cliente as cliente_nombre'
+            )
+            ->orderByDesc(DB::raw('COALESCE(lc.fecha_llamada, lc.created_at)'))
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'total' => $results->count(),
+            'results' => $results,
+        ]);
+    }
+
+    /**
      * Exportar auditoría a CSV
      */
     public function exportCsv(Request $request)

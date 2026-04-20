@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import { saveQuoteFromChat, sendQuoteEmail } from '../../services/cotizationsService';
+import { getSecurityProtocol } from './utils/securityProtocol';
 
 
 // Póliza excedente thresholds (same as PricingModal)
@@ -202,7 +203,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     const poliza = calculatePolizaExcedente(route);
     const polizaTotal = poliza.total;
 
-    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal;
+    // Security protocol costs
+    const securityTotal = (Number(route.seguridad_gps) || 0)
+      + (Number(route.seguridad_candado) || 0)
+      + (Number(route.seguridad_acompanante) || 0)
+      + (Number(route.seguridad_motorizado) || 0);
+
+    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal + securityTotal;
     const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
     
     // 🆕 Cantidad de contenedores (solo para sistema interno)
@@ -239,6 +246,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       valueWithMargin,
       poliza,
       polizaTotal,
+      securityTotal,
       finalValue: valuePerUnit, // 🔥 Al cliente se muestra valor POR UNIDAD
       valuePerUnit, // Valor unitario (por contenedor)
       totalValueInternal, // 🆕 Valor total para sistema interno
@@ -297,7 +305,13 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       const poliza = calculatePolizaExcedente(route);
       const polizaTotal = poliza.total;
 
-      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal;
+      // Seguridad
+      const securityTotal = (Number(route.seguridad_gps) || 0)
+        + (Number(route.seguridad_candado) || 0)
+        + (Number(route.seguridad_acompanante) || 0)
+        + (Number(route.seguridad_motorizado) || 0);
+
+      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal + securityTotal;
       const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
       
       // 🆕 Detectar si es contenedor y calcular valores
@@ -326,6 +340,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         poliza_excedente_enabled: route.poliza_excedente_enabled || false,
         tarifa_poliza: route.tarifa_poliza || 0,
         poliza_excedente_total: poliza.total || 0,
+        // Seguridad
+        seguridad_gps: Number(route.seguridad_gps) || 0,
+        seguridad_candado: Number(route.seguridad_candado) || 0,
+        seguridad_acompanante: Number(route.seguridad_acompanante) || 0,
+        seguridad_motorizado: Number(route.seguridad_motorizado) || 0,
+        seguridad_total: (Number(route.seguridad_gps) || 0) + (Number(route.seguridad_candado) || 0) + (Number(route.seguridad_acompanante) || 0) + (Number(route.seguridad_motorizado) || 0),
         // 🔥 Sistema interno recibe el TOTAL (cantidad * valor unitario)
         finalValue: totalValueInternal,
         valor: totalValueInternal,
@@ -624,6 +644,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
 
                 {quoteData.map((route, index) => {
                   const { finalValue, poliza } = buildRouteFinancials(route, index);
+                  const protocol = getSecurityProtocol(route, clientData, parseValorDeclarado);
                   const cargoLabels = {
                     general: 'General', refrigerado: 'Refrigerada',
                     dangerous: 'Peligrosa', sobredimensionada: 'Sobredimensionada',
@@ -673,6 +694,19 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                             <tr>
                               <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Producto</td>
                               <td className="px-2 py-1 border-b border-gray-100 capitalize">{route.tipo_producto}</td>
+                            </tr>
+                          )}
+                          {protocol.valorDeclarado > 0 && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Protocolo Seguridad</td>
+                              <td className="px-2 py-1 border-b border-gray-100">
+                                <span className="font-semibold text-[9px]" style={{ color: protocol.color === 'red' ? '#dc2626' : protocol.color === 'orange' ? '#ea580c' : protocol.color === 'purple' ? '#7c3aed' : '#16a34a' }}>
+                                  {protocol.label}
+                                </span>
+                                <span className="text-[9px] text-gray-500 ml-1">
+                                  — Nac: {protocol.nacional.join(', ')} | Urb: {protocol.urbano.join(', ')}
+                                </span>
+                              </td>
                             </tr>
                           )}
                           <tr className="bg-orange-50">
@@ -739,6 +773,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           valueWithMargin,
                           poliza,
                           polizaTotal,
+                          securityTotal,
                           finalValue,
                           valuePerUnit,
                           totalValueInternal,
@@ -844,6 +879,11 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                                 {poliza.show && poliza.enabled && polizaTotal > 0 && (
                                   <div className="text-[10px] text-red-600 font-medium mt-0.5">
                                     Póliza excedente: ${Number(polizaTotal).toLocaleString()}
+                                  </div>
+                                )}
+                                {securityTotal > 0 && (
+                                  <div className="text-[10px] text-indigo-600 font-medium mt-0.5">
+                                    Seguridad: ${Number(securityTotal).toLocaleString()}
                                   </div>
                                 )}
                               </div>

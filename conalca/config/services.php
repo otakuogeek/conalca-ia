@@ -71,6 +71,13 @@ return [
         'provider' => env('CHAT_PROVIDER', 'openai'),
     ],
 
+    'twilio' => [
+        'sid' => env('TWILIO_SID'),
+        'token' => env('TWILIO_AUTH_TOKEN'),
+        'phone_number' => env('TWILIO_PHONE_NUMBER'),
+        'webhook_url' => env('TWILIO_WEBHOOK_URL', env('APP_URL') . '/api/twilio/webhook/status'),
+    ],
+
     'mcp' => [
         'base_url' => env('MCP_BASE_URL', 'https://conalcaia.conalca.com.co/mcp/'),
         'websocket_url' => env('MCP_WEBSOCKET_URL', 'wss://conalcaia.conalca.com.co/ws'),

@@ -497,6 +497,11 @@ Route::group(['middleware' => 'auth'], function () {
         return $controller->exportCsv(request());
     })->name('auditoria.llamadas.export-csv');
 
+    Route::get('auditoria-llamadas/search', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->searchConductor(request());
+    })->name('auditoria.llamadas.search');
+
     Route::get('pricing', function () {
         return view('pricing.show');
     })->name('pricing.show');
@@ -810,6 +815,33 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             ->name('tara-settings.index');
         Route::put('/tara-settings/{taraSetting}', [TaraSettingController::class, 'update'])
             ->name('tara-settings.update');
+    });
+
+    // Esquema de Seguridad
+    Route::prefix('security-schema')->group(function () {
+        Route::get('/', [\App\Http\Controllers\SecuritySchemaController::class, 'index'])
+            ->name('security-schema.index');
+        Route::get('/data', [\App\Http\Controllers\SecuritySchemaController::class, 'getData']);
+        Route::get('/for-pricing', [\App\Http\Controllers\SecuritySchemaController::class, 'getSchemaForPricing']);
+
+        // Overrides de rangos para comerciales (cualquier usuario autenticado)
+        Route::post('/user-override', [\App\Http\Controllers\SecuritySchemaController::class, 'storeUserOverride']);
+        Route::delete('/user-override/{baseRangeId}', [\App\Http\Controllers\SecuritySchemaController::class, 'deleteUserOverride']);
+
+        // Solo SUPER ADMIN puede crear/editar/eliminar
+        Route::middleware(['role:SUPER ADMIN'])->group(function () {
+            Route::get('/search-products', [\App\Http\Controllers\SecuritySchemaController::class, 'searchProducts']);
+            Route::post('/products', [\App\Http\Controllers\SecuritySchemaController::class, 'storeProduct']);
+            Route::delete('/products/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'destroyProduct']);
+            Route::post('/price-ranges', [\App\Http\Controllers\SecuritySchemaController::class, 'storePriceRange']);
+            Route::put('/price-ranges/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'updatePriceRange']);
+            Route::delete('/price-ranges/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'destroyPriceRange']);
+            // Asignación de clientes
+            Route::get('/search-clients', [\App\Http\Controllers\SecuritySchemaController::class, 'searchClients']);
+            Route::get('/assigned-clients', [\App\Http\Controllers\SecuritySchemaController::class, 'getAssignedClients']);
+            Route::post('/assign-client', [\App\Http\Controllers\SecuritySchemaController::class, 'assignClient']);
+            Route::delete('/unassign-client/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'unassignClient']);
+        });
     });
 
     // GOALS
