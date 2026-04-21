@@ -18,6 +18,76 @@ use Illuminate\Support\Facades\Log;
 class ElevenLabsAgentToolsController extends Controller
 {
     /**
+     * Tool: get_contexto_inicial_conductor
+     *
+     * Devuelve en una sola respuesta el conductor, la cotización asociada
+     * y el precio del flete para reducir latencia en ElevenLabs.
+     */
+    public function getContextoInicialConductor(Request $request)
+    {
+        try {
+            $telefono = $request->input('telefono');
+
+            if (!$telefono) {
+                return response()->json([
+                    'success' => false,
+                    'modo' => 'NO_ENCONTRADO',
+                    'error' => 'Parámetro telefono requerido',
+                ], 400);
+            }
+
+            $telefonoLimpio = $this->normalizePhone($telefono);
+
+            Log::info('ElevenLabs Tool: get_contexto_inicial_conductor', [
+                'telefono_original' => $telefono,
+                'telefono_limpio' => $telefonoLimpio,
+            ]);
+
+            $conductor = $this->findLatestConductorByPhone($telefonoLimpio);
+
+            if (!$conductor) {
+                return response()->json([
+                    'success' => false,
+                    'modo' => 'NO_ENCONTRADO',
+                    'conductor' => null,
+                    'cotizacion' => null,
+                    'precio' => null,
+                ]);
+            }
+
+            $cotizacion = $conductor->cotizacion;
+            $precio = $this->buildPrecioPayload($cotizacion);
+
+            return response()->json([
+                'success' => true,
+                'modo' => $cotizacion ? 'OFERTA_CONCRETA' : 'BUSQUEDA_DISPONIBILIDAD',
+                'conductor' => [
+                    'id' => $conductor->id,
+                    'identificador_unico' => $conductor->identificador_unico,
+                    'nombre_conductor' => $conductor->nombre_conductor,
+                    'placa' => $conductor->placa,
+                    'tipo_vehiculo' => $conductor->tipo_vehiculo ?? $conductor->clase_vehiculo,
+                    'ciudad_actual' => $conductor->ciudad_actual ?? $conductor->ciudad,
+                    'cotizacion_id' => $conductor->cotizacion_id,
+                    'telefono' => $conductor->telefono,
+                ],
+                'cotizacion' => $this->buildCotizacionPayload($cotizacion),
+                'precio' => $precio,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('ElevenLabs Tool: Error en get_contexto_inicial_conductor', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'modo' => 'NO_ENCONTRADO',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Tool: get_conductor_by_telefono
      *
      * Busca un conductor en llamadas_conductores por su número de teléfono.
@@ -249,16 +319,26 @@ class ElevenLabsAgentToolsController extends Controller
     public function saveDriverDecision(Request $request)
     {
         try {
-            $decision = $request->input('decision'); // 1 = aceptó, 0 = rechazó
+            $decision = $request->input('decision');
             $conversationId = $request->input('conversation_id');
             $cotizacionModelId = $request->input('cotizacion_model_id');
-            $driverId = $request->input('driver_id'); // ID de llamadas_conductores
+            $driverId = $request->input('driver_id');
+            $identificadorUnico = $request->input('identificador_unico');
+            $notes = trim((string) ($request->input('notas') ?? $request->input('notes') ?? ''));
+            $retryAfterMinutes = max(1, (int) ($request->input('retry_after_minutes') ?? 10));
+            $decisionState = $this->resolveDriverDecision($decision);
+            $responseStatus = $decisionState['response_status'];
+            $requiresRetry = $decisionState['requires_retry'];
+            $defaultNotes = $notes !== '' ? $notes : $decisionState['default_notes'];
 
             Log::info('ElevenLabs Tool: save_driver_decision', [
                 'decision' => $decision,
                 'conversation_id' => $conversationId,
                 'cotizacion_model_id' => $cotizacionModelId,
-                'driver_id' => $driverId
+                'driver_id' => $driverId,
+                'identificador_unico' => $identificadorUnico,
+                'response_status' => $responseStatus,
+                'requires_retry' => $requiresRetry,
             ]);
 
             if ($decision === null || !$conversationId) {
@@ -267,12 +347,14 @@ class ElevenLabsAgentToolsController extends Controller
                 ], 400);
             }
 
-            $responseStatus = $decision == 1 ? 'accepted' : 'rejected';
-
             // 1. Buscar el conductor en llamadas_conductores
             $conductor = null;
             if ($driverId) {
                 $conductor = LlamadaConductor::find($driverId);
+            }
+
+            if (!$conductor && $identificadorUnico) {
+                $conductor = LlamadaConductor::where('identificador_unico', $identificadorUnico)->first();
             }
 
             // Si no lo encontramos por ID, buscar por conversation_id
@@ -280,12 +362,69 @@ class ElevenLabsAgentToolsController extends Controller
                 $conductor = LlamadaConductor::where('elevenlabs_conversation_id', $conversationId)->first();
             }
 
+            $legacyDriverId = $conductor?->chofer_id_local;
+            $resolvedDriverId = $legacyDriverId ?? $driverId ?? $conductor?->id;
+            $resolvedCotizacionId = $cotizacionModelId ?? $conductor?->cotizacion_id;
+            $llamada = \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first();
+
+            if ($requiresRetry) {
+                if ($conductor) {
+                    $conductor->update([
+                        'estado_llamada' => 'pendiente',
+                        'fecha_llamada' => now(),
+                        'notas' => $defaultNotes,
+                    ]);
+                }
+
+                if ($llamada) {
+                    $callMetadata = is_array($llamada->call_metadata) ? $llamada->call_metadata : [];
+                    $callMetadata['agent_followup'] = 'retry';
+                    $callMetadata['retry_after_minutes'] = $retryAfterMinutes;
+                    $callMetadata['retry_reason'] = $defaultNotes;
+                    $callMetadata['retry_requested_at'] = now()->toISOString();
+
+                    $llamada->update([
+                        'call_metadata' => $callMetadata,
+                        'internal_notes' => trim(($llamada->internal_notes ?? '') . "\n" . '[Agent] Reintento solicitado: ' . $defaultNotes),
+                        'call_notes' => $defaultNotes,
+                    ]);
+                }
+
+                Log::info('ElevenLabs Tool: save_driver_decision marcado para reintento', [
+                    'conversation_id' => $conversationId,
+                    'conductor_id' => $conductor?->id,
+                    'retry_after_minutes' => $retryAfterMinutes,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Llamada marcada para reintento',
+                    'decision' => 'retry',
+                ]);
+            }
+
+            $callResponse = DriverCallResponse::updateOrCreate(
+                ['elevenlabs_conversation_id' => $conversationId],
+                [
+                    'cotizacion_id' => $resolvedCotizacionId,
+                    'driver_id' => $resolvedDriverId,
+                    'driver_name' => $conductor?->nombre_conductor ?? 'Desconocido',
+                    'driver_phone' => $conductor?->telefono,
+                    'vehicle_type' => $conductor?->tipo_vehiculo ?? $conductor?->clase_vehiculo,
+                    'vehicle_plate' => $conductor?->placa,
+                    'call_status' => 'completed',
+                    'response_status' => $responseStatus,
+                    'response_time' => now(),
+                    'notes' => $defaultNotes,
+                ]
+            );
+
             if ($conductor) {
                 $conductor->update([
                     'estado_llamada' => 'completada',
                     'respuesta_llamada' => $responseStatus,
-                    'notas' => ($decision == 1 ? 'Conductor ACEPTÓ el viaje' : 'Conductor RECHAZÓ el viaje') .
-                        ' - Registrado por agente ElevenLabs'
+                    'notas' => $defaultNotes,
+                    'driver_call_response_id' => $callResponse->id,
                 ]);
 
                 Log::info('Conductor actualizado en llamadas_conductores', [
@@ -295,42 +434,27 @@ class ElevenLabsAgentToolsController extends Controller
                 ]);
             }
 
-            // 2. Crear registro en driver_call_responses
-            $callResponse = DriverCallResponse::create([
-                'cotizacion_id' => $cotizacionModelId ?? $conductor?->cotizacion_id,
-                'driver_id' => $driverId ?? $conductor?->id,
-                'driver_name' => $conductor?->nombre_conductor ?? 'Desconocido',
-                'driver_phone' => $conductor?->telefono,
-                'vehicle_type' => $conductor?->tipo_vehiculo ?? $conductor?->clase_vehiculo,
-                'vehicle_plate' => $conductor?->placa,
-                'call_status' => 'completed',
-                'response_status' => $responseStatus,
-                'response_time' => now(),
-                'elevenlabs_conversation_id' => $conversationId,
-                'notes' => $decision == 1
-                    ? 'Conductor aceptó el viaje vía agente IA'
-                    : 'Conductor rechazó el viaje vía agente IA',
-            ]);
-
-            // 3. Actualizar la tabla llamadas si existe
-            $llamada = \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first();
+            // 2. Actualizar la tabla llamadas si existe
             if ($llamada) {
                 $llamada->update([
-                    'status' => $decision == 1
+                    'status' => $responseStatus === 'accepted'
                         ? \App\Models\Llamada::STATUS_ACEPTADA
-                        : \App\Models\Llamada::STATUS_RECHAZADA,
+                        : ($responseStatus === 'rejected'
+                            ? \App\Models\Llamada::STATUS_RECHAZADA
+                            : \App\Models\Llamada::STATUS_FINALIZADA),
                     'call_status' => 'completed',
                     'call_completed_at' => now(),
+                    'call_notes' => $defaultNotes,
                 ]);
             }
 
-            // 4. Si aceptó, marcar en la cotización
-            if ($decision == 1 && ($cotizacionModelId || $conductor?->cotizacion_id)) {
-                $cotId = $cotizacionModelId ?? $conductor->cotizacion_id;
+            // 3. Si aceptó, marcar en la cotización
+            if ($responseStatus === 'accepted' && $resolvedCotizacionId) {
+                $cotId = $resolvedCotizacionId;
                 $cotizacion = CotizacionModel::find($cotId);
-                if ($cotizacion && !$cotizacion->selected_driver_id) {
+                if ($cotizacion && !$cotizacion->selected_driver_id && $legacyDriverId) {
                     $cotizacion->update([
-                        'selected_driver_id' => $driverId ?? $conductor?->id
+                        'selected_driver_id' => $legacyDriverId
                     ]);
                 }
             }
@@ -344,9 +468,11 @@ class ElevenLabsAgentToolsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => $decision == 1
-                    ? 'Decisión registrada: Conductor ACEPTÓ el viaje'
-                    : 'Decisión registrada: Conductor RECHAZÓ el viaje',
+                'message' => match ($responseStatus) {
+                    'accepted' => 'Decisión registrada: Conductor ACEPTÓ el viaje',
+                    'rejected' => 'Decisión registrada: Conductor RECHAZÓ el viaje',
+                    default => 'Decisión registrada: Pendiente de seguimiento',
+                },
                 'decision' => $responseStatus,
                 'driver_call_response_id' => $callResponse->id
             ]);
@@ -358,5 +484,128 @@ class ElevenLabsAgentToolsController extends Controller
             ]);
             return response()->json(['error' => $e->getMessage()], 500);
         }
+    }
+
+    private function normalizePhone(?string $telefono): ?string
+    {
+        if (!$telefono) {
+            return null;
+        }
+
+        $telefonoLimpio = preg_replace('/[^0-9]/', '', $telefono);
+
+        if (strlen($telefonoLimpio) > 10 && str_starts_with($telefonoLimpio, '57')) {
+            return substr($telefonoLimpio, 2);
+        }
+
+        return $telefonoLimpio;
+    }
+
+    private function findLatestConductorByPhone(string $telefonoLimpio): ?LlamadaConductor
+    {
+        $query = LlamadaConductor::where('telefono', 'LIKE', '%' . $telefonoLimpio . '%')
+            ->orderByRaw("CASE WHEN estado_llamada IN ('en_progreso', 'pendiente') THEN 0 ELSE 1 END")
+            ->orderBy('created_at', 'desc');
+
+        return $query->first();
+    }
+
+    private function buildCotizacionPayload(?CotizacionModel $cotizacion): ?array
+    {
+        if (!$cotizacion) {
+            return null;
+        }
+
+        return [
+            'id' => $cotizacion->id,
+            'group_cotization_id' => $cotizacion->group_cotization_id,
+            'ciudad_origen' => $cotizacion->ciudad_origen,
+            'ciudad_destino' => $cotizacion->ciudad_destino,
+            'peso_mercancia' => $cotizacion->peso_mercancia,
+            'tipo_mercancia' => $cotizacion->tipo_mercancia,
+            'tipo_embajale' => $cotizacion->tipo_embajale,
+            'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
+            'tipo_carroceria' => $cotizacion->tipo_carroceria,
+            'fecha_cargue' => $this->formatQuoteDate($cotizacion->fecha_hora_descargue_cargue),
+            'fecha_descargue' => null,
+        ];
+    }
+
+    private function buildPrecioPayload(?CotizacionModel $cotizacion): ?array
+    {
+        if (!$cotizacion) {
+            return null;
+        }
+
+        $valorFlete = is_numeric($cotizacion->flete) ? (float) $cotizacion->flete : null;
+
+        return [
+            'valor_flete' => $valorFlete,
+            'mensaje_precio' => $this->formatCurrency($valorFlete),
+        ];
+    }
+
+    private function formatCurrency(?float $valor): ?string
+    {
+        if ($valor === null) {
+            return null;
+        }
+
+        return '$' . number_format($valor, 0, ',', '.');
+    }
+
+    private function formatQuoteDate($fecha): ?string
+    {
+        if (!$fecha) {
+            return null;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($fecha)->locale('es')->translatedFormat('l d [de] F [de] Y h:i A');
+        } catch (\Throwable $e) {
+            return (string) $fecha;
+        }
+    }
+
+    private function resolveDriverDecision($decision): array
+    {
+        if (is_bool($decision) || is_numeric($decision)) {
+            return ((int) $decision) === 1
+                ? [
+                    'response_status' => 'accepted',
+                    'requires_retry' => false,
+                    'default_notes' => 'Aceptó el viaje',
+                ]
+                : [
+                    'response_status' => 'rejected',
+                    'requires_retry' => false,
+                    'default_notes' => 'Rechazó la oferta',
+                ];
+        }
+
+        $normalized = strtolower(trim((string) $decision));
+
+        return match ($normalized) {
+            '1', 'si', 'sí', 'accept', 'accepted', 'aceptado', 'acepta' => [
+                'response_status' => 'accepted',
+                'requires_retry' => false,
+                'default_notes' => 'Aceptó el viaje',
+            ],
+            'retry', 'reintento', 'voicemail', 'buzon', 'buzón' => [
+                'response_status' => 'pending',
+                'requires_retry' => true,
+                'default_notes' => 'Buzón de voz o contacto no logrado, reintentar',
+            ],
+            'maybe', 'tal_vez', 'talvez', 'indeciso', 'supervisor', 'pending' => [
+                'response_status' => 'pending',
+                'requires_retry' => false,
+                'default_notes' => 'Pendiente de seguimiento por supervisor',
+            ],
+            default => [
+                'response_status' => 'rejected',
+                'requires_retry' => false,
+                'default_notes' => 'Rechazó la oferta',
+            ],
+        };
     }
 }

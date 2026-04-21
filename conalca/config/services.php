@@ -92,4 +92,11 @@ return [
         'cleanup_hours' => env('LOCAL_AUDIO_CLEANUP_HOURS', 1),
     ],
 
+    'bulkgate' => [
+        'application_id'    => env('BULKGATE_APP_ID', '37132'),
+        'application_token' => env('BULKGATE_APP_TOKEN'),
+        'sender_id'         => env('BULKGATE_SENDER_ID', 'gSystem'),
+        'otp_ttl_minutes'   => env('BULKGATE_OTP_TTL', 10),
+    ],
+
 ];

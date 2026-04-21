@@ -186,6 +186,10 @@ class CallQueueManager
         // Buscar las siguientes llamadas pendientes (priorizar cotización especificada)
         $query = Llamada::where('queue_status', 'pending')
             ->where('status', Llamada::STATUS_PENDIENTE)
+            ->where(function ($q) {
+                $q->whereNull('next_retry_at')
+                    ->orWhere('next_retry_at', '<=', now());
+            })
             ->orderBy('batch_number', 'asc')
             ->orderBy('batch_position', 'asc')
             ->orderBy('id_llamada', 'asc');
@@ -315,8 +319,61 @@ class CallQueueManager
         $transcript = $webhookData['transcript'] ?? null;
         $analysis = $webhookData['analysis'] ?? null;
 
+        $callMetadata = is_array($llamada->call_metadata) ? $llamada->call_metadata : [];
+        $retryRequested = ($callMetadata['agent_followup'] ?? null) === 'retry';
+
+        if ($retryRequested) {
+            $retryAfterMinutes = max(1, (int) ($callMetadata['retry_after_minutes'] ?? 10));
+            $retryReason = $callMetadata['retry_reason'] ?? 'Reintento solicitado por el agente';
+            unset($callMetadata['agent_followup'], $callMetadata['retry_after_minutes'], $callMetadata['retry_reason'], $callMetadata['retry_requested_at']);
+
+            $llamada->update([
+                'status' => Llamada::STATUS_PENDIENTE,
+                'call_status' => null,
+                'queue_status' => 'pending',
+                'call_completed_at' => now(),
+                'call_ended_at' => now(),
+                'processing_started_at' => null,
+                'processing_completed_at' => now(),
+                'call_duration_seconds' => $callDuration,
+                'talk_duration_seconds' => $callDuration,
+                'transcript' => $transcript ? self::parseTranscriptToText($transcript) : null,
+                'call_notes' => $retryReason,
+                'failure_reason' => $retryReason,
+                'next_retry_at' => now()->addMinutes($retryAfterMinutes),
+                'call_retry_count' => ($llamada->call_retry_count ?? 0) + 1,
+                'elevenlabs_conversation_id' => null,
+                'elevenlabs_sip_call_id' => null,
+                'call_metadata' => $callMetadata,
+                'internal_notes' => trim(($llamada->internal_notes ?? '') . "\n" . '[Webhook] Reintento programado tras detección del agente: ' . $retryReason),
+            ]);
+
+            if ($llamada->conductor_id) {
+                $conductor = LlamadaConductor::find($llamada->conductor_id);
+                if ($conductor) {
+                    $conductor->update([
+                        'estado_llamada' => 'pendiente',
+                        'fecha_llamada' => now(),
+                        'notas' => $retryReason,
+                    ]);
+                }
+            }
+
+            Log::info('CallQueueManager: Reintento programado tras post_call_transcription', [
+                'llamada_id' => $llamada->id_llamada,
+                'conversation_id' => $conversationId,
+                'retry_after_minutes' => $retryAfterMinutes,
+                'cotizacion_id' => $cotizacionId,
+            ]);
+
+            self::dispatchNextCalls($cotizacionId);
+            return;
+        }
+
         $llamada->update([
-            'status' => Llamada::STATUS_FINALIZADA,
+            'status' => in_array($llamada->status, [Llamada::STATUS_ACEPTADA, Llamada::STATUS_RECHAZADA], true)
+                ? $llamada->status
+                : Llamada::STATUS_FINALIZADA,
             'call_status' => Llamada::CALL_STATUS_COMPLETED,
             'queue_status' => 'completed',
             'call_completed_at' => now(),
@@ -325,7 +382,7 @@ class CallQueueManager
             'call_duration_seconds' => $callDuration,
             'talk_duration_seconds' => $callDuration,
             'transcript' => $transcript ? self::parseTranscriptToText($transcript) : null,
-            'call_notes' => 'Completada via webhook post_call_transcription',
+            'call_notes' => $llamada->call_notes ?: 'Completada via webhook post_call_transcription',
         ]);
 
         // Actualizar LlamadaConductor

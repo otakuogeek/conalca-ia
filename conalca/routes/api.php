@@ -273,6 +273,8 @@ Route::get('/elevenlabs-queue-status', [App\Http\Controllers\Api\ElevenLabsWebho
 // Estos endpoints son llamados vía webhook por el agente durante las conversaciones
 // ============================================================================
 Route::prefix('elevenlabs-tools')->group(function () {
+    Route::post('/get-contexto-inicial-conductor', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getContextoInicialConductor'])
+        ->name('api.elevenlabs-tools.get-contexto-inicial-conductor');
     Route::post('/get-conductor-by-telefono', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getConductorByTelefono'])
         ->name('api.elevenlabs-tools.get-conductor');
     Route::post('/get-cotizaciones', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getCotizaciones'])

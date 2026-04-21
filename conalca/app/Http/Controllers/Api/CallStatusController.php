@@ -199,7 +199,46 @@ class CallStatusController extends Controller
             ->limit(7)
             ->get();
 
-        /* 4. Respuesta para el front */
+        /* 4. Conductores en TAL VEZ / seguimiento:
+           - response_status = 'pending' en driver_call_responses
+           - o respuesta_llamada = 'pending' en llamadas_conductores
+           - sin mezclar con los aceptados */
+        $maybeViaResponse = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->whereHas('driverCallResponse', function ($query) {
+                $query->where('response_status', 'pending');
+            })
+            ->pluck('id')
+            ->toArray();
+
+        $maybeViaLlamada = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->where('respuesta_llamada', 'pending')
+            ->pluck('id')
+            ->toArray();
+
+        $maybeIds = array_values(array_diff(array_unique(array_merge($maybeViaResponse, $maybeViaLlamada)), $acceptedIds));
+
+        $maybeDrivers = \App\Models\LlamadaConductor::query()
+            ->whereIn('id', $maybeIds)
+            ->select([
+                'id',
+                'nombre_conductor',
+                'telefono',
+                'placa',
+                'tipo_vehiculo',
+                'ciudad_origen',
+                'ciudad_destino',
+                'cotizacion_id',
+                'estado_llamada',
+                'respuesta_llamada',
+                'fecha_llamada',
+            ])
+            ->orderByDesc('fecha_llamada')
+            ->limit(7)
+            ->get();
+
+        /* 5. Respuesta para el front */
         return response()->json([
             'prompt'              => $this->buildPrompt($cot),
             'vehicle_type'        => $cot->vehiculo_requerido,
@@ -226,6 +265,21 @@ class CallStatusController extends Controller
                                         ];
                                     }),
             'total_accepted'      => count($acceptedIds),
+            'maybe'               => $maybeDrivers->map(function ($d) {
+                                        return [
+                                            'id'    => $d->id,
+                                            'name'  => $d->nombre_conductor ?: 'Sin nombre',
+                                            'phone' => $d->telefono ?: 'Sin teléfono',
+                                            'placa' => $d->placa ?: 'Sin placa',
+                                            'tipo_vehiculo' => $d->tipo_vehiculo,
+                                            'ciudad_origen' => $d->ciudad_origen,
+                                            'ciudad_destino' => $d->ciudad_destino,
+                                            'decision_date' => $d->fecha_llamada
+                                                ? $d->fecha_llamada->format('Y-m-d H:i:s')
+                                                : null,
+                                        ];
+                                    }),
+            'total_maybe'         => count($maybeIds),
             'percentage'          => $totalToCall > 0
                                     ? round((count($acceptedIds) / $totalToCall) * 100, 2)
                                     : 0,
