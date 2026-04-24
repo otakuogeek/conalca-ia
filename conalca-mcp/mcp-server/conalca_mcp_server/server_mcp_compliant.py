@@ -1657,6 +1657,33 @@ class ConalcaMCPServer:
                         if nombre_producto:
                             tipo_producto_nombre = nombre_producto
                     
+                    # Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                    _fhdc = conductor_data.get('fecha_hora_descargue_cargue')
+                    _fecha_cargue = None
+                    _hora_cargue = None
+                    if _fhdc:
+                        try:
+                            _dt = None
+                            for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                                try:
+                                    _dt = datetime.strptime(str(_fhdc), _fmt)
+                                    break
+                                except ValueError:
+                                    pass
+                            if _dt:
+                                _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+                                _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                          'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                                _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                                if not (_dt.hour == 0 and _dt.minute == 0):
+                                    _h = _dt.hour % 12 or 12
+                                    _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                    _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                            else:
+                                _fecha_cargue = str(_fhdc)
+                        except Exception:
+                            _fecha_cargue = str(_fhdc)
+                    
                     result = {
                         "success": True,
                         "conversation_id": conversation_id,
@@ -1682,7 +1709,9 @@ class ConalcaMCPServer:
                             "tipo_embalaje": tipo_embalaje_nombre,
                             "tipo_producto": tipo_producto_nombre,
                             "mercancia": conductor_data.get('mercancia', tipo_producto_nombre),
-                            "vehiculo_requerido": conductor_data.get('vehiculo_requerido')
+                            "vehiculo_requerido": conductor_data.get('vehiculo_requerido'),
+                            "fecha_cargue": _fecha_cargue,
+                            "hora_cargue": _hora_cargue
                         },
                         "cotizacion_datos": {
                             "ciudad_origen": conductor_data.get('ciudad_origen'),
@@ -1690,6 +1719,8 @@ class ConalcaMCPServer:
                             "peso_mercancia": conductor_data.get('peso_carga'),
                             "tipo_embalaje": tipo_embalaje_nombre,
                             "tipo_producto": tipo_producto_nombre,
+                            "fecha_cargue": _fecha_cargue,
+                            "hora_cargue": _hora_cargue
                         }
                     }
                     
@@ -1725,6 +1756,33 @@ class ConalcaMCPServer:
                         "llamada_id": llamada.id_llamada
                     }, ensure_ascii=False)
                 
+                # Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                _fhdc = cotizacion.fecha_hora_descargue_cargue if hasattr(cotizacion, 'fecha_hora_descargue_cargue') else None
+                _fecha_cargue = None
+                _hora_cargue = None
+                if _fhdc:
+                    try:
+                        _dt = None
+                        for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                            try:
+                                _dt = datetime.strptime(str(_fhdc), _fmt)
+                                break
+                            except ValueError:
+                                pass
+                        if _dt:
+                            _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+                            _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                            _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                            if not (_dt.hour == 0 and _dt.minute == 0):
+                                _h = _dt.hour % 12 or 12
+                                _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                        else:
+                            _fecha_cargue = str(_fhdc)
+                    except Exception:
+                        _fecha_cargue = str(_fhdc)
+                
                 # Generar el mensaje personalizado según el formato solicitado
                 mensaje_oferta = self._generar_mensaje_transporte(nombre_chofer, cotizacion)
                 
@@ -1737,12 +1795,23 @@ class ConalcaMCPServer:
                         "chofer_id": llamada.chofer_id
                     },
                     "chofer_nombre": nombre_chofer,
+                    "viaje": {
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "peso_kg": float(cotizacion.peso_mercancia) if cotizacion.peso_mercancia else None,
+                        "tipo_embalaje": cotizacion.tipo_embajale,
+                        "tipo_producto": cotizacion.tipo_producto,
+                        "fecha_cargue": _fecha_cargue,
+                        "hora_cargue": _hora_cargue
+                    },
                     "cotizacion_datos": {
                         "ciudad_origen": cotizacion.ciudad_origen,
                         "ciudad_destino": cotizacion.ciudad_destino,
                         "peso_mercancia": cotizacion.peso_mercancia,
                         "tipo_embalaje": cotizacion.tipo_embajale,
                         "tipo_producto": cotizacion.tipo_producto,
+                        "fecha_cargue": _fecha_cargue,
+                        "hora_cargue": _hora_cargue,
                         "fecha_hora_descargue_cargue": cotizacion.fecha_hora_descargue_cargue
                     },
                     "mensaje_oferta": mensaje_oferta,
@@ -2343,6 +2412,34 @@ class ConalcaMCPServer:
                         
                         if cotizacion:
                             modo = "OFERTA_CONCRETA"
+
+                            # Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                            _fhdc = cotizacion.fecha_hora_descargue_cargue if hasattr(cotizacion, 'fecha_hora_descargue_cargue') else None
+                            _fecha_cargue = None
+                            _hora_cargue = None
+                            if _fhdc:
+                                try:
+                                    _dt = None
+                                    for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                                        try:
+                                            _dt = datetime.strptime(str(_fhdc), _fmt)
+                                            break
+                                        except ValueError:
+                                            pass
+                                    if _dt:
+                                        _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+                                        _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                                  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                                        _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                                        if not (_dt.hour == 0 and _dt.minute == 0):
+                                            _h = _dt.hour % 12 or 12
+                                            _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                            _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                                    else:
+                                        _fecha_cargue = str(_fhdc)
+                                except Exception:
+                                    _fecha_cargue = str(_fhdc)
+
                             cotizacion_data = {
                                 "id": cotizacion.id,
                                 "ciudad_origen": cotizacion.ciudad_origen,
@@ -2352,8 +2449,9 @@ class ConalcaMCPServer:
                                 "tipo_embajale": cotizacion.tipo_embajale,
                                 "vehiculo_requerido": cotizacion.vehiculo_requerido,
                                 "tipo_carroceria": cotizacion.tipo_carroceria,
-                                "fecha_cargue": str(cotizacion.fecha_cargue) if hasattr(cotizacion, 'fecha_cargue') and cotizacion.fecha_cargue else None,
-                                "fecha_descargue": str(cotizacion.fecha_descargue) if hasattr(cotizacion, 'fecha_descargue') and cotizacion.fecha_descargue else None
+                                "fecha_cargue": _fecha_cargue,
+                                "hora_cargue": _hora_cargue,
+                                "fecha_descargue": None
                             }
                             
                             # PASO 3: Obtener el FLETE como precio del viaje para el conductor

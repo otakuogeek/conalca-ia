@@ -224,6 +224,42 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
             $elevenLabsService = app(ElevenLabsCallService::class);
             
             // Preparar datos del cliente para la llamada - datos completos de la orden
+            // Procesar fecha y hora de cargue si existen
+            $fechaCargue = null;
+            $horaCargue = null;
+            
+            if ($cotizacion->fecha_hora_descargue_cargue) {
+                try {
+                    $fechaHora = \DateTime::createFromFormat(
+                        'Y-m-d H:i:s',
+                        $cotizacion->fecha_hora_descargue_cargue
+                    ) ?? \DateTime::createFromFormat('Y-m-d', $cotizacion->fecha_hora_descargue_cargue);
+                    
+                    if ($fechaHora) {
+                        $diasES = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+                        $mesesES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+                        
+                        $fechaCargue = $diasES[$fechaHora->format('N') - 1] . ' ' . 
+                                     $fechaHora->format('d') . ' de ' . 
+                                     $mesesES[$fechaHora->format('m') - 1] . ' de ' . 
+                                     $fechaHora->format('Y');
+                        
+                        if ($fechaHora->format('H') != '00' || $fechaHora->format('i') != '00') {
+                            $hora = (int)$fechaHora->format('H');
+                            $hora12 = $hora % 12 ?: 12;
+                            $ampm = $hora < 12 ? 'AM' : 'PM';
+                            $horaCargue = sprintf('%d:%s %s', $hora12, $fechaHora->format('i'), $ampm);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Error al parsear fecha_hora_descargue_cargue', [
+                        'fecha_hora' => $cotizacion->fecha_hora_descargue_cargue,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
             $clientData = [
                 // IDs de referencia
                 'cotizacion_id' => $cotizacion->id,
@@ -244,6 +280,10 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                 'tipo_carroceria' => $cotizacion->tipo_carroceria ?? 'No especificado',
                 'valor_declarado' => $cotizacion->valor_declarado ?? '0',
                 'valor_flete' => $cotizacion->flete ?? $cotizacion->valor ?? '0',
+                // Datos de fecha y hora de cargue
+                'fecha_cargue' => $fechaCargue,
+                'hora_cargue' => $horaCargue,
+                'fecha_hora_descargue_cargue' => $cotizacion->fecha_hora_descargue_cargue,
             ];
             
             Log::info('Client data preparado', $clientData);

@@ -100,8 +100,11 @@ AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
     │ seguro                  │ NO         │ "No"             │ Requiere seguro ("Si"/"No")  │
     │ temperatura_mercancia   │ NO         │ "No aplica"      │ Temperatura requerida        │
     │ registro_fotografico    │ NO         │ null             │ Requiere registro fotográfico│
-    │ fecha                   │ NO         │ null             │ Fecha de la ruta (YYYY-MM-DD)│
-    │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
+    │ fecha                   │ NO         │ null             │ Fecha de la ruta (YYYY-MM-DD)│    │ fecha_cargue            │ NO         │ null             │ Fecha Y hora de cargue       │
+    │                         │            │                  │ Formato: "YYYY-MM-DD HH:MM"  │
+    │                         │            │                  │ Ejemplo: "2026-04-28 08:00"  │
+    │                         │            │                  │ La IA informa al conductor   │
+    │                         │            │                  │ fecha y hora si la pregunta  │    │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
     └─────────────────────────┴────────────┴──────────────────┴──────────────────────────────┘
 
   NOTA IMPORTANTE sobre "valor" vs "flete":
@@ -148,6 +151,7 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
         "ciudad_destino": "MEDELLIN",
         "valor": 3980000,
         "flete": 3200000,
+        "fecha_cargue": "2026-05-10 07:00",
         "tipo_mercancia": "MAIZ",
         "tipo_producto": "MAIZ",
         "peso_mercancia": "10000",

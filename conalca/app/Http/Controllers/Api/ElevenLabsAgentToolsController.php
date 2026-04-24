@@ -527,6 +527,7 @@ class ElevenLabsAgentToolsController extends Controller
             'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
             'tipo_carroceria' => $cotizacion->tipo_carroceria,
             'fecha_cargue' => $this->formatQuoteDate($cotizacion->fecha_hora_descargue_cargue),
+            'hora_cargue'   => $this->formatLoadingTime($cotizacion->fecha_hora_descargue_cargue),
             'fecha_descargue' => null,
         ];
     }
@@ -564,6 +565,24 @@ class ElevenLabsAgentToolsController extends Controller
             return \Carbon\Carbon::parse($fecha)->locale('es')->translatedFormat('l d [de] F [de] Y h:i A');
         } catch (\Throwable $e) {
             return (string) $fecha;
+        }
+    }
+
+    private function formatLoadingTime($fecha): ?string
+    {
+        if (!$fecha) {
+            return null;
+        }
+
+        try {
+            $carbon = \Carbon\Carbon::parse($fecha);
+            // Only return time if it is not midnight (00:00) — midnight means no time was specified
+            if ($carbon->hour === 0 && $carbon->minute === 0) {
+                return null;
+            }
+            return $carbon->format('g:i A');
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 

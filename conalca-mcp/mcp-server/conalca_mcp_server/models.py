@@ -906,7 +906,7 @@ class DatabaseRepository:
         # Buscar directamente el conductor por su elevenlabs_conversation_id
         query_conductor = """
         SELECT lc.*, cm.ciudad_origen, cm.ciudad_destino, cm.tipo_producto, cm.tipo_embajale,
-               cm.peso_carga, cm.vehiculo_requerido
+               cm.peso_carga, cm.vehiculo_requerido, cm.fecha_hora_descargue_cargue
         FROM llamadas_conductores lc
         LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
         WHERE lc.elevenlabs_conversation_id = %s
@@ -934,7 +934,7 @@ class DatabaseRepository:
                 # Buscar por conductor_id (FK directa)
                 query_by_id = """
                 SELECT lc.*, cm.ciudad_origen, cm.ciudad_destino, cm.tipo_producto, cm.tipo_embajale,
-                       cm.peso_carga, cm.vehiculo_requerido
+                       cm.peso_carga, cm.vehiculo_requerido, cm.fecha_hora_descargue_cargue
                 FROM llamadas_conductores lc
                 LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
                 WHERE lc.id = %s

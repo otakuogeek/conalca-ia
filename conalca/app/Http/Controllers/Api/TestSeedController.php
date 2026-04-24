@@ -70,6 +70,7 @@ class TestSeedController extends Controller
             'rutas.*.temperatura_mercancia'  => 'nullable|string',
             'rutas.*.registro_fotografico'   => 'nullable|string',
             'rutas.*.fecha'                  => 'nullable|date',
+            'rutas.*.fecha_cargue'           => 'nullable|date_format:Y-m-d H:i',
             'rutas.*.porcentaje'             => 'nullable|numeric',
             'rutas.*.flete'                  => 'nullable|numeric|min:0',
         ]);
@@ -171,9 +172,10 @@ class TestSeedController extends Controller
                         'seguro'              => $ruta['seguro'] ?? 'No',
                         'temperatura_mercancia' => $ruta['temperatura_mercancia'] ?? 'No aplica',
                         'registro_fotografico'  => $ruta['registro_fotografico'] ?? null,
-                        'flete'               => $ruta['flete'] ?? null,
-                    'porcentaje'          => $ruta['porcentaje'] ?? 0,
-                        'decision_cliente'    => 'aceptada',  // ← Aceptada para que aparezca en CallPanel
+                        'flete'                        => $ruta['flete'] ?? null,
+                        'porcentaje'                   => $ruta['porcentaje'] ?? 0,
+                        'fecha_hora_descargue_cargue'  => $ruta['fecha_cargue'] ?? null,
+                        'decision_cliente'             => 'aceptada',  // ← Aceptada para que aparezca en CallPanel
                         'active'              => true,
                         'tipo'                => $request->input('operation_type', 'DISTRIBUCION'),
                     ]);
@@ -222,8 +224,9 @@ class TestSeedController extends Controller
                                 'vehiculo_requerido'    => $cot->vehiculo_requerido,
                                 'tipo_mercancia'        => $cot->tipo_mercancia,
                                 'peso_mercancia'        => $cot->peso_mercancia,
-                                'flete'                 => $cot->flete,
-                                'decision_cliente'      => $cot->decision_cliente,
+                                'flete'                        => $cot->flete,
+                                'fecha_cargue'                 => $cot->fecha_hora_descargue_cargue,
+                                'decision_cliente'             => $cot->decision_cliente,
                             ];
                         }),
                         'valor_total'   => collect($cotizaciones)->sum('valor'),
