@@ -31,6 +31,7 @@ class QuoteRoutesController extends Controller
             'routes.*.ciudad_origen' => 'nullable|string',
             'routes.*.ciudad_destino' => 'nullable|string',
             'routes.*.id'             => 'nullable|integer',
+            'routes.*.fecha_cargue'   => 'nullable|date',
         ]);
 
         try {
@@ -117,6 +118,7 @@ class QuoteRoutesController extends Controller
                         'pricing_id'       => $routeData['pricing_id'] ?? null,
                         'porcentaje'       => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
                         'valor_cliente'    => $this->parseMoneyField($routeData['valor_cliente'] ?? '0'),
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ]);
                 } else {
                     // CREATE new
@@ -140,6 +142,7 @@ class QuoteRoutesController extends Controller
                         'active'              => 1,
                         'created_at'          => now(),
                         'updated_at'          => now(),
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ]);
                 }
 
@@ -271,6 +274,7 @@ class QuoteRoutesController extends Controller
                         'active' => 1,
                         'decision_cliente' => 'pendiente',
                         'incluye_tara' => $extracted['incluye_tara'] ?? false,
+                        'fecha_cargue' => $extracted['fecha_cargue'] ?? $extracted['fecha_inicio'] ?? null,
                     ];
                 });
             } else {
@@ -326,6 +330,7 @@ class QuoteRoutesController extends Controller
                     'active' => $cotization->active,
                     'decision_cliente' => $cotization->decision_cliente,
                     'incluye_tara' => $extracted['incluye_tara'] ?? false,
+                    'fecha_cargue' => $extracted['fecha_cargue'] ?? $extracted['fecha_inicio'] ?? $cotization->fecha_hora_descargue_cargue,
                 ];
             });
             } // Fin del else (cotizaciones existentes)
@@ -364,9 +369,9 @@ class QuoteRoutesController extends Controller
         return $numeric ? (float) $numeric : 0;
     }
 
-    /**
-     * Convierte campos monetarios removiendo separadores
-     */
+/**
+      * Convierte campos monetarios removiendo separadores
+      */
     private function parseMoneyField($value)
     {
         if (is_numeric($value)) {
@@ -376,6 +381,39 @@ class QuoteRoutesController extends Controller
         // Remover caracteres no numéricos excepto punto decimal
         $numeric = preg_replace('/[^0-9.]/', '', $value);
         return $numeric ? (float) $numeric : 0;
+    }
+
+    /**
+     * Convierte la fecha de cargue al formato correcto para almacenar
+     * Acepta: Y-m-d, d/m/Y, d-m-Y, d-m-Y H:i, d/m/Y H:i
+     */
+    private function parseFechaCargue($value)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        // Si ya está en formato Y-m-d o Y-m-d H:i:s, retornarlo tal cual
+        if (preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/', $value)) {
+            return $value;
+        }
+
+        // Intentar parsing con Carbon
+        try {
+            $carbon = \Carbon\Carbon::parse($value);
+            return $carbon->format('Y-m-d');
+        } catch (\Throwable $e) {
+            Log::warning('parseFechaCargue: Error al parsear fecha', [
+                'valor' => $value,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 
     /**

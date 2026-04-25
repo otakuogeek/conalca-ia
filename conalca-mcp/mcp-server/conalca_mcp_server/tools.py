@@ -1038,18 +1038,25 @@ CAMPOS ESTÁTICOS INCLUIDOS:
         async def get_conductores_filtrados(cotizacion_id: int, estado_llamada: Optional[str] = None) -> List[TextContent]:
             """Obtiene conductores filtrados por cotización"""
             try:
-                # Construir query base
+                # Construir query base CON JOIN a cotizacion_models para obtener fecha de cargue
                 query = """
                 SELECT 
-                    id, identificador_unico, cotizacion_id, group_cotization_id,
-                    nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
-                    peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
-                    disponible, score, estado_llamada, call_id, fecha_llamada,
-                    mercancia, peso_carga, empaque,
-                    created_at, updated_at
-                FROM llamadas_conductores
-                WHERE cotizacion_id = %s
-                    AND deleted_at IS NULL
+                    lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                    lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                    lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                    lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.fecha_llamada,
+                    lc.mercancia, lc.peso_carga, lc.empaque,
+                    lc.created_at, lc.updated_at,
+                    cm.ciudad_origen as cot_ciudad_origen,
+                    cm.ciudad_destino as cot_ciudad_destino,
+                    cm.fecha_hora_descargue_cargue as fecha_cargue,
+                    cm.peso_mercancia as cot_peso_mercancia,
+                    cm.tipo_producto as cot_tipo_producto,
+                    cm.vehiculo_requerido as cot_vehiculo_requerido
+                FROM llamadas_conductores lc
+                LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
+                WHERE lc.cotizacion_id = %s
+                    AND lc.deleted_at IS NULL
                 """
                 params = [cotizacion_id]
                 
@@ -1064,6 +1071,16 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                 
                 conductores = []
                 for row in results:
+                    # Formatear fecha de cargue si existe
+                    fecha_cargue = None
+                    if row['fecha_cargue']:
+                        try:
+                            fecha_dt = row['fecha_cargue']
+                            # Formato legible: "27 de abril de 2026"
+                            fecha_cargue = fecha_dt.strftime('%d de %B de %Y') if fecha_dt else None
+                        except:
+                            fecha_cargue = str(row['fecha_cargue']) if row['fecha_cargue'] else None
+                    
                     conductores.append({
                         "id": row['id'],
                         "identificador_unico": row['identificador_unico'],
@@ -1087,7 +1104,16 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                         "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
                         "empaque": row['empaque'],
                         "created_at": str(row['created_at']) if row['created_at'] else None,
-                        "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                        "updated_at": str(row['updated_at']) if row['updated_at'] else None,
+                        # Datos de la cotización asociados
+                        "info_cotizacion": {
+                            "fecha_cargue": fecha_cargue,
+                            "origen": row['cot_ciudad_origen'],
+                            "destino": row['cot_ciudad_destino'],
+                            "peso": row['cot_peso_mercancia'],
+                            "producto": row['cot_tipo_producto'],
+                            "vehiculo": row['cot_vehiculo_requerido']
+                        } if row['fecha_cargue'] or row['cot_ciudad_origen'] else None
                     })
                 
                 return [TextContent(

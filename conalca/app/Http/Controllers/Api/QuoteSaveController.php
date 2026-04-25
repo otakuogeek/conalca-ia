@@ -396,7 +396,7 @@ class QuoteSaveController extends Controller
                         ?? $routeData['tipo_producto'] 
                         ?? '';
 
-                    $payload = [
+$payload = [
                         'pricing_id'            => $pricingId,
                         'group_cotization_id'   => $group->id,
                         'client_id'             => $request->client_id,
@@ -420,6 +420,7 @@ class QuoteSaveController extends Controller
                         'itesoltra_acompanamientovalor' => $routeData['itesoltra_acompanamientovalor'] ?? 0,
                         'decision_cliente'      => $cotizacion->decision_cliente ?? 'pendiente',
                         'active'                => 1,
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ];
 
                     if ($cotizacion) {
@@ -528,5 +529,38 @@ class QuoteSaveController extends Controller
         }
         
         return (float) $cleaned;
+    }
+
+    /**
+     * Convierte la fecha de cargue al formato correcto para almacenar
+     * Acepta: Y-m-d, d/m/Y, d-m-Y, d-m-Y H:i, d/m/Y H:i
+     */
+    private function parseFechaCargue($value)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        // Si ya está en formato Y-m-d o Y-m-d H:i:s, retornarlo tal cual
+        if (preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/', $value)) {
+            return $value;
+        }
+
+        // Intentar parsing con Carbon
+        try {
+            $carbon = \Carbon\Carbon::parse($value);
+            return $carbon->format('Y-m-d');
+        } catch (\Throwable $e) {
+            Log::warning('parseFechaCargue: Error al parsear fecha', [
+                'valor' => $value,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 }

@@ -562,7 +562,20 @@ class ElevenLabsAgentToolsController extends Controller
         }
 
         try {
-            return \Carbon\Carbon::parse($fecha)->locale('es')->translatedFormat('l d [de] F [de] Y h:i A');
+            $carbon = \Carbon\Carbon::parse($fecha);
+            $diasES = ['Monday' => 'lunes', 'Tuesday' => 'martes', 'Wednesday' => 'miércoles', 
+                    'Thursday' => 'jueves', 'Friday' => 'viernes', 'Saturday' => 'sábado', 'Sunday' => 'domingo'];
+            $mesesES = ['January' => 'enero', 'February' => 'febrero', 'March' => 'marzo', 
+                       'April' => 'abril', 'May' => 'mayo', 'June' => 'junio',
+                       'July' => 'julio', 'August' => 'agosto', 'September' => 'septiembre',
+                       'October' => 'octubre', 'November' => 'noviembre', 'December' => 'diciembre'];
+            
+            $diaEN = $carbon->format('l');
+            $mesEN = $carbon->format('F');
+            $dia = $diasES[$diaEN] ?? $carbon->format('l');
+            $mes = $mesesES[$mesEN] ?? $carbon->format('F');
+            
+            return $dia . ' ' . $carbon->format('d') . ' de ' . $mes . ' de ' . $carbon->format('Y');
         } catch (\Throwable $e) {
             return (string) $fecha;
         }
