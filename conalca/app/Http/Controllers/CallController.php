@@ -327,6 +327,7 @@ class CallController extends Controller
                     '--stuck-timeout' => 180,
                     '--max-global' => 5,
                     '--max-per-order' => 2,
+                    '--max-retries' => 3,
                 ]);
             }
 

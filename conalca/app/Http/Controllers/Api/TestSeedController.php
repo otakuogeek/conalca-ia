@@ -70,7 +70,7 @@ class TestSeedController extends Controller
             'rutas.*.temperatura_mercancia'  => 'nullable|string',
             'rutas.*.registro_fotografico'   => 'nullable|string',
             'rutas.*.fecha'                  => 'nullable|date',
-            'rutas.*.fecha_cargue'           => 'nullable|date',
+            'rutas.*.fecha_cargue'           => 'nullable|date_format:Y-m-d H:i',
             'rutas.*.porcentaje'             => 'nullable|numeric',
             'rutas.*.flete'                  => 'nullable|numeric|min:0',
         ]);

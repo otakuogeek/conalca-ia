@@ -479,6 +479,13 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     try {
       setLoading(true);
       
+      // Verificar que el cliente tenga un ID válido
+      if (!data.clientId) {
+        alert('Por favor, seleccione un cliente válido o créelo en el módulo de clientes.');
+        setLoading(false);
+        return;
+      }
+      
       // Crear grupo de cotización con parámetros automáticos
       const response = await fetch('/api/chat/quote/create-group', {
         method: 'POST',
@@ -516,9 +523,10 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       if (result.success) {
         console.log('QuoteIndex - Grupo borrador creado:', result.data);
         
-        // Actualizar clientData CON groupId
+        // Actualizar clientData CON groupId y clientId actualizado
         const updatedClientData = {
           ...data,
+          clientId: data.clientId, // Mantener el clientId original
           groupId: result.data.group_id,
           threadId: result.data.thread_id,
         };

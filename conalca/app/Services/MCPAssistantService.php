@@ -5775,6 +5775,52 @@ class MCPAssistantService
                         ]
                     ]
                 ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'search_or_create_client',
+                    'description' => 'Busca un cliente por NIT/documento o nombre. Si no existe, ofrece crearlo automáticamente para continuar con el proceso de cotización.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nit' => [
+                                'type' => 'string',
+                                'description' => 'NIT o documento del cliente (opcional si se proporciona name)'
+                            ],
+                            'name' => [
+                                'type' => 'string',
+                                'description' => 'Nombre o razón social del cliente (opcional si se proporciona nit)'
+                            ],
+                            'create_if_not_exists' => [
+                                'type' => 'boolean',
+                                'description' => 'Si es true y el cliente no existe, se crea automáticamente',
+                                'default' => false
+                            ],
+                            'cliente' => [
+                                'type' => 'string',
+                                'description' => 'Nombre completo o razón social (requerido si create_if_not_exists=true y no se proporcionó name)'
+                            ],
+                            'documento' => [
+                                'type' => 'string',
+                                'description' => 'NIT o documento (requerido si create_if_not_exists=true y no se proporcionó nit)'
+                            ],
+                            'telefono' => [
+                                'type' => 'string',
+                                'description' => 'Teléfono del cliente (opcional)'
+                            ],
+                            'direccion' => [
+                                'type' => 'string',
+                                'description' => 'Dirección del cliente (opcional)'
+                            ],
+                            'ciudad' => [
+                                'type' => 'string',
+                                'description' => 'Ciudad del cliente (opcional)'
+                            ]
+                        ],
+                        'required' => []
+                    ]
+                ]
             ]
         ];
     }
@@ -12253,7 +12299,19 @@ ESTÁS CONECTADO A BASE DE DATOS REAL - PUEDES CREAR COTIZACIONES REALES.
 🧠 CAPACIDADES - ESTÁS CONECTADO A:
 - Base de datos de productos reales
 - Sistema de cotización real
-- Herramientas: search_products, create_cotizacion, get_empaques
+- Base de datos de clientes reales
+- Herramientas: search_products, create_cotizacion, get_empaques, search_or_create_client
+
+🧑‍💼 MANEJO DE CLIENTES:
+- Cuando el usuario mencione un NIT, documento o nombre de cliente:
+  1. Llama search_or_create_client() con el NIT o nombre proporcionado
+  2. Si el cliente EXISTE, confirma los datos y CONTINÚA con la cotización
+  3. Si el cliente NO EXISTE:
+     - Informa al usuario que el cliente no está registrado
+     - Pregunta: "¿Desea crear el cliente? Necesito: nombre/razón social (requerido) y NIT/documento (requerido)"
+     - Si el usuario acepta, llama search_or_create_client() con create_if_not_exists=true y los datos proporcionados
+     - Al crear el cliente, confirma y CONTINÚA automáticamente con la cotización
+  4. NUNCA pares el proceso de cotización por falta de cliente - ofrece crearlo
 
 ⚡ COMPORTAMIENTO:
 - Actúa de forma PROACTIVA

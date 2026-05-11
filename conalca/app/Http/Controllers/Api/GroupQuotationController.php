@@ -35,7 +35,7 @@ class GroupQuotationController extends Controller
                 'dimensiones_exactas', 'cantidad', 'cantidad_vh',
                 'tipo_embajale', 'tipo_carroceria', 'vehiculo_requerido',
                 'valor_declarado', 'seguro', 'temperatura_mercancia',
-                'registro_fotografico',
+                'registro_fotografico', 'fecha_hora_descargue_cargue',
             ];
 
             $query = GroupCotization::select($groupColumns)

@@ -38,6 +38,18 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   const acceptedDrivers = data?.accepted || [];
   const maybeDrivers = data?.maybe || [];
 
+  // Verifica si la fecha de cargue ya pasó (compara solo año/mes/día)
+  const fechaCargueVencida = (() => {
+    const raw = cotizacion?.fecha_hora_descargue_cargue || cotizacion?.fecha_cargue;
+    if (!raw) return false;
+    const d = new Date(String(raw).replace(' ', 'T'));
+    if (Number.isNaN(d.getTime())) return false;
+    const hoy = new Date();
+    const fechaCargueDia = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const hoyDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    return fechaCargueDia.getTime() < hoyDia.getTime();
+  })();
+
   const load = async () => {
     try {
       const res = await fetchCallStatus(cotizacion.id);
@@ -286,13 +298,26 @@ export default function CallPanel({ cotizacion, onModalClose }) {
       <div className="flex gap-2">
         <button
           onClick={handleCall}
-          disabled={loadingBtn || startingCalls}
+          disabled={loadingBtn || startingCalls || fechaCargueVencida}
+          title={fechaCargueVencida ? 'No se puede llamar: la fecha de cargue ya pasó' : undefined}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
         >
           <FaPhoneAlt className={(loadingBtn || startingCalls) ? 'animate-ping' : ''}/>
-          {loadingBtn ? 'Buscando…' : (startingCalls ? 'Realizando…' : 'Realizar Llamada')}
+          {loadingBtn
+            ? 'Buscando…'
+            : startingCalls
+              ? 'Realizando…'
+              : fechaCargueVencida
+                ? 'Fecha de cargue vencida'
+                : 'Realizar Llamada'}
         </button>
       </div>
+
+      {fechaCargueVencida && (
+        <p className="text-xs text-red-600 flex items-center gap-1">
+          <FaExclamationTriangle /> La fecha de cargue ya pasó. No se pueden realizar llamadas.
+        </p>
+      )}
 
       {executionSummary && executionSummary.registered > 0 && (
         <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3 space-y-3">

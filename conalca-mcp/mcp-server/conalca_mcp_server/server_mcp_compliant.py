@@ -36,6 +36,126 @@ class DateTimeEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 
+
+# ============================================================
+# Helper: formato de fecha natural (relativo a hoy)
+# ============================================================
+_DIAS_SEMANA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+          'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+
+def _format_fecha_natural(dt) -> str:
+    """
+    Devuelve la fecha en forma conversacional relativa a HOY (zona America/Bogota).
+    Patrón unificado para que ElevenLabs pronuncie la fecha tal cual la entrega el MCP:
+      - delta 0  → "hoy"
+      - delta 1  → "mañana"
+      - delta ≥2 → "el próximo [día_semana] [N]"        (ej: "el próximo miércoles 6")
+      - delta -1 → "ayer"
+      - delta <-1 → "el [día_semana] [N] de [mes]"      (fechas pasadas)
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        hoy = datetime.now(ZoneInfo('America/Bogota')).date()
+    except Exception:
+        hoy = datetime.now().date()
+
+    fecha = dt.date() if isinstance(dt, datetime) else dt
+    delta = (fecha - hoy).days
+    nombre_dia = _DIAS_SEMANA[fecha.weekday()]
+
+    if delta == 0:
+        return 'hoy'
+    if delta == 1:
+        return 'mañana'
+    if delta >= 2:
+        return f'el próximo {nombre_dia} {fecha.day}'
+    if delta == -1:
+        return 'ayer'
+    # Fechas pasadas (no debería usarse en cotización futura, pero por completitud)
+    return f'el {nombre_dia} {fecha.day} de {_MESES[fecha.month - 1]}'
+
+
+def _normalize_phone_for_lookup(phone: Any) -> str:
+    """Normaliza teléfonos colombianos para comparar llamadas salientes con conductores."""
+    if phone is None:
+        return ''
+
+    digits = ''.join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) > 10 and digits.startswith('57'):
+        digits = digits[2:]
+    return digits
+
+
+def _phones_match(left: Any, right: Any) -> bool:
+    """Compara números tolerando +57, espacios, guiones y formatos internacionales."""
+    left_clean = _normalize_phone_for_lookup(left)
+    right_clean = _normalize_phone_for_lookup(right)
+
+    if not left_clean or not right_clean:
+        return False
+
+    if left_clean == right_clean:
+        return True
+
+    if len(left_clean) >= 10 and len(right_clean) >= 10:
+        return left_clean[-10:] == right_clean[-10:]
+
+    return left_clean.endswith(right_clean) or right_clean.endswith(left_clean)
+
+
+def _resolve_driver_decision(decision: Any) -> Dict[str, Any]:
+    """Mapea las decisiones del prompt a estados persistibles por el MCP."""
+    if isinstance(decision, bool) or isinstance(decision, int):
+        decision_int = int(decision)
+        return {
+            "normalized_decision": "accepted" if decision_int == 1 else "rejected",
+            "decision_text": "acepta" if decision_int == 1 else "rechaza",
+            "estado_llamada": "completada" if decision_int == 1 else "fallida",
+            "respuesta_llamada": "accepted" if decision_int == 1 else "rejected",
+            "historical_decision": decision_int,
+            "requires_retry": False,
+        }
+
+    normalized = str(decision).strip().lower()
+    if normalized in {"1", "si", "sí", "accept", "accepted", "acepta", "aceptado"}:
+        return {
+            "normalized_decision": "accepted",
+            "decision_text": "acepta",
+            "estado_llamada": "completada",
+            "respuesta_llamada": "accepted",
+            "historical_decision": 1,
+            "requires_retry": False,
+        }
+    if normalized in {"retry", "reintento", "reintentar", "voicemail", "buzon", "buzón", "no_answer"}:
+        return {
+            "normalized_decision": "retry",
+            "decision_text": "reintento",
+            "estado_llamada": "pendiente",
+            "respuesta_llamada": "",
+            "historical_decision": None,
+            "requires_retry": True,
+        }
+    if normalized in {"maybe", "tal_vez", "talvez", "indeciso", "supervisor", "pending", "seguimiento"}:
+        return {
+            "normalized_decision": "maybe",
+            "decision_text": "pendiente de supervisor",
+            "estado_llamada": "completada",
+            "respuesta_llamada": "pending_supervisor",
+            "historical_decision": None,
+            "requires_retry": False,
+        }
+
+    return {
+        "normalized_decision": "rejected",
+        "decision_text": "rechaza",
+        "estado_llamada": "fallida",
+        "respuesta_llamada": "rejected",
+        "historical_decision": 0,
+        "requires_retry": False,
+    }
+
 class ConalcaMCPServer:
     """Servidor MCP compatible con ElevenLabs - Protocolo JSON-RPC 2.0"""
     
@@ -567,6 +687,10 @@ class ConalcaMCPServer:
                                             "telefono": {
                                                 "type": "string",
                                                 "description": "Número de teléfono del conductor sin prefijo +57 (ej: 3105672307)"
+                                            },
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs. Si está disponible, se usa como llave principal para evitar mezclar conductores con el mismo teléfono."
                                             }
                                         },
                                         "required": ["telefono"]
@@ -602,9 +726,11 @@ class ConalcaMCPServer:
                                                 "description": "ID de conversación de ElevenLabs (opcional)"
                                             },
                                             "decision": {
-                                                "type": "integer",
-                                                "description": "Decisión del chofer: 1 para aceptar, 0 para rechazar",
-                                                "enum": [0, 1]
+                                                "oneOf": [
+                                                    {"type": "integer", "enum": [0, 1]},
+                                                    {"type": "string", "enum": ["accepted", "rejected", "maybe", "retry", "voicemail", "no_answer"]}
+                                                ],
+                                                "description": "Decisión del chofer: 1/accepted acepta, 0/rejected rechaza, maybe seguimiento de supervisor, retry/buzón reintento"
                                             },
                                             "notas": {
                                                 "type": "string",
@@ -1219,7 +1345,8 @@ class ConalcaMCPServer:
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
-                                    "telefono": {"type": "string", "description": "Teléfono del conductor sin +57"}
+                                    "telefono": {"type": "string", "description": "Teléfono del conductor sin +57"},
+                                    "conversation_id": {"type": "string", "description": "ID de conversación de ElevenLabs. Si está disponible, se usa como llave principal para evitar mezclar conductores con el mismo teléfono."}
                                 },
                                 "required": ["telefono"]
                             }
@@ -1243,7 +1370,13 @@ class ConalcaMCPServer:
                                 "properties": {
                                     "identificador_unico": {"type": "string", "description": "Identificador único del conductor en llamadas_conductores"},
                                     "conversation_id": {"type": "string", "description": "ID de conversación de ElevenLabs (opcional)"},
-                                    "decision": {"type": "integer", "description": "1=aceptar, 0=rechazar", "enum": [0, 1]},
+                                    "decision": {
+                                        "oneOf": [
+                                            {"type": "integer", "enum": [0, 1]},
+                                            {"type": "string", "enum": ["accepted", "rejected", "maybe", "retry", "voicemail", "no_answer"]}
+                                        ],
+                                        "description": "1/accepted acepta, 0/rejected rechaza, maybe seguimiento de supervisor, retry/buzón reintento"
+                                    },
                                     "notas": {"type": "string", "description": "Notas adicionales (opcional)"}
                                 },
                                 "required": ["identificador_unico", "decision"]
@@ -1696,7 +1829,7 @@ class ConalcaMCPServer:
                         # ✅ VALIDACIÓN 2: Intentar parsear la fecha
                         try:
                             _dt = None
-                            for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                            for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
                                 try:
                                     _dt = datetime.strptime(str(_fhdc), _fmt)
                                     break
@@ -1704,15 +1837,12 @@ class ConalcaMCPServer:
                                     pass
                             
                             if _dt:
-                                _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
-                                _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-                                          'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
-                                _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                                _fecha_cargue = _format_fecha_natural(_dt)
                                 if not (_dt.hour == 0 and _dt.minute == 0):
                                     _h = _dt.hour % 12 or 12
                                     _ampm = 'AM' if _dt.hour < 12 else 'PM'
                                     _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
-                                logger.info(f"✅ Fecha parseada correctamente: {_fecha_cargue} {_hora_cargue or ''}")
+                                logger.info(f"✅ Fecha parseada (natural): {_fecha_cargue} {_hora_cargue or ''}")
                             else:
                                 # ✅ Si no se puede parsear, usar el valor raw
                                 logger.warning(f"⚠️ No se pudo parsear fecha '{_fhdc}' - usando valor raw")
@@ -1812,10 +1942,7 @@ class ConalcaMCPServer:
                             except ValueError:
                                 pass
                         if _dt:
-                            _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
-                            _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-                                      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
-                            _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                            _fecha_cargue = _format_fecha_natural(_dt)
                             if not (_dt.hour == 0 and _dt.minute == 0):
                                 _h = _dt.hour % 12 or 12
                                 _ampm = 'AM' if _dt.hour < 12 else 'PM'
@@ -2322,17 +2449,26 @@ class ConalcaMCPServer:
                         "error": "Se requieren los parámetros: identificador_unico y decision"
                     }, ensure_ascii=False)
                 
-                # Validar que decision sea 0 o 1
-                if decision not in [0, 1]:
-                    return json.dumps({
-                        "success": False,
-                        "error": "El parámetro 'decision' debe ser 0 (rechaza) o 1 (acepta)"
-                    }, ensure_ascii=False)
+                decision_state = _resolve_driver_decision(decision)
                 
                 try:
-                    # Primero verificamos que el conductor exista en llamadas_conductores
-                    query_verify = "SELECT id, nombre_conductor, cotizacion_id FROM llamadas_conductores WHERE identificador_unico = %s AND deleted_at IS NULL"
-                    result_verify = await repository.db.execute_query(query_verify, (identificador_unico,))
+                    # Primero verificamos que el conductor exista y, si llega conversation_id,
+                    # que esa conversación pertenezca a este mismo conductor.
+                    query_verify = """
+                    SELECT lc.id, lc.nombre_conductor, lc.cotizacion_id, lc.telefono,
+                           lc.elevenlabs_conversation_id, lc.call_id,
+                           l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                    FROM llamadas_conductores lc
+                    LEFT JOIN llamadas l
+                        ON l.conductor_id = lc.id
+                        AND (%s IS NOT NULL AND l.elevenlabs_conversation_id = %s)
+                    WHERE lc.identificador_unico = %s AND lc.deleted_at IS NULL
+                    LIMIT 1
+                    """
+                    result_verify = await repository.db.execute_query(
+                        query_verify,
+                        (conversation_id, conversation_id, identificador_unico)
+                    )
                     
                     if not result_verify:
                         return json.dumps({
@@ -2343,18 +2479,35 @@ class ConalcaMCPServer:
                     conductor_data = result_verify[0]
                     nombre_conductor = conductor_data.get('nombre_conductor', 'Conductor')
                     cotizacion_id = conductor_data.get('cotizacion_id')
+
+                    if conversation_id:
+                        conversation_matches = conversation_id in {
+                            conductor_data.get('elevenlabs_conversation_id'),
+                            conductor_data.get('call_id'),
+                            conductor_data.get('llamada_conversation_id')
+                        }
+
+                        if not conversation_matches:
+                            return json.dumps({
+                                "success": False,
+                                "error": "El conversation_id no pertenece al identificador_unico enviado. No se guardó la decisión para evitar mezclar conductores.",
+                                "identificador_unico": identificador_unico,
+                                "conversation_id": conversation_id,
+                                "conductor_conversation_id": conductor_data.get('elevenlabs_conversation_id'),
+                                "conductor_call_id": conductor_data.get('call_id')
+                            }, ensure_ascii=False)
                     
                     # Usar el método que actualiza llamadas_conductores
                     success = await repository.save_driver_decision_new(
                         identificador_unico=identificador_unico,
-                        conversation_id=conversation_id or "N/A",
+                        conversation_id=conversation_id,
                         decision=decision,
                         notas=notas
                     )
                     
                     if success:
-                        decision_text = "acepta" if decision == 1 else "rechaza"
-                        estado_llamada = "completada" if decision == 1 else "fallida"
+                        decision_text = decision_state["decision_text"]
+                        estado_llamada = decision_state["estado_llamada"]
                         
                         result = {
                             "success": True,
@@ -2363,10 +2516,11 @@ class ConalcaMCPServer:
                                 "identificador_unico": identificador_unico,
                                 "nombre_conductor": nombre_conductor,
                                 "cotizacion_id": cotizacion_id,
-                                "decision": decision,
+                                "decision": decision_state["normalized_decision"],
                                 "decision_text": decision_text,
                                 "estado_llamada": estado_llamada,
                                 "conversation_id": conversation_id,
+                                "requires_retry": decision_state["requires_retry"],
                                 "notas": notas
                             }
                         }
@@ -2387,39 +2541,90 @@ class ConalcaMCPServer:
             
             elif tool_name == "get_contexto_inicial_conductor":
                 telefono = arguments.get("telefono")
+                conversation_id = arguments.get("conversation_id")
                 if not telefono:
                     return json.dumps({"error": "El parámetro 'telefono' es requerido"}, ensure_ascii=False)
                 
                 try:
                     # Limpiar teléfono
-                    telefono_limpio = telefono.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace("+57", "")
+                    telefono_limpio = _normalize_phone_for_lookup(telefono)
+                    telefono_tail = telefono_limpio[-10:] if len(telefono_limpio) >= 10 else telefono_limpio
+                    fuente_busqueda = "telefono"
                     
-                    # PASO 1: Buscar conductor por teléfono
-                    query_conductor = """
-                    SELECT 
-                        id, identificador_unico, cotizacion_id, group_cotization_id,
-                        nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
-                        peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
-                        disponible, score, estado_llamada, call_id, fecha_llamada,
-                        respuesta_llamada, notas, mercancia, peso_carga, empaque,
-                        datos_adicionales, created_at, updated_at
-                    FROM llamadas_conductores
-                    WHERE (telefono = %s OR telefono = %s
-                        OR REPLACE(REPLACE(REPLACE(telefono, ' ', ''), '-', ''), '+57', '') = %s)
-                        AND deleted_at IS NULL
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                    
-                    results = await repository.db.execute_query(
-                        query_conductor, (telefono, telefono_limpio, telefono_limpio)
-                    )
+                    results = []
+
+                    # PASO 1: si llega conversation_id, usarlo como llave principal.
+                    if conversation_id:
+                        query_by_conversation = """
+                        SELECT 
+                            lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                            lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                            lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                            lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.elevenlabs_conversation_id,
+                            lc.fecha_llamada, lc.respuesta_llamada, lc.notas, lc.mercancia, lc.peso_carga, lc.empaque,
+                            lc.datos_adicionales, lc.created_at, lc.updated_at,
+                            l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                        FROM llamadas_conductores lc
+                        LEFT JOIN llamadas l
+                            ON l.conductor_id = lc.id
+                            AND l.elevenlabs_conversation_id = %s
+                        WHERE (lc.elevenlabs_conversation_id = %s OR lc.call_id = %s OR l.elevenlabs_conversation_id = %s)
+                            AND lc.deleted_at IS NULL
+                        ORDER BY
+                            CASE
+                                WHEN lc.elevenlabs_conversation_id = %s THEN 0
+                                WHEN lc.call_id = %s THEN 1
+                                WHEN l.elevenlabs_conversation_id = %s THEN 2
+                                ELSE 3
+                            END,
+                            COALESCE(l.updated_at, lc.fecha_llamada, lc.updated_at, lc.created_at) DESC
+                        LIMIT 1
+                        """
+                        results = await repository.db.execute_query(
+                            query_by_conversation,
+                            (conversation_id, conversation_id, conversation_id, conversation_id, conversation_id, conversation_id, conversation_id)
+                        )
+                        if results:
+                            fuente_busqueda = "conversation_id"
+
+                    # PASO 2: fallback por teléfono, priorizando llamadas activas/pendientes.
+                    if not results:
+                        query_conductor = """
+                        SELECT 
+                            lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                            lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                            lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                            lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.elevenlabs_conversation_id,
+                            lc.fecha_llamada, lc.respuesta_llamada, lc.notas, lc.mercancia, lc.peso_carga, lc.empaque,
+                            lc.datos_adicionales, lc.created_at, lc.updated_at,
+                            l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                        FROM llamadas_conductores lc
+                        LEFT JOIN llamadas l ON l.conductor_id = lc.id
+                        WHERE (lc.telefono = %s OR lc.telefono = %s
+                            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(lc.telefono, ' ', ''), '-', ''), '+57', ''), '(', ''), ')', '') = %s
+                            OR RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(lc.telefono, ' ', ''), '-', ''), '+57', ''), '(', ''), ')', ''), 10) = %s)
+                            AND lc.deleted_at IS NULL
+                        ORDER BY
+                            CASE
+                                WHEN lc.estado_llamada = 'en_progreso' THEN 0
+                                WHEN lc.estado_llamada = 'pendiente' THEN 1
+                                ELSE 2
+                            END,
+                            COALESCE(l.call_initiated_at, lc.fecha_llamada, lc.updated_at, lc.created_at) DESC,
+                            lc.id DESC
+                        LIMIT 1
+                        """
+                        
+                        results = await repository.db.execute_query(
+                            query_conductor, (telefono, telefono_limpio, telefono_limpio, telefono_tail)
+                        )
                     
                     if not results:
                         return json.dumps({
                             "success": True,
                             "modo": "NO_ENCONTRADO",
                             "telefono_buscado": telefono,
+                            "conversation_id": conversation_id,
                             "conductor": None,
                             "cotizacion": None,
                             "precio": None,
@@ -2439,8 +2644,18 @@ class ConalcaMCPServer:
                         "ciudad_actual": row['ciudad_actual'],
                         "ciudad_origen": row['ciudad_origen'],
                         "ciudad_destino": row['ciudad_destino'],
+                        "elevenlabs_conversation_id": row.get('elevenlabs_conversation_id'),
+                        "call_id": row.get('call_id'),
+                        "llamada_id": row.get('id_llamada'),
+                        "numero_destino": row.get('numero_destino'),
                         "disponible": bool(row['disponible']) if row['disponible'] is not None else None,
                         "score": float(row['score']) if row['score'] else 0.0
+                    }
+                    telefono_coincide = _phones_match(row.get('telefono'), telefono) or _phones_match(row.get('numero_destino'), telefono)
+                    conversation_id_coincide = not conversation_id or conversation_id in {
+                        row.get('elevenlabs_conversation_id'),
+                        row.get('call_id'),
+                        row.get('llamada_conversation_id')
                     }
                     
                     cotizacion_id = row['cotizacion_id']
@@ -2462,17 +2677,14 @@ class ConalcaMCPServer:
                             if _fhdc:
                                 try:
                                     _dt = None
-                                    for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                                    for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
                                         try:
                                             _dt = datetime.strptime(str(_fhdc), _fmt)
                                             break
                                         except ValueError:
                                             pass
                                     if _dt:
-                                        _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
-                                        _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-                                                  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
-                                        _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                                        _fecha_cargue = _format_fecha_natural(_dt)
                                         if not (_dt.hour == 0 and _dt.minute == 0):
                                             _h = _dt.hour % 12 or 12
                                             _ampm = 'AM' if _dt.hour < 12 else 'PM'
@@ -2514,6 +2726,14 @@ class ConalcaMCPServer:
                     result = {
                         "success": True,
                         "modo": modo,
+                        "conversation_id": conversation_id,
+                        "telefono_buscado": telefono,
+                        "telefono_normalizado": telefono_limpio,
+                        "validacion": {
+                            "fuente_busqueda": fuente_busqueda,
+                            "telefono_coincide": telefono_coincide,
+                            "conversation_id_coincide": conversation_id_coincide
+                        },
                         "conductor": conductor_data,
                         "cotizacion": cotizacion_data,
                         "precio": precio_data
@@ -2673,11 +2893,12 @@ class ConalcaMCPServer:
                     # Construir query UPDATE
                     updates = [
                         "call_id = %s",
+                        "elevenlabs_conversation_id = %s",
                         "estado_llamada = %s",
                         "fecha_llamada = NOW()",
                         "updated_at = NOW()"
                     ]
-                    params = [conversation_id, estado_llamada]
+                    params = [conversation_id, conversation_id, estado_llamada]
                     
                     if notas:
                         updates.append("notas = %s")

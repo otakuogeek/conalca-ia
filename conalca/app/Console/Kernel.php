@@ -32,7 +32,7 @@ class Kernel extends ConsoleKernel
             ->appendOutputTo(storage_path('logs/system-monitor.log'));
             
         // Monitor de cola de llamadas - cada minuto verifica y resuelve llamadas atascadas
-        $schedule->command('calls:monitor --once --stuck-timeout=180')
+        $schedule->command('calls:monitor --once --stuck-timeout=180 --max-retries=3')
             ->everyMinute()
             ->withoutOverlapping()
             ->appendOutputTo(storage_path('logs/call-queue-monitor.log'));

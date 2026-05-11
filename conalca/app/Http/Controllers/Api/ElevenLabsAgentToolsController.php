@@ -27,6 +27,7 @@ class ElevenLabsAgentToolsController extends Controller
     {
         try {
             $telefono = $request->input('telefono');
+            $conversationId = $request->input('conversation_id');
 
             if (!$telefono) {
                 return response()->json([
@@ -41,9 +42,15 @@ class ElevenLabsAgentToolsController extends Controller
             Log::info('ElevenLabs Tool: get_contexto_inicial_conductor', [
                 'telefono_original' => $telefono,
                 'telefono_limpio' => $telefonoLimpio,
+                'conversation_id' => $conversationId,
             ]);
 
-            $conductor = $this->findLatestConductorByPhone($telefonoLimpio);
+            $conductor = $conversationId ? $this->findConductorByConversationId($conversationId) : null;
+            $fuenteBusqueda = $conductor ? 'conversation_id' : 'telefono';
+
+            if (!$conductor) {
+                $conductor = $this->findLatestConductorByPhone($telefonoLimpio);
+            }
 
             if (!$conductor) {
                 return response()->json([
@@ -57,10 +64,27 @@ class ElevenLabsAgentToolsController extends Controller
 
             $cotizacion = $conductor->cotizacion;
             $precio = $this->buildPrecioPayload($cotizacion);
+            $llamada = $conversationId
+                ? \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first()
+                : null;
+            $conversationIdCoincide = !$conversationId
+                || $conversationId === $conductor->elevenlabs_conversation_id
+                || $conversationId === $conductor->call_id
+                || ($llamada && (int) $llamada->conductor_id === (int) $conductor->id);
+            $telefonoCoincide = $this->phonesMatch($telefono, $conductor->telefono)
+                || ($llamada && $this->phonesMatch($telefono, $llamada->numero_destino));
 
             return response()->json([
                 'success' => true,
                 'modo' => $cotizacion ? 'OFERTA_CONCRETA' : 'BUSQUEDA_DISPONIBILIDAD',
+                'conversation_id' => $conversationId,
+                'telefono_buscado' => $telefono,
+                'telefono_normalizado' => $telefonoLimpio,
+                'validacion' => [
+                    'fuente_busqueda' => $fuenteBusqueda,
+                    'telefono_coincide' => $telefonoCoincide,
+                    'conversation_id_coincide' => $conversationIdCoincide,
+                ],
                 'conductor' => [
                     'id' => $conductor->id,
                     'identificador_unico' => $conductor->identificador_unico,
@@ -70,6 +94,10 @@ class ElevenLabsAgentToolsController extends Controller
                     'ciudad_actual' => $conductor->ciudad_actual ?? $conductor->ciudad,
                     'cotizacion_id' => $conductor->cotizacion_id,
                     'telefono' => $conductor->telefono,
+                    'elevenlabs_conversation_id' => $conductor->elevenlabs_conversation_id,
+                    'call_id' => $conductor->call_id,
+                    'llamada_id' => $llamada?->id_llamada,
+                    'numero_destino' => $llamada?->numero_destino,
                 ],
                 'cotizacion' => $this->buildCotizacionPayload($cotizacion),
                 'precio' => $precio,
@@ -359,13 +387,53 @@ class ElevenLabsAgentToolsController extends Controller
 
             // Si no lo encontramos por ID, buscar por conversation_id
             if (!$conductor && $conversationId) {
-                $conductor = LlamadaConductor::where('elevenlabs_conversation_id', $conversationId)->first();
+                $conductor = $this->findConductorByConversationId($conversationId);
+            }
+
+            $llamada = \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first();
+
+            if (!$conductor) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se encontró conductor para guardar la decisión',
+                ], 404);
+            }
+
+            if ($identificadorUnico && $conductor->identificador_unico !== $identificadorUnico) {
+                Log::warning('ElevenLabs Tool: identificador_unico no coincide con conductor resuelto', [
+                    'identificador_recibido' => $identificadorUnico,
+                    'identificador_conductor' => $conductor->identificador_unico,
+                    'conversation_id' => $conversationId,
+                    'conductor_id' => $conductor->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'error' => 'El identificador_unico no coincide con el conductor de la conversación',
+                ], 409);
+            }
+
+            $conversationMatches = !$conversationId
+                || $conversationId === $conductor->elevenlabs_conversation_id
+                || $conversationId === $conductor->call_id
+                || ($llamada && (int) $llamada->conductor_id === (int) $conductor->id);
+
+            if (!$conversationMatches) {
+                Log::warning('ElevenLabs Tool: conversation_id no coincide con conductor resuelto', [
+                    'conversation_id' => $conversationId,
+                    'conductor_id' => $conductor->id,
+                    'llamada_conductor_id' => $llamada?->conductor_id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'error' => 'conversation_id no coincide con el conductor; decisión no guardada',
+                ], 409);
             }
 
             $legacyDriverId = $conductor?->chofer_id_local;
             $resolvedDriverId = $legacyDriverId ?? $driverId ?? $conductor?->id;
             $resolvedCotizacionId = $cotizacionModelId ?? $conductor?->cotizacion_id;
-            $llamada = \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first();
 
             if ($requiresRetry) {
                 if ($conductor) {
@@ -510,6 +578,54 @@ class ElevenLabsAgentToolsController extends Controller
         return $query->first();
     }
 
+    private function findConductorByConversationId(?string $conversationId): ?LlamadaConductor
+    {
+        if (!$conversationId) {
+            return null;
+        }
+
+        $conductor = LlamadaConductor::where(function ($query) use ($conversationId) {
+                $query->where('elevenlabs_conversation_id', $conversationId)
+                    ->orWhere('call_id', $conversationId);
+            })
+            ->with('cotizacion')
+            ->first();
+
+        if ($conductor) {
+            return $conductor;
+        }
+
+        $llamada = \App\Models\Llamada::where('elevenlabs_conversation_id', $conversationId)->first();
+
+        if (!$llamada || !$llamada->conductor_id) {
+            return null;
+        }
+
+        return LlamadaConductor::where('id', $llamada->conductor_id)
+            ->with('cotizacion')
+            ->first();
+    }
+
+    private function phonesMatch($left, $right): bool
+    {
+        $leftClean = $this->normalizePhone($left) ?? '';
+        $rightClean = $this->normalizePhone($right) ?? '';
+
+        if ($leftClean === '' || $rightClean === '') {
+            return false;
+        }
+
+        if ($leftClean === $rightClean) {
+            return true;
+        }
+
+        if (strlen($leftClean) >= 10 && strlen($rightClean) >= 10) {
+            return substr($leftClean, -10) === substr($rightClean, -10);
+        }
+
+        return str_ends_with($leftClean, $rightClean) || str_ends_with($rightClean, $leftClean);
+    }
+
     private function buildCotizacionPayload(?CotizacionModel $cotizacion): ?array
     {
         if (!$cotizacion) {
@@ -562,20 +678,30 @@ class ElevenLabsAgentToolsController extends Controller
         }
 
         try {
-            $carbon = \Carbon\Carbon::parse($fecha);
-            $diasES = ['Monday' => 'lunes', 'Tuesday' => 'martes', 'Wednesday' => 'miércoles', 
-                    'Thursday' => 'jueves', 'Friday' => 'viernes', 'Saturday' => 'sábado', 'Sunday' => 'domingo'];
-            $mesesES = ['January' => 'enero', 'February' => 'febrero', 'March' => 'marzo', 
-                       'April' => 'abril', 'May' => 'mayo', 'June' => 'junio',
-                       'July' => 'julio', 'August' => 'agosto', 'September' => 'septiembre',
-                       'October' => 'octubre', 'November' => 'noviembre', 'December' => 'diciembre'];
-            
-            $diaEN = $carbon->format('l');
-            $mesEN = $carbon->format('F');
-            $dia = $diasES[$diaEN] ?? $carbon->format('l');
-            $mes = $mesesES[$mesEN] ?? $carbon->format('F');
-            
-            return $dia . ' ' . $carbon->format('d') . ' de ' . $mes . ' de ' . $carbon->format('Y');
+            $fechaCargue = \Carbon\Carbon::parse($fecha, 'America/Bogota')->startOfDay();
+            $hoy = \Carbon\Carbon::now('America/Bogota')->startOfDay();
+            $delta = $hoy->diffInDays($fechaCargue, false);
+            $dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+            $meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+            $nombreDia = $dias[$fechaCargue->dayOfWeekIso - 1];
+
+            if ($delta === 0) {
+                return 'hoy';
+            }
+
+            if ($delta === 1) {
+                return 'mañana';
+            }
+
+            if ($delta >= 2) {
+                return "el próximo {$nombreDia} {$fechaCargue->day}";
+            }
+
+            if ($delta === -1) {
+                return 'ayer';
+            }
+
+            return "el {$nombreDia} {$fechaCargue->day} de {$meses[$fechaCargue->month - 1]}";
         } catch (\Throwable $e) {
             return (string) $fecha;
         }

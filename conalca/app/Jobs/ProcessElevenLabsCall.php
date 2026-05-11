@@ -209,6 +209,25 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                 ]);
                 return;
             }
+
+            if ($conductor && !self::phonesMatch($llamada->numero_destino, $conductor->telefono)) {
+                Log::error('ProcessElevenLabsCall: teléfono de llamada no coincide con conductor registrado', [
+                    'llamada_id' => $this->llamadaId,
+                    'conductor_id' => $conductor->id,
+                    'identificador_unico' => $conductor->identificador_unico,
+                    'numero_destino' => $llamada->numero_destino,
+                    'telefono_conductor' => $conductor->telefono,
+                ]);
+
+                $llamada->update([
+                    'status' => Llamada::STATUS_FINALIZADA,
+                    'call_status' => Llamada::CALL_STATUS_FAILED,
+                    'queue_status' => 'failed',
+                    'failure_reason' => 'Teléfono destino no coincide con conductor registrado',
+                    'processing_completed_at' => now(),
+                ]);
+                return;
+            }
             
             Log::info('Modelos encontrados, actualizando estado de llamada...');
 
@@ -236,14 +255,7 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     ) ?? \DateTime::createFromFormat('Y-m-d', $cotizacion->fecha_hora_descargue_cargue);
                     
                     if ($fechaHora) {
-                        $diasES = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
-                        $mesesES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-                                   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-                        
-                        $fechaCargue = $diasES[$fechaHora->format('N') - 1] . ' ' . 
-                                     $fechaHora->format('d') . ' de ' . 
-                                     $mesesES[$fechaHora->format('m') - 1] . ' de ' . 
-                                     $fechaHora->format('Y');
+                        $fechaCargue = $this->formatFechaCargueNatural($fechaHora);
                         
                         if ($fechaHora->format('H') != '00' || $fechaHora->format('i') != '00') {
                             $hora = (int)$fechaHora->format('H');
@@ -266,8 +278,12 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                 'group_cotization_id' => $cotizacion->group_cotization_id,
                 'driver_id' => $driverData['id'],
                 'llamada_id' => $llamada->id_llamada,
+                'identificador_unico' => $conductor?->identificador_unico,
                 // Datos del conductor
                 'driver_name' => $driverData['nombre'],
+                'telefono_conductor' => $driverData['telefono'],
+                'telefono_llamado' => $llamada->numero_destino,
+                'telefono_llamado_normalizado' => self::normalizePhoneForComparison($llamada->numero_destino),
                 'placa' => $driverData['placa'],
                 'tipo_vehiculo' => $conductor?->tipo_vehiculo ?? $cotizacion->vehiculo_requerido ?? 'No especificado',
                 // Datos de la orden/cotización
@@ -304,6 +320,19 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
             ]);
 
             if ($response['success']) {
+                $callMetadata = is_array($llamada->call_metadata) ? $llamada->call_metadata : [];
+                $callMetadata['conductor_context'] = [
+                    'conductor_id' => $conductor?->id,
+                    'identificador_unico' => $conductor?->identificador_unico,
+                    'cotizacion_id' => $cotizacion->id,
+                    'numero_destino' => $llamada->numero_destino,
+                    'telefono_conductor' => $conductor?->telefono ?? $driverData['telefono'],
+                    'telefono_normalizado' => self::normalizePhoneForComparison($llamada->numero_destino),
+                    'conversation_id' => $response['conversation_id'] ?? null,
+                    'sip_call_id' => $response['sip_call_id'] ?? null,
+                    'sent_at' => now()->toISOString(),
+                ];
+
                 // IMPORTANTE: Mantener queue_status='processing' porque la llamada está ACTIVA
                 // en la línea SIP de Zadarma. Solo el webhook de finalización (onCallCompleted/onCallFailed)
                 // la cambiará a 'completed'/'failed', liberando el slot para la siguiente llamada.
@@ -314,11 +343,35 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'elevenlabs_conversation_id' => $response['conversation_id'] ?? null,
                     'elevenlabs_sip_call_id' => $response['sip_call_id'] ?? null,
                     'call_initiated_at' => now(),
+                    'call_metadata' => $callMetadata,
                 ]);
 
                 // Actualizar también llamadas_conductores con el conversation_id Y datos de la orden
                 if ($conductor) {
+                    $datosAdicionales = is_array($conductor->datos_adicionales)
+                        ? $conductor->datos_adicionales
+                        : (json_decode((string) $conductor->datos_adicionales, true) ?: []);
+                    $datosAdicionales['ultima_llamada'] = [
+                        'llamada_id' => $llamada->id_llamada,
+                        'numero_destino' => $llamada->numero_destino,
+                        'telefono_normalizado' => self::normalizePhoneForComparison($llamada->numero_destino),
+                        'elevenlabs_conversation_id' => $response['conversation_id'] ?? null,
+                        'elevenlabs_sip_call_id' => $response['sip_call_id'] ?? null,
+                        'fecha_llamada' => now()->toDateTimeString(),
+                    ];
+                    $datosAdicionales['cotizacion_llamada'] = [
+                        'valor_declarado' => $cotizacion->valor_declarado,
+                        'tipo_carroceria' => $cotizacion->tipo_carroceria,
+                        'consolidado_expreso' => $cotizacion->consolidado_expreso,
+                        'regimen_nacionalizado' => $cotizacion->regimen_nacionalizado,
+                        'temperatura_mercancia' => $cotizacion->temperatura_mercancia,
+                        'dimensiones_exactas' => $cotizacion->dimensiones_exactas,
+                        'client_id' => $cotizacion->client_id,
+                        'user_id' => $cotizacion->user_id,
+                    ];
+
                     $conductor->update([
+                        'call_id' => $response['conversation_id'] ?? null,
                         'elevenlabs_conversation_id' => $response['conversation_id'] ?? null,
                         'elevenlabs_sip_call_id' => $response['sip_call_id'] ?? null,
                         'estado_llamada' => 'en_progreso',
@@ -333,18 +386,7 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                         'mercancia' => $cotizacion->tipo_mercancia,
                         'peso_carga' => $cotizacion->peso_mercancia,
                         'empaque' => $cotizacion->tipo_embajale,
-                        // Datos adicionales en JSON
-                        'datos_adicionales' => json_encode([
-                            'valor_declarado' => $cotizacion->valor_declarado,
-                            'tipo_carroceria' => $cotizacion->tipo_carroceria,
-                            'consolidado_expreso' => $cotizacion->consolidado_expreso,
-                            'regimen_nacionalizado' => $cotizacion->regimen_nacionalizado,
-                            'temperatura_mercancia' => $cotizacion->temperatura_mercancia,
-                            'dimensiones_exactas' => $cotizacion->dimensiones_exactas,
-                            'fecha_llamada' => now()->toDateTimeString(),
-                            'client_id' => $cotizacion->client_id,
-                            'user_id' => $cotizacion->user_id,
-                        ])
+                        'datos_adicionales' => $datosAdicionales,
                     ]);
 
                     Log::info('✅ Conversation ID y datos de orden guardados en llamadas_conductores', [
@@ -406,6 +448,65 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                 }
             }
         }
+    }
+
+    private static function normalizePhoneForComparison($phoneNumber): string
+    {
+        $digits = preg_replace('/[^0-9]/', '', (string) $phoneNumber);
+
+        if (strlen($digits) > 10 && str_starts_with($digits, '57')) {
+            $digits = substr($digits, 2);
+        }
+
+        return $digits;
+    }
+
+    private static function phonesMatch($left, $right): bool
+    {
+        $leftClean = self::normalizePhoneForComparison($left);
+        $rightClean = self::normalizePhoneForComparison($right);
+
+        if ($leftClean === '' || $rightClean === '') {
+            return false;
+        }
+
+        if ($leftClean === $rightClean) {
+            return true;
+        }
+
+        if (strlen($leftClean) >= 10 && strlen($rightClean) >= 10) {
+            return substr($leftClean, -10) === substr($rightClean, -10);
+        }
+
+        return str_ends_with($leftClean, $rightClean) || str_ends_with($rightClean, $leftClean);
+    }
+
+    private function formatFechaCargueNatural(\DateTimeInterface $fechaHora): string
+    {
+        $fecha = \Carbon\Carbon::instance($fechaHora)->timezone('America/Bogota')->startOfDay();
+        $hoy = \Carbon\Carbon::now('America/Bogota')->startOfDay();
+        $delta = $hoy->diffInDays($fecha, false);
+        $dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+        $meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+        $nombreDia = $dias[$fecha->dayOfWeekIso - 1];
+
+        if ($delta === 0) {
+            return 'hoy';
+        }
+
+        if ($delta === 1) {
+            return 'mañana';
+        }
+
+        if ($delta >= 2) {
+            return "el próximo {$nombreDia} {$fecha->day}";
+        }
+
+        if ($delta === -1) {
+            return 'ayer';
+        }
+
+        return "el {$nombreDia} {$fecha->day} de {$meses[$fecha->month - 1]}";
     }
 
     public function failed(?\Throwable $exception): void

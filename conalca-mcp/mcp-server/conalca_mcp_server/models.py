@@ -221,6 +221,21 @@ class VehicleOwnerHolderDriverModel(BaseModel):
         from_attributes = True
         populate_by_name = True
 
+class ClientModel(BaseModel):
+    """Modelo para la tabla clients"""
+    id: Optional[int] = None
+    cliente: Optional[str] = None
+    documento: Optional[str] = None
+    telefono: Optional[str] = None
+    direccion: Optional[str] = None
+    ciudad: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class DatabaseRepository:
     """Repositorio para interactuar con las tablas de la base de datos"""
     
@@ -973,8 +988,10 @@ class DatabaseRepository:
         if call_id:
             update_fields.append("call_id = %s")
             params.append(call_id)
+            update_fields.append("elevenlabs_conversation_id = %s")
+            params.append(call_id)
         
-        if respuesta_llamada:
+        if respuesta_llamada is not None:
             update_fields.append("respuesta_llamada = %s")
             params.append(respuesta_llamada)
             
@@ -994,74 +1011,230 @@ class DatabaseRepository:
         affected_rows = await self.db.execute_update(query, tuple(params))
         return affected_rows > 0
     
+    def _resolve_driver_decision_state(self, decision: Any) -> Dict[str, Any]:
+        """Convierte decisiones del agente a estados de BD consistentes."""
+        if isinstance(decision, bool) or isinstance(decision, int):
+            decision_int = int(decision)
+            return {
+                'normalized_decision': 'accepted' if decision_int == 1 else 'rejected',
+                'response_status': 'accepted' if decision_int == 1 else 'rejected',
+                'estado_llamada': 'completada' if decision_int == 1 else 'fallida',
+                'respuesta_llamada': 'accepted' if decision_int == 1 else 'rejected',
+                'historical_decision': decision_int,
+                'call_status': 'completed',
+                'llamada_status': 'aceptada' if decision_int == 1 else 'rechazada',
+                'queue_status': 'completed',
+                'failure_reason': None,
+                'requires_retry': False,
+            }
+
+        normalized = str(decision).strip().lower()
+        if normalized in {'1', 'si', 'sí', 'accept', 'accepted', 'acepta', 'aceptado'}:
+            return self._resolve_driver_decision_state(1)
+        if normalized in {'0', 'no', 'reject', 'rejected', 'rechaza', 'rechazado'}:
+            return self._resolve_driver_decision_state(0)
+        if normalized in {'retry', 'reintento', 'reintentar', 'voicemail', 'buzon', 'buzón', 'no_answer'}:
+            return {
+                'normalized_decision': 'retry',
+                'response_status': 'pending',
+                'estado_llamada': 'pendiente',
+                'respuesta_llamada': '',
+                'historical_decision': None,
+                'call_status': 'no_answer',
+                'llamada_status': 'finalizada',
+                'queue_status': 'failed',
+                'failure_reason': 'Reintento solicitado por agente',
+                'requires_retry': True,
+            }
+        if normalized in {'maybe', 'tal_vez', 'talvez', 'indeciso', 'supervisor', 'pending', 'seguimiento'}:
+            return {
+                'normalized_decision': 'maybe',
+                'response_status': 'pending',
+                'estado_llamada': 'completada',
+                'respuesta_llamada': 'pending_supervisor',
+                'historical_decision': None,
+                'call_status': 'completed',
+                'llamada_status': 'finalizada',
+                'queue_status': 'completed',
+                'failure_reason': None,
+                'requires_retry': False,
+            }
+
+        return self._resolve_driver_decision_state(0)
+
     async def save_driver_decision_new(
-        self, 
+        self,
         identificador_unico: str,
         conversation_id: str,
-        decision: int,
-        notas: str = None
+        decision: Any,
+        notas: str = None,
     ) -> bool:
-        """
-        Guarda la decisión del conductor en:
-        1. llamadas_conductores (actualiza estado y respuesta)
-        2. call_driver_decisions (registro histórico)
-        
-        decision: 1 = acepta, 0 = rechaza
-        
-        También actualiza el estado_llamada según la decisión:
-        - Si acepta (1): estado_llamada = 'completada'
-        - Si rechaza (0): estado_llamada = 'fallida'
-        """
+        """Guarda la decision final del conductor y sincroniza tablas de llamadas."""
         try:
-            # Primero, obtener la información del conductor
+            decision_state = self._resolve_driver_decision_state(decision)
+
             query_conductor = """
-            SELECT id, cotizacion_id 
-            FROM llamadas_conductores 
+            SELECT id, cotizacion_id, nombre_conductor, telefono, placa, tipo_vehiculo,
+                   clase_vehiculo, chofer_id_local, elevenlabs_conversation_id, call_id
+            FROM llamadas_conductores
             WHERE identificador_unico = %s AND deleted_at IS NULL
             """
             result = await self.db.execute_query(query_conductor, (identificador_unico,))
-            
+
             if not result:
-                logger.error(f"No se encontró conductor con identificador_unico: {identificador_unico}")
+                logger.error(f"No se encontro conductor con identificador_unico: {identificador_unico}")
                 return False
-            
+
             conductor_data = result[0]
             conductor_id = conductor_data['id']
             cotizacion_id = conductor_data.get('cotizacion_id')
-            
-            # 1. Actualizar llamadas_conductores
-            estado_nuevo = 'completada' if decision == 1 else 'fallida'
-            respuesta = 'Acepta el viaje' if decision == 1 else 'Rechaza el viaje'
-            
+
+            llamada_data = None
+            if conversation_id and conversation_id != 'N/A':
+                llamada_result = await self.db.execute_query(
+                    """
+                    SELECT id_llamada, conductor_id, chofer_id, numero_destino, elevenlabs_conversation_id
+                    FROM llamadas
+                    WHERE elevenlabs_conversation_id = %s
+                    LIMIT 1
+                    """,
+                    (conversation_id,),
+                )
+                llamada_data = llamada_result[0] if llamada_result else None
+
+                conversation_matches = conversation_id in {
+                    conductor_data.get('elevenlabs_conversation_id'),
+                    conductor_data.get('call_id'),
+                    llamada_data.get('elevenlabs_conversation_id') if llamada_data else None,
+                }
+                llamada_matches = bool(llamada_data and llamada_data.get('conductor_id') == conductor_id)
+
+                if not (conversation_matches or llamada_matches):
+                    logger.error(
+                        "No se guarda decision: conversation_id no coincide con identificador_unico",
+                        extra={
+                            'identificador_unico': identificador_unico,
+                            'conversation_id': conversation_id,
+                            'conductor_id': conductor_id,
+                            'llamada_conductor_id': llamada_data.get('conductor_id') if llamada_data else None,
+                        },
+                    )
+                    return False
+
             update_success = await self.update_estado_llamada_conductor(
                 identificador_unico=identificador_unico,
-                estado_llamada=estado_nuevo,
+                estado_llamada=decision_state['estado_llamada'],
                 call_id=conversation_id,
-                respuesta_llamada=respuesta,
-                notas=notas
+                respuesta_llamada=decision_state['respuesta_llamada'],
+                notas=notas,
             )
-            
+
             if not update_success:
                 logger.error(f"Error actualizando llamadas_conductores para {identificador_unico}")
                 return False
-            
-            # 2. Guardar en call_driver_decisions (registro histórico)
-            if cotizacion_id:
-                query_decision = """
-                INSERT INTO call_driver_decisions 
-                (cotizacion_model_id, driver_id, decision, created_at, updated_at)
-                VALUES (%s, %s, %s, NOW(), NOW())
-                """
-                await self.db.execute_query(
-                    query_decision, 
-                    (cotizacion_id, conductor_id, decision)
+
+            if conversation_id and conversation_id != 'N/A':
+                await self.db.execute_update(
+                    """
+                    UPDATE llamadas
+                    SET status = %s,
+                        call_status = %s,
+                        queue_status = %s,
+                        failure_reason = %s,
+                        call_completed_at = NOW(),
+                        processing_completed_at = NOW(),
+                        call_notes = %s,
+                        updated_at = NOW()
+                    WHERE elevenlabs_conversation_id = %s
+                    """,
+                    (
+                        decision_state['llamada_status'],
+                        decision_state['call_status'],
+                        decision_state['queue_status'],
+                        decision_state['failure_reason'],
+                        notas,
+                        conversation_id,
+                    ),
                 )
-                logger.info(f"Decisión guardada en call_driver_decisions: cotizacion_id={cotizacion_id}, driver_id={conductor_id}, decision={decision}")
-            else:
-                logger.warning(f"No se guardó en call_driver_decisions: cotizacion_id es NULL para {identificador_unico}")
-            
+
+            if not decision_state['requires_retry'] and cotizacion_id and conversation_id and conversation_id != 'N/A':
+                resolved_driver_id = conductor_data.get('chofer_id_local') or conductor_id
+                try:
+                    existing_response = await self.db.execute_query(
+                        "SELECT id FROM driver_call_responses WHERE elevenlabs_conversation_id = %s LIMIT 1",
+                        (conversation_id,),
+                    )
+
+                    if existing_response:
+                        await self.db.execute_update(
+                            """
+                            UPDATE driver_call_responses
+                            SET cotizacion_id = %s, driver_id = %s, driver_name = %s,
+                                driver_phone = %s, vehicle_type = %s, vehicle_plate = %s,
+                                call_status = %s, response_status = %s, response_time = NOW(),
+                                notes = %s, updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (
+                                cotizacion_id,
+                                resolved_driver_id,
+                                conductor_data.get('nombre_conductor') or 'Conductor',
+                                conductor_data.get('telefono'),
+                                conductor_data.get('tipo_vehiculo') or conductor_data.get('clase_vehiculo'),
+                                conductor_data.get('placa'),
+                                decision_state['call_status'],
+                                decision_state['response_status'],
+                                notas,
+                                existing_response[0]['id'],
+                            ),
+                        )
+                    else:
+                        await self.db.execute_update(
+                            """
+                            INSERT INTO driver_call_responses
+                            (cotizacion_id, driver_id, driver_name, driver_phone, vehicle_type, vehicle_plate,
+                             call_status, response_status, response_time, elevenlabs_conversation_id, notes, created_at, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, NOW(), NOW())
+                            """,
+                            (
+                                cotizacion_id,
+                                resolved_driver_id,
+                                conductor_data.get('nombre_conductor') or 'Conductor',
+                                conductor_data.get('telefono'),
+                                conductor_data.get('tipo_vehiculo') or conductor_data.get('clase_vehiculo'),
+                                conductor_data.get('placa'),
+                                decision_state['call_status'],
+                                decision_state['response_status'],
+                                conversation_id,
+                                notas,
+                            ),
+                        )
+                except Exception as response_error:
+                    logger.warning(f"No se pudo sincronizar driver_call_responses: {response_error}")
+
+            historical_decision = decision_state['historical_decision']
+            if cotizacion_id and historical_decision is not None:
+                try:
+                    resolved_driver_id = conductor_data.get('chofer_id_local') or conductor_id
+                    await self.db.execute_update(
+                        """
+                        INSERT INTO call_driver_decisions
+                        (cotizacion_model_id, driver_id, decision, created_at, updated_at)
+                        VALUES (%s, %s, %s, NOW(), NOW())
+                        """,
+                        (cotizacion_id, resolved_driver_id, historical_decision),
+                    )
+                    logger.info(
+                        f"Decision guardada en call_driver_decisions: cotizacion_id={cotizacion_id}, "
+                        f"driver_id={resolved_driver_id}, decision={historical_decision}"
+                    )
+                except Exception as history_error:
+                    logger.warning(f"No se pudo guardar call_driver_decisions para {identificador_unico}: {history_error}")
+            elif not cotizacion_id:
+                logger.warning(f"No se guardo en call_driver_decisions: cotizacion_id es NULL para {identificador_unico}")
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error en save_driver_decision_new: {e}")
             return False
@@ -1127,6 +1300,107 @@ class DatabaseRepository:
         except Exception as e:
             logger.error(f"Error buscando ciudad '{city_name}': {e}")
             return None
+     
+    # Métodos para tabla clients
+    async def get_client_by_id(self, client_id: int) -> Optional[ClientModel]:
+        """Obtiene un cliente por ID"""
+        query = "SELECT * FROM clients WHERE id = %s"
+        results = await self.db.execute_query(query, (client_id,))
+        return ClientModel(**results[0]) if results else None
+    
+    async def get_client_by_document(self, documento: str) -> Optional[ClientModel]:
+        """Busca cliente por número de documento/NIT"""
+        query = "SELECT * FROM clients WHERE documento = %s"
+        results = await self.db.execute_query(query, (documento,))
+        return ClientModel(**results[0]) if results else None
+    
+    async def search_clients_by_name(self, name: str) -> List[ClientModel]:
+        """Busca clientes por nombre (coincidencia parcial)"""
+        query = """
+        SELECT * FROM clients 
+        WHERE cliente LIKE %s 
+        ORDER BY cliente ASC 
+        LIMIT 10
+        """
+        results = await self.db.execute_query(query, (f"%{name}%",))
+        return [ClientModel(**row) for row in results]
+    
+    async def create_client(self, client_data: Dict[str, Any]) -> Optional[ClientModel]:
+        """Crea un nuevo cliente"""
+        query = """
+        INSERT INTO clients (cliente, documento, telefono, direccion, ciudad, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+        """
+        params = (
+            client_data.get('cliente'),
+            client_data.get('documento'),
+            client_data.get('telefono'),
+            client_data.get('direccion'),
+            client_data.get('ciudad')
+        )
+        affected_rows = await self.db.execute_update(query, params)
+        if affected_rows > 0:
+            result = await self.db.execute_query("SELECT LAST_INSERT_ID() as id")
+            new_id = result[0]['id']
+            return await self.get_client_by_id(new_id)
+        return None
+    
+    async def search_or_create_client(self, nit: str = None, name: str = None, 
+                                      additional_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Busca cliente por NIT o nombre. Si no existe, ofrece crearlo.
+        Retorna dict con 'found' (bool), 'client' (ClientModel|None), 'prompt' (str|None)
+        """
+        client = None
+        
+        # Buscar por NIT
+        if nit:
+            client = await self.get_client_by_document(nit)
+        
+        # Buscar por nombre si no se encontró por NIT
+        if not client and name:
+            clients = await self.search_clients_by_name(name)
+            if clients:
+                client = clients[0]
+        
+        if client:
+            return {
+                'found': True,
+                'client': client,
+                'message': f"Cliente encontrado: {client.cliente} (NIT: {client.documento})"
+            }
+        
+        # Cliente no encontrado
+        if additional_data and additional_data.get('create_if_not_exists'):
+            # Crear automáticamente
+            create_data = {
+                'cliente': name or additional_data.get('cliente'),
+                'documento': nit or additional_data.get('documento'),
+                'telefono': additional_data.get('telefono'),
+                'direccion': additional_data.get('direccion'),
+                'ciudad': additional_data.get('ciudad')
+            }
+            new_client = await self.create_client(create_data)
+            if new_client:
+                return {
+                    'found': True,
+                    'client': new_client,
+                    'message': f"Cliente creado exitosamente: {new_client.cliente} (NIT: {new_client.documento}). Continuando con el proceso de cotización..."
+                }
+        
+        return {
+            'found': False,
+            'client': None,
+            'message': 'Cliente no encontrado en el sistema.',
+            'prompt': '¿Desea crear un nuevo cliente? Por favor proporcione: nombre/razón social (requerido), NIT/documento (requerido), teléfono, dirección y ciudad.',
+            'required_fields': {
+                'cliente': 'Nombre o razón social (requerido)',
+                'documento': 'NIT o documento (requerido)',
+                'telefono': 'Teléfono (opcional)',
+                'direccion': 'Dirección (opcional)',
+                'ciudad': 'Ciudad (opcional)'
+            }
+        }
 
 # Instancia global del repositorio
 repository = DatabaseRepository()

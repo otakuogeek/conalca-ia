@@ -100,11 +100,15 @@ AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
     │ seguro                  │ NO         │ "No"             │ Requiere seguro ("Si"/"No")  │
     │ temperatura_mercancia   │ NO         │ "No aplica"      │ Temperatura requerida        │
     │ registro_fotografico    │ NO         │ null             │ Requiere registro fotográfico│
-    │ fecha                   │ NO         │ null             │ Fecha de la ruta (YYYY-MM-DD)│    │ fecha_cargue            │ NO         │ null             │ Fecha Y hora de cargue       │
+    │ fecha                   │ NO         │ null             │ Fecha de la ruta (YYYY-MM-DD)│
+    │ fecha_cargue            │ NO         │ null             │ Fecha y hora de cargue       │
     │                         │            │                  │ Formato: "YYYY-MM-DD HH:MM"  │
     │                         │            │                  │ Ejemplo: "2026-04-28 08:00"  │
+    │                         │            │                  │ Se guarda en:                │
+    │                         │            │                  │ cotizacion_models.           │
+    │                         │            │                  │   fecha_hora_descargue_cargue│
     │                         │            │                  │ La IA informa al conductor   │
-    │                         │            │                  │ fecha y hora si la pregunta  │    │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
+    │                         │            │                  │ fecha y hora si lo pregunta  │    │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
     └─────────────────────────┴────────────┴──────────────────┴──────────────────────────────┘
 
   NOTA IMPORTANTE sobre "valor" vs "flete":
@@ -254,6 +258,60 @@ curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
       }
     ]
   }'
+
+--- EJEMPLO 5.5: Con FECHA_CARGUE (Para validación de MCP) ---
+
+IMPORTANTE: La fecha_cargue permite que el MCP valide que la información
+            de cargue está disponible para el conductor.
+
+Formato obligatorio: "YYYY-MM-DD HH:MM" (24 horas)
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_name": "CONALCA SAS",
+    "reference": "TEST-CON-FECHA-001",
+    "operation_type": "DISTRIBUCION",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000,
+        "peso_mercancia": "15000",
+        "cantidad": "20",
+        "cantidad_vh": "1",
+        "tipo_carroceria": "FURGON",
+        "vehiculo_requerido": "TRACTOCAMION",
+        "valor_declarado": "150000000",
+        "tipo_mercancia": "TEXTILES",
+        "tipo_producto": "TELAS IMPORTADAS",
+        "tipo_embajale": "CONTENEDOR",
+        "seguro": "Si",
+        "fecha_cargue": "2026-04-29 14:30"
+      }
+    ]
+  }'
+
+RESPUESTA (con fecha_cargue registrada):
+{
+  "success": true,
+  "message": "Grupo de cotización #1924 creado exitosamente",
+  "data": {
+    "group_id": 1924,
+    "cotizaciones": [
+      {
+        "id": 2572,
+        "grupo": 1924,
+        "ruta": "BOGOTA → MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000,
+        "fecha_cargue": "2026-04-29 14:30"   ← FECHA_CARGUE CONFIRMADA
+      }
+    ]
+  }
+}
 
 --- EJEMPLO 6: Crear múltiples grupos de una vez ---
 

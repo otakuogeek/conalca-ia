@@ -447,6 +447,42 @@ export default function TransitGroupModal({ open, onClose, group }) {
                           label="Reg. fotog."
                           value={cot.registro_fotografico}
                         />
+                        <Field
+                          small
+                          label="Fecha de cargue"
+                          multiline
+                          value={(() => {
+                            const raw =
+                              cot.fecha_hora_descargue_cargue ||
+                              cot.fecha_cargue ||
+                              null;
+                            if (!raw) return '--';
+                            const d = new Date(
+                              String(raw).replace(' ', 'T')
+                            );
+                            if (Number.isNaN(d.getTime())) return String(raw);
+                            const fecha = d.toLocaleDateString('es-CO', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                            });
+                            const horas = d.getHours();
+                            const minutos = d.getMinutes();
+                            if (horas === 0 && minutos === 0) return fecha;
+                            const hora = d.toLocaleTimeString('es-CO', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true,
+                            });
+                            return (
+                              <span className="flex flex-col leading-tight">
+                                <span>{fecha}</span>
+                                <span className="text-xs font-semibold opacity-80">{hora}</span>
+                              </span>
+                            );
+                          })()}
+                          highlight="orange"
+                        />
                       </div>
                     </div>
                   ))}
@@ -508,11 +544,12 @@ export default function TransitGroupModal({ open, onClose, group }) {
 }
 
 /* ───────────────── helper pequeño para no repetir markup ───────────────── */
-function Field({ label, value, small, highlight }) {
+function Field({ label, value, small, highlight, multiline }) {
   const classes = [
     'px-3 py-2 rounded-lg border shadow-sm',
     highlight === 'green' && 'bg-green-50 text-green-700 font-bold border-green-300',
     highlight === 'blue' && 'bg-blue-50 text-blue-700 font-bold border-blue-300',
+    highlight === 'orange' && 'bg-orange-50 text-orange-700 font-bold border-orange-300',
     !highlight && 'bg-gray-50 text-gray-800 border-gray-200'
   ]
     .filter(Boolean)
@@ -521,7 +558,7 @@ function Field({ label, value, small, highlight }) {
   return (
     <div className={`flex flex-col gap-2 ${small ? 'text-sm' : 'text-sm'}`}>
       <span className="font-bold text-gray-600 text-xs uppercase tracking-wide">{label}:</span>
-      <span className={`flex-1 truncate ${classes} min-h-[2.2rem] flex items-center transition-colors hover:shadow-md`} title={value}>
+      <span className={`flex-1 ${multiline ? '' : 'truncate'} ${classes} min-h-[2.2rem] flex items-center transition-colors hover:shadow-md`} title={typeof value === 'string' ? value : undefined}>
         {value || '--'}
       </span>
     </div>

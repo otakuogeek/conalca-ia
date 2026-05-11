@@ -377,6 +377,7 @@ Route::get('clients/search-by-document', [App\Http\Controllers\Api\ClientSearchC
 // Búsqueda de clientes para React (nueva implementación)
 Route::get('clients/search-react', [App\Http\Controllers\Api\ClientController::class, 'search'])->name('api.clients.search-react');
 Route::get('clients/by-document', [App\Http\Controllers\Api\ClientController::class, 'getByDocument'])->name('api.clients.by-document');
+Route::post('clients', [App\Http\Controllers\Api\ClientController::class, 'store'])->name('api.clients.store');
 
 // Goals API - Rutas protegidas
 Route::middleware(['auth:sanctum'])->group(function () {

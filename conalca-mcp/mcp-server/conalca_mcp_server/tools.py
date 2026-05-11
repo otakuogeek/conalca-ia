@@ -1374,3 +1374,82 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                 
             except Exception as e:
                 return [TextContent(type="text", text=f"Error al actualizar conversation_id: {str(e)}")]
+        
+        @self.server.tool(
+            name="search_or_create_client",
+            description="Busca un cliente por NIT/documento o nombre. Si no existe, ofrece crearlo automáticamente para continuar con el proceso de cotización."
+        )
+        async def search_or_create_client(
+            nit: Optional[str] = None,
+            name: Optional[str] = None,
+            create_if_not_exists: bool = False,
+            cliente: Optional[str] = None,
+            documento: Optional[str] = None,
+            telefono: Optional[str] = None,
+            direccion: Optional[str] = None,
+            ciudad: Optional[str] = None
+        ) -> List[TextContent]:
+            """
+            Busca cliente por NIT o nombre. Si no existe y create_if_not_exists=True,
+            crea el cliente y retorna los datos para continuar con la cotización.
+            """
+            try:
+                additional_data = {}
+                if create_if_not_exists:
+                    additional_data = {
+                        'create_if_not_exists': True,
+                        'cliente': cliente,
+                        'documento': documento,
+                        'telefono': telefono,
+                        'direccion': direccion,
+                        'ciudad': ciudad
+                    }
+                
+                result = await self.repository.search_or_create_client(
+                    nit=nit,
+                    name=name,
+                    additional_data=additional_data if create_if_not_exists else None
+                )
+                
+                if result['found']:
+                    client = result['client']
+                    return [TextContent(
+                        type="text",
+                        text=json.dumps({
+                            'success': True,
+                            'found': True,
+                            'client_id': client.id,
+                            'cliente': client.cliente,
+                            'documento': client.documento,
+                            'telefono': client.telefono,
+                            'ciudad': client.ciudad,
+                            'message': result['message']
+                        }, indent=2, ensure_ascii=False)
+                    )]
+                else:
+                    if create_if_not_exists:
+                        return [TextContent(
+                            type="text",
+                            text=json.dumps({
+                                'success': False,
+                                'found': False,
+                                'message': 'No se pudo crear el cliente. Verifique los datos proporcionados.',
+                                'error': 'Faltan datos requeridos (cliente y documento) o el documento ya existe.'
+                            }, indent=2, ensure_ascii=False)
+                        )]
+                    else:
+                        return [TextContent(
+                            type="text",
+                            text=json.dumps({
+                                'success': False,
+                                'found': False,
+                                'message': result['message'],
+                                'prompt': result['prompt'],
+                                'required_fields': result['required_fields'],
+                                'next_step': 'Para crear el cliente, llame nuevamente esta función con create_if_not_exists=True y proporcione: cliente (requerido), documento (requerido), telefono, direccion, ciudad.'
+                            }, indent=2, ensure_ascii=False)
+                        )]
+                        
+            except Exception as e:
+                logger.error(f"Error en search_or_create_client: {e}")
+                return [TextContent(type="text", text=f"Error al buscar/crear cliente: {str(e)}")]
