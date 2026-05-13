@@ -14,18 +14,48 @@ class GroupQuotationController extends Controller
         try {
             $user = auth()->user();
 
-            // Si es super admin, no filtramos
-            $query = GroupCotization::with([
-                'client',
-                'cotizaciones.client',
-                'cotizaciones.pricing',
-                'cotizaciones.solicitud',
-                'cotizaciones.notes.author'
-            ])
-            ->orderBy('created_at', 'desc');
+            // Si no hay usuario autenticado, devolver vacío
+            if (!$user) {
+                return response()->json(['data' => []]);
+            }
+
+            // Columnas necesarias del grupo (solo las que usa el frontend)
+            $groupColumns = [
+                'id', 'user_id', 'client_id', 'status', 'type',
+                'operation_type', 'reference', 'created_at', 'updated_at'
+            ];
+
+            // Columnas necesarias de cotizaciones (tarjeta + detalle modal)
+            $cotizacionColumns = [
+                'id', 'group_cotization_id', 'client_id', 'pricing_id',
+                'ciudad_origen', 'ciudad_destino', 'valor', 'flete', 'porcentaje',
+                'decision_cliente', 'created_at',
+                // Campos de carga (usados por TransitGroupModal)
+                'tipo_mercancia', 'tipo_producto', 'peso_mercancia',
+                'dimensiones_exactas', 'cantidad', 'cantidad_vh',
+                'tipo_embajale', 'tipo_carroceria', 'vehiculo_requerido',
+                'valor_declarado', 'seguro', 'temperatura_mercancia',
+                'registro_fotografico', 'fecha_hora_descargue_cargue',
+            ];
+
+            $query = GroupCotization::select($groupColumns)
+                ->with([
+                    'client:id,cliente,documento,telefono,direccion,ciudad,vigenciacamara,fecha',
+                    'cotizaciones' => function ($q) use ($cotizacionColumns) {
+                        $q->select($cotizacionColumns);
+                    },
+                    'cotizaciones.pricing:id,price',
+                    'cotizaciones.solicitud:id,cotizacion_model_id,estado,silogtran_status',
+                ])
+                // Excluir borradores vacíos (sin cotizaciones)
+                ->where(function ($q) {
+                    $q->where('status', '!=', 'borrador')
+                      ->orWhereHas('cotizaciones');
+                })
+                ->orderBy('created_at', 'desc');
             
             // Si NO es super admin, solo le mostramos sus grupos
-            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA') {
+            if (!$user->hasRole('SUPER ADMIN') && !$user->hasRole('GERENTE DE CUENTA')) {
                 $query->where('user_id', $user->id);
             }
 
@@ -47,6 +77,12 @@ class GroupQuotationController extends Controller
                         
                         return 0;
                     });
+
+                    // Ocultar producto_label del JSON (no se usa en la tarjeta)
+                    $group->cotizaciones->each(function ($cot) {
+                        $cot->makeHidden('producto_label');
+                    });
+
                     return $group;
                 });
 
@@ -113,7 +149,7 @@ class GroupQuotationController extends Controller
             $group = GroupCotization::findOrFail($id);
 
             // Verificar permisos: solo el creador del grupo o admin puede eliminarlo
-            if ($user->role != 'SUPER ADMIN' && $user->role != 'GERENTE DE CUENTA' && $group->user_id != $user->id) {
+            if (!$user->hasRole('SUPER ADMIN') && !$user->hasRole('GERENTE DE CUENTA') && $group->user_id != $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No tienes permisos para eliminar este grupo de cotización.'

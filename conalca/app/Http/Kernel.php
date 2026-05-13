@@ -38,6 +38,7 @@ class Kernel extends HttpKernel
             \App\Http\Middleware\VerifyCsrfToken::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \App\Http\Middleware\DatabaseConnectionMiddleware::class,
+            // \App\Http\Middleware\MockUserForLocal::class, // ❌ DESACTIVADO - Causaba auto-login no deseado
         ],
 
         'api' => [

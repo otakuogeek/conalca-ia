@@ -89,7 +89,10 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       }
       
       const result = await response.json();
-      console.log('Datos recuperados:', result);
+      console.log('📦 Datos recuperados del backend:', result);
+      console.log('🔍 Grupo completo:', result.data?.group);
+      console.log('🔍 extracted_data recibido:', result.data?.group?.extracted_data);
+      console.log('🔍 Tipo de extracted_data:', typeof result.data?.group?.extracted_data);
       
       if (result.success) {
         const { client, group, cotizaciones } = result.data;
@@ -118,8 +121,59 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           threadId: group.openai_thread_id
         }));
         
-        // Si hay cotizaciones, restaurar los datos de rutas
-        if (cotizaciones && cotizaciones.length > 0) {
+        // 🚛 PRIORIDAD: Si hay extracted_data en formato multi-ruta, usarlo
+        const extractedData = group.extracted_data;
+        console.log('🔍 Verificando extracted_data:', {
+          exists: !!extractedData,
+          type: typeof extractedData,
+          isMultiRuta: extractedData?.multi_ruta,
+          hasRutas: !!extractedData?.rutas,
+          isArray: Array.isArray(extractedData?.rutas),
+          rutasLength: extractedData?.rutas?.length,
+          cotizacionesLength: cotizaciones?.length || 0
+        });
+        
+        const isMultiRuta = extractedData?.multi_ruta && extractedData?.rutas && Array.isArray(extractedData.rutas);
+        
+        if (isMultiRuta && extractedData.rutas.length > 0) {
+          console.log('🚛 Formato multi-ruta detectado en recovered data:', extractedData.rutas.length, 'rutas');
+          console.log('📦 Rutas crudas:', extractedData.rutas);
+          
+          const routeData = extractedData.rutas.map((ruta, idx) => {
+            const mappedRoute = {
+              ruta_id: ruta.ruta_id || `temp_ruta_${idx + 1}`, // 🆔 Preservar ID único
+              ruta_numero: idx + 1,
+              ciudadOrigen: ruta.origen,
+              ciudad_origen: ruta.origen,
+              ciudadDestino: ruta.destino,
+              ciudad_destino: ruta.destino,
+              pesoMercancia: ruta.peso || ruta.peso_kg,
+              peso_mercancia: ruta.peso || ruta.peso_kg,
+              peso_kg: ruta.peso || ruta.peso_kg,
+              cantidadMercancia: ruta.cantidad,
+              cantidad: ruta.cantidad,
+              producto: ruta.producto,
+              tipo_producto: ruta.producto,
+              empaque: ruta.empaque,
+              tipo_embajale: ruta.empaque,
+              valorMercancia: ruta.valor,
+              valor_declarado: ruta.valor,
+              vehiculo: ruta.vehiculo,
+              vehiculo_requerido: ruta.vehiculo,
+              claseVehiculo: ruta.vehiculo,
+              contenedor: ruta.contenedor,
+              tipo_contenedor: ruta.contenedor
+            };
+            console.log(`📍 Ruta ${idx + 1} mapeada:`, mappedRoute);
+            return mappedRoute;
+          });
+          
+          setQuoteData(routeData);
+          console.log('✅ Rutas cargadas desde extracted_data:', routeData);
+          setShowChatModal(true);
+          setStep(1);
+        } else if (cotizaciones && cotizaciones.length > 0) {
+          // Si hay cotizaciones en BD, usar esas
           const routeData = cotizaciones.map(cot => ({
             ciudad_origen: cot.ciudad_origen,
             ciudad_destino: cot.ciudad_destino,
@@ -143,21 +197,25 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           }));
           
           setQuoteData(routeData);
+          console.log('✅ Rutas cargadas desde cotizacion_models:', routeData);
           
           // Si ya hay precios configurados, ir directo al modal de precios
           const hasPricings = cotizaciones.some(cot => cot.pricing_id);
           if (hasPricings) {
             console.log('Cotización con precios encontrada, abriendo PricingModal');
+            // NO limpiar mensajes - mantener conversación
             setShowPricingModal(true);
             setStep(2);
           } else {
             console.log('Cotización sin precios, abriendo ChatModal');
+            // NO limpiar mensajes - continuar conversación existente
             setShowChatModal(true);
             setStep(1);
           }
         } else {
           // No hay rutas, empezar desde el chat
           console.log('Grupo sin rutas, abriendo ChatModal');
+          // NO limpiar mensajes - puede ser continuación de conversación
           setShowChatModal(true);
           setStep(1);
         }
@@ -208,11 +266,20 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
   // Handlers
   const handleOpenModal = (modalType, data = {}) => {
+    const { isNewConversation = false } = data; // Flag para saber si es nueva conversación
+    
     switch (modalType) {
       case 'create':
         setShowCreateModal(true);
         break;
       case 'chat':
+        // Solo limpiar mensajes si es una conversación NUEVA
+        if (isNewConversation) {
+          console.log('🧽 Nueva conversación - Limpiando mensajes de chat anterior');
+          setMessages([]);
+        } else {
+          console.log('💬 Continuando conversación - Manteniendo mensajes');
+        }
         setShowChatModal(true);
         setStep(1);
         break;
@@ -234,13 +301,21 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     }
   };
 
-  const handleCloseModal = (modalType) => {
+  const handleCloseModal = (modalType, options = {}) => {
+    const { clearMessages = false } = options; // Solo limpiar si se indica explícitamente
+    
     switch (modalType) {
       case 'create':
         setShowCreateModal(false);
         // No resetear datos al cerrar modal de creación, solo al cancelar completamente
         break;
       case 'chat':
+        if (clearMessages) {
+          console.log('🧹 Limpiando mensajes al cerrar ChatModal');
+          setMessages([]); // Limpiar solo si se pide explícitamente
+        } else {
+          console.log('💬 Cerrando ChatModal SIN limpiar mensajes (continúa flujo)');
+        }
         setShowChatModal(false);
         break;
       case 'editRoutes':
@@ -393,6 +468,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   };
 
   const handleCancelCreate = async () => {
+    // Al cancelar, limpiar mensajes explícitamente
     handleCloseModal('create');
     await resetCreateFlow();
   };
@@ -402,6 +478,13 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
     
     try {
       setLoading(true);
+      
+      // Verificar que el cliente tenga un ID válido
+      if (!data.clientId) {
+        alert('Por favor, seleccione un cliente válido o créelo en el módulo de clientes.');
+        setLoading(false);
+        return;
+      }
       
       // Crear grupo de cotización con parámetros automáticos
       const response = await fetch('/api/chat/quote/create-group', {
@@ -419,6 +502,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
           operation_type: data.operationType, // Convertir de camelCase a snake_case
           type_business: data.typeBusiness,    // Convertir de camelCase a snake_case
           cargo_type: data.cargoType,          // Convertir de camelCase a snake_case
+          load_type: data.loadType,              // Tipo de carga: suelta o contenerizada
           candado_satelital: data.candadoSatelital, // Convertir de camelCase a snake_case
           jen_set: data.jenSet,                     // Convertir de camelCase a snake_case
           combustible: data.combustible,
@@ -439,9 +523,10 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
       if (result.success) {
         console.log('QuoteIndex - Grupo borrador creado:', result.data);
         
-        // Actualizar clientData CON groupId
+        // Actualizar clientData CON groupId y clientId actualizado
         const updatedClientData = {
           ...data,
+          clientId: data.clientId, // Mantener el clientId original
           groupId: result.data.group_id,
           threadId: result.data.thread_id,
         };
@@ -471,7 +556,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
         
         // Continuar al siguiente paso
         handleCloseModal('create');
-        handleOpenModal('chat');
+        handleOpenModal('chat', { isNewConversation: true }); // Nueva conversación
       } else {
         console.error('Error creando grupo:', result.error);
         
@@ -514,26 +599,36 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
   // };
 
   const handleNextStep = (stepNumber) => {
+    console.log('🔄 handleNextStep llamado con step:', stepNumber);
+    
     switch (stepNumber) {
       case 1:
         // From Chat to EditRoutes
+        console.log('📋 Cerrando ChatModal y abriendo EditRoutesModal');
         handleCloseModal('chat');
         handleOpenModal('editRoutes');
+        setStep(2);
         break;
       case 2:
         // From EditRoutes to Pricing
+        console.log('💰 Cerrando EditRoutesModal y abriendo PricingModal');
         handleCloseModal('editRoutes');
         handleOpenModal('pricing');
+        setStep(3);
         break;
       case 3:
         // From Pricing to Preview
+        console.log('👁️ Cerrando PricingModal y abriendo PreviewModal');
         handleCloseModal('pricing');
         handleOpenModal('preview');
+        setStep(4);
         break;
       case 4:
         // From Preview to Success
+        console.log('✅ Cerrando PreviewModal y abriendo SuccessModal');
         handleCloseModal('preview');
         handleOpenModal('success');
+        setStep(5);
         break;
       default:
         break;
@@ -593,7 +688,7 @@ const QuoteIndex = ({ initialQuotes = [], user = {} }) => {
 
       {showChatModal && (
         <ChatModal
-          onClose={() => handleCloseModal('chat')}
+          onClose={() => handleCloseModal('chat', { clearMessages: true })} // Limpiar al cancelar
           onNext={() => handleNextStep(1)}
           messages={messages}
           inputMessage={inputMessage}

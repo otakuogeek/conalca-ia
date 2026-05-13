@@ -240,7 +240,7 @@ const DriversModal = ({ isOpen, onClose, cotizacionId, cotizacionData }) => {
                       <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Conductor</th>
                       <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Placa</th>
                       <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Teléfono</th>
-                      <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Vehículo</th>
+                      <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Vehículo Arcángel</th>
                       <th className="text-left px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Carrocería</th>
                       <th className="text-center px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Capacidad</th>
                       <th className="text-center px-4 py-3 text-sm font-semibold text-gray-700 border-b-2 border-purple-200">Score</th>
@@ -268,8 +268,17 @@ const DriversModal = ({ isOpen, onClose, cotizacionId, cotizacionData }) => {
                         <td className="px-4 py-3 text-sm text-gray-700">
                           {driver.clase_vehiculo}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">
-                          {driver.carroceria}
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-medium text-blue-700">
+                              {driver.tipo_vehiculo_arcangel || driver.clase_vehiculo || 'N/A'}
+                            </span>
+                            {driver.clase_vehiculo && driver.tipo_vehiculo_arcangel && driver.clase_vehiculo !== driver.tipo_vehiculo_arcangel && (
+                              <span className="text-xs text-gray-500">
+                                Local: {driver.clase_vehiculo}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-700 text-center">
                           {driver.capacidad ? `${driver.capacidad} kg` : '-'}

@@ -9,7 +9,7 @@ echo "🚀 Iniciando Conalca MCP Server - ElevenLabs Compatible v2.1"
 echo "============================================================"
 
 # Configuración
-SERVER_DIR="/root/conalca-mcp/mcp-server"
+SERVER_DIR="/home/ubuntu/conalca/conalca-mcp/mcp-server"
 VENV_PATH="$SERVER_DIR/venv"
 PORT=18840
 ROOT_PATH="/mcp"

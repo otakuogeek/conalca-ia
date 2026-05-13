@@ -8,22 +8,33 @@ use Illuminate\Support\Facades\Cache;
 
 class ArcangelService
 {
+    protected const FALLBACK_CIUDADES = [
+        'ARMENIA', 'BARRANCABERMEJA', 'BARRANQUILLA', 'BOGOTA', 'BUCARAMANGA',
+        'BUENAVENTURA', 'BUGA', 'CALI', 'CARTAGENA', 'CARTAGO', 'CHIQUINQUIRA',
+        'CUCUTA', 'DOSQUEBRADAS', 'DUITAMA', 'ENVIGADO', 'FLORENCIA', 'FUNZA',
+        'GIRARDOT', 'IBAGUE', 'IPIALES', 'ITAGUI', 'LETICIA', 'MANIZALES',
+        'MEDELLIN', 'MONTERIA', 'NEIVA', 'PALMIRA', 'PASTO', 'PEREIRA',
+        'POPAYAN', 'RIOHACHA', 'RIONEGRO', 'SABANETA', 'SANTA MARTA',
+        'SINCELEJO', 'SOACHA', 'TUNJA', 'VALLEDUPAR', 'VILLAVICENCIO', 'YUMBO',
+    ];
+
     protected string $baseUrl;
     protected ?string $apiKey;
+    protected string $mode;
     protected int $timeout;
     protected int $retryTimes;
     protected int $retryDelay;
 
     public function __construct()
     {
-        $mode = config('arcangel.mode', 'production');
+        $this->mode = config('arcangel.mode', 'production');
         
         // Seleccionar URL y API Key según el modo
-        $this->baseUrl = $mode === 'development' 
+        $this->baseUrl = $this->mode === 'development' 
             ? config('arcangel.base_url_dev')
             : config('arcangel.base_url');
             
-        $this->apiKey = $mode === 'development'
+        $this->apiKey = $this->mode === 'development'
             ? config('arcangel.api_key_dev', '')
             : config('arcangel.api_key', '');
             
@@ -31,8 +42,8 @@ class ArcangelService
         $this->retryTimes = config('arcangel.retry_times', 3);
         $this->retryDelay = config('arcangel.retry_delay', 100);
 
-        Log::info('ArcangelService initialized', [
-            'mode' => $mode,
+        Log::debug('ArcangelService initialized', [
+            'mode' => $this->mode,
             'base_url' => $this->baseUrl,
         ]);
     }
@@ -48,7 +59,7 @@ class ArcangelService
      */
     public function get(string $endpoint, array $params = [], bool $useCache = false, int $cacheTTL = 60): array
     {
-        $cacheKey = "arcangel_{$endpoint}_" . md5(json_encode($params));
+        $cacheKey = "arcangel_{$this->mode}_{$endpoint}_" . md5(json_encode($params));
 
         if ($useCache && Cache::has($cacheKey)) {
             Log::info('ArcangelService: Cache hit', ['endpoint' => $endpoint]);
@@ -276,7 +287,7 @@ class ArcangelService
     public function getInfo(): array
     {
         return [
-            'mode' => config('arcangel.mode'),
+            'mode' => $this->mode,
             'base_url' => $this->baseUrl,
             'timeout' => $this->timeout,
             'retry_times' => $this->retryTimes,
@@ -305,7 +316,7 @@ class ArcangelService
                 'X-API-KEY' => $this->apiKey,
             ];
 
-            $response = Http::timeout($this->timeout)
+            $response = Http::timeout(max($this->timeout, 45))
                 ->retry($this->retryTimes, $this->retryDelay)
                 ->withHeaders($headers)
                 ->post($this->baseUrl . 'GenerateToken/');
@@ -313,9 +324,10 @@ class ArcangelService
             $data = $this->handleResponse($response, 'GenerateToken');
 
             // Cachear el token por 55 minutos (5 min antes de expirar)
+            // La clave incluye el modo para evitar cruce entre prod/dev
             if (isset($data['token'])) {
-                Cache::put('arcangel_auth_token', $data['token'], now()->addMinutes(55));
-                Cache::put('arcangel_token_expires_at', $data['expires_at'] ?? null, now()->addMinutes(55));
+                Cache::put("arcangel_auth_token_{$this->mode}", $data['token'], now()->addMinutes(55));
+                Cache::put("arcangel_token_expires_at_{$this->mode}", $data['expires_at'] ?? null, now()->addMinutes(55));
                 
                 Log::info('ArcangelService: Token generado y cacheado exitosamente', [
                     'expires_at' => $data['expires_at'] ?? 'N/A',
@@ -343,7 +355,7 @@ class ArcangelService
      */
     public function getToken(): string
     {
-        $token = Cache::get('arcangel_auth_token');
+        $token = Cache::get("arcangel_auth_token_{$this->mode}");
 
         if (!$token) {
             $data = $this->generateToken();
@@ -361,9 +373,10 @@ class ArcangelService
      * @return array
      * @throws \Exception
      */
-    public function getCiudades(bool $useCache = true, int $cacheTTL = 60): array
+    public function getCiudades(bool $useCache = false, int $cacheTTL = 60): array
     {
-        $cacheKey = 'arcangel_ciudades';
+        $cacheKey = "arcangel_ciudades_{$this->mode}";
+        $staleCacheKey = "arcangel_ciudades_stale_{$this->mode}";
 
         if ($useCache && Cache::has($cacheKey)) {
             Log::info('ArcangelService: Ciudades desde caché');
@@ -373,7 +386,7 @@ class ArcangelService
         try {
             $token = $this->getToken();
 
-            $response = Http::timeout($this->timeout)
+            $response = Http::timeout(max($this->timeout, 45))
                 ->retry($this->retryTimes, $this->retryDelay)
                 ->withHeaders($this->getHeaders(true, $token))
                 ->get($this->baseUrl . 'getCiudadesNombres/');
@@ -387,6 +400,8 @@ class ArcangelService
                 Cache::put($cacheKey, $ciudades, now()->addMinutes($cacheTTL));
             }
 
+            Cache::put($staleCacheKey, $ciudades, now()->addDays(7));
+
             Log::info('ArcangelService: Ciudades obtenidas', [
                 'total' => count($ciudades),
             ]);
@@ -397,7 +412,13 @@ class ArcangelService
                 'error' => $e->getMessage(),
             ]);
 
-            throw $e;
+            if (Cache::has($staleCacheKey)) {
+                Log::warning('ArcangelService: Usando caché stale de ciudades por timeout/fallo');
+                return Cache::get($staleCacheKey);
+            }
+
+            Log::warning('ArcangelService: Usando lista fallback local de ciudades');
+            return self::FALLBACK_CIUDADES;
         }
     }
 
@@ -413,7 +434,8 @@ class ArcangelService
      */
     public function getVehiculosCercanos(string $ciudad, bool $useCache = false, int $cacheTTL = 5): array
     {
-        $cacheKey = 'arcangel_vehiculos_' . md5(strtoupper($ciudad));
+        $cacheKey = "arcangel_vehiculos_{$this->mode}_" . md5(strtoupper($ciudad));
+        $staleCacheKey = $cacheKey . '_stale';
 
         if ($useCache && Cache::has($cacheKey)) {
             Log::info('ArcangelService: Vehículos desde caché', ['ciudad' => $ciudad]);
@@ -430,7 +452,7 @@ class ArcangelService
                 ],
             ];
 
-            $response = Http::timeout($this->timeout)
+            $response = Http::timeout(max($this->timeout, 45))
                 ->retry($this->retryTimes, $this->retryDelay)
                 ->withHeaders($this->getHeaders(true, $token))
                 ->withBody(json_encode($body), 'application/json')
@@ -449,8 +471,19 @@ class ArcangelService
                 'ciudad' => strtoupper($ciudad),
             ];
 
-            if ($useCache && !empty($vehiculos)) {
-                Cache::put($cacheKey, $result, now()->addMinutes($cacheTTL));
+            try {
+                if ($useCache && !empty($vehiculos)) {
+                    Cache::put($cacheKey, $result, now()->addMinutes($cacheTTL));
+                }
+
+                if (!empty($vehiculos)) {
+                    Cache::put($staleCacheKey, $result, now()->addDays(2));
+                }
+            } catch (\Exception $cacheEx) {
+                Log::warning('ArcangelService: Error escribiendo caché (no crítico)', [
+                    'ciudad' => $ciudad,
+                    'error' => $cacheEx->getMessage(),
+                ]);
             }
 
             Log::info('ArcangelService: Vehículos cercanos obtenidos', [
@@ -465,7 +498,19 @@ class ArcangelService
                 'error' => $e->getMessage(),
             ]);
 
-            throw $e;
+            if (Cache::has($staleCacheKey)) {
+                Log::warning('ArcangelService: Usando caché stale de vehículos por timeout/fallo', [
+                    'ciudad' => $ciudad,
+                ]);
+                return Cache::get($staleCacheKey);
+            }
+
+            return [
+                'vehiculos' => [],
+                'total_vehiculos' => 0,
+                'ciudad' => strtoupper($ciudad),
+                'fallback' => true,
+            ];
         }
     }
 
@@ -485,7 +530,7 @@ class ArcangelService
         string|array|null $clases = null,
         ?int $minScore = null,
         ?int $limit = null,
-        bool $useCache = true,
+        bool $useCache = false,
         int $cacheTTL = 30
     ): array {
         try {
@@ -559,7 +604,7 @@ class ArcangelService
      * @param int $cacheTTL
      * @return array
      */
-    public function getClasesDisponibles(string $ciudad, bool $useCache = true, int $cacheTTL = 60): array
+    public function getClasesDisponibles(string $ciudad, bool $useCache = false, int $cacheTTL = 60): array
     {
         try {
             $result = $this->getVehiculosCercanos($ciudad, $useCache, $cacheTTL);

@@ -314,7 +314,8 @@
                             </a>
                         </div>
                         {{-- Solicitudes --}}
-                        <!-- <div>
+                        @if(auth()->user()->hasAnyRole(['PRICING','SUPER ADMIN','ASISTENTE COMERCIAL','GERENTE DE CUENTA','SAC','JEFE COMERCIAL']))
+                        <div>
                             <a href="{{ route('requests.show') }}"
                                 class="nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                 text-base font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
@@ -332,7 +333,8 @@
                                       :class="sidebarCollapsed ? 'sidebar-text-hidden' : 'sidebar-text'"
                                       x-show="!sidebarCollapsed"> Solicitudes </span>
                             </a>
-                        </div> -->
+                        </div>
+                        @endif
                         {{-- cotizaciones --}}
                         <div>
                             <a href="{{ route('quotes.react-test') }}"
@@ -440,30 +442,50 @@
                         </div>
                         
                         {{-- analisis --}}
-                        <div>
-                            <a href="{{ route('analysis.show') }}"
-                                class="nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                        <div x-data="{ openAnalysis: false }">
+                            <button @click="openAnalysis = !openAnalysis"
+                                class="nav-link flex items-center justify-between w-full p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
                                 text-base font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32]"
                                 role="button" aria-haspopup="true" data-button="analizys">
-                                <span aria-hidden="true">
-                                    <svg width="19" height="19" viewBox="0 0 19 19" fill="currentColor"
-                                        xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-                                        <rect width="19" height="19" fill="url(#pattern0)"
-                                            fill-opacity="0.5" />
-                                        <defs>
-                                            <pattern id="pattern0" patternContentUnits="objectBoundingBox"
-                                                width="1" height="1">
-                                                <use xlink:href="#image0_87_510" transform="scale(0.0078125)" />
-                                            </pattern>
-                                            <image id="image0_87_510" width="128" height="128"
-                                                xlink:href="data:image/png;base64,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" />
-                                        </defs>
+                                <div class="flex items-center">
+                                    <span aria-hidden="true">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                        </svg>
+                                    </span>
+                                    <span class="ml-2 text-sm sidebar-text" 
+                                          :class="sidebarCollapsed ? 'sidebar-text-hidden' : 'sidebar-text'"
+                                          x-show="!sidebarCollapsed"> Análisis </span>
+                                </div>
+                                <svg x-show="!sidebarCollapsed" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform" :class="openAnalysis ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+                            <div x-show="openAnalysis" x-collapse class="ml-6 mt-1 space-y-1">
+                                <a href="{{ route('analysis.show') }}"
+                                    class="flex items-center p-2 text-sm text-[#898989] rounded-md hover:bg-[#FBEBE2] hover:text-[#FF7C32] transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                                     </svg>
-                                </span>
-                                <span class="ml-2 text-sm sidebar-text" 
-                                      :class="sidebarCollapsed ? 'sidebar-text-hidden' : 'sidebar-text'"
-                                      x-show="!sidebarCollapsed"> Análisis </span>
-                            </a>
+                                    <span x-show="!sidebarCollapsed">Rutas de Transporte</span>
+                                </a>
+                                <a href="{{ route('analysis.calls') }}"
+                                    class="flex items-center p-2 text-sm text-[#898989] rounded-md hover:bg-[#FBEBE2] hover:text-[#FF7C32] transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                                    </svg>
+                                    <span x-show="!sidebarCollapsed">Llamadas ElevenLabs</span>
+                                </a>
+                            </div>
+                            <div>
+                                <a href="{{ route('auditoria.llamadas') }}"
+                                    class="flex items-center p-2 text-sm text-[#898989] rounded-md hover:bg-[#FBEBE2] hover:text-[#FF7C32] transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                                    </svg>
+                                    <span x-show="!sidebarCollapsed">Auditoría Llamadas</span>
+                                </a>
+                            </div>
                         </div>
 
                         {{-- pricing --}}
@@ -492,6 +514,8 @@
                             auth()->user()->hasRole('SUPER ADMIN') ||
                             auth()->user()->hasRole('JEFE COMERCIAL') ||
                             auth()->user()->hasRole('GERENTE DE CUENTA') ||
+                            auth()->user()->hasRole('ASISTENTE COMERCIAL') ||
+                            auth()->user()->hasRole('PRICING') ||
                             auth()->user()->hasRole('SAC')
                         )
                             <div x-data="{ open: false }">
@@ -607,6 +631,26 @@
                                         </a>
                                     @endif
 
+                                    {{-- Tara --}}
+                                    @if (
+                                        auth()->user()->hasRole('SUPER ADMIN') ||
+                                        auth()->user()->hasRole('JEFE COMERCIAL') ||
+                                        auth()->user()->hasRole('SAC')
+                                    )
+                                        <a href="{{ route('tara-settings.index') }}"
+                                            class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                                            text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
+                                            role="button" aria-haspopup="true" data-button="tara-settings">
+                                            <span aria-hidden="true">
+                                                {{-- Ícono de contenedor/cubo --}}
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Tara </span>
+                                        </a>
+                                    @endif
+
                                     {{-- Vehículos --}}
                                     @if (
                                         auth()->user()->hasRole('SUPER ADMIN') ||
@@ -625,6 +669,19 @@
                                             <span class="ml-2 text-sm"> Vehículos </span>
                                         </a>
                                     @endif
+
+                                    {{-- Esquema de Seguridad --}}
+                                    <a href="{{ route('security-schema.index') }}"
+                                        class="submenu-item nav-link flex items-center p-2 text-[#898989] transition-colors rounded-md dark:text-[#898989] hover:bg-[#FBEBE2] dark:hover:bg-[#FBEBE2]
+                                        text-sm font-medium leading-normal hover:text-[#FF7C32] dark:hover:text-[#FF7C32] group"
+                                        role="button" aria-haspopup="true" data-button="security-schema">
+                                        <span aria-hidden="true">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                            </svg>
+                                        </span>
+                                        <span class="ml-2 text-sm"> Esquema de Seguridad </span>
+                                    </a>
                                 </div>
                             </div>
                         @endif
@@ -655,6 +712,50 @@
                             </div>
                         @endif
                     </nav>
+
+                    <div id="serverMetricsWidget"
+                        x-show="!sidebarCollapsed"
+                        x-transition
+                        data-metrics-url="{{ route('server.metrics') }}"
+                        class="mx-3 mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+                        aria-label="Uso actual del servidor">
+                        <div class="mb-2 flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <p class="text-[11px] font-bold uppercase leading-none text-[#2E2C34]">Servidor</p>
+                                <p id="serverMetricsUpdated" class="mt-1 truncate text-[10px] leading-none text-[#898989]">Cargando</p>
+                            </div>
+                            <div class="flex items-center gap-1 rounded-full bg-[#FBEBE2] px-2 py-1 text-[10px] font-bold text-[#FF7C32]">
+                                <span id="serverMetricsDot" class="h-1.5 w-1.5 rounded-full bg-[#FF7C32]"></span>
+                                <span id="serverMetricsStatus">En vivo</span>
+                            </div>
+                        </div>
+
+                        <div class="h-20 w-full">
+                            <canvas id="serverMetricsChart" height="80"></canvas>
+                        </div>
+
+                        <div class="mt-2 space-y-2 text-[11px] font-medium text-[#898989]">
+                            <div>
+                                <div class="mb-1 flex items-center justify-between gap-2">
+                                    <span>CPU</span>
+                                    <span id="serverCpuValue" class="font-bold text-[#2E2C34]">--%</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                                    <div id="serverCpuBar" class="h-full rounded-full bg-[#FF7C32] transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="mb-1 flex items-center justify-between gap-2">
+                                    <span>RAM</span>
+                                    <span id="serverRamValue" class="font-bold text-[#2E2C34]">--%</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                                    <div id="serverRamBar" class="h-full rounded-full bg-[#2563EB] transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                                <p id="serverRamDetail" class="mt-1 truncate text-[10px] text-[#898989]">--</p>
+                            </div>
+                        </div>
+                    </div>
 
                 </div>
             </aside>
@@ -1026,6 +1127,8 @@
                                 auth()->user()->hasRole('SUPER ADMIN') ||
                                 auth()->user()->hasRole('JEFE COMERCIAL') ||
                                 auth()->user()->hasRole('GERENTE DE CUENTA') ||
+                                auth()->user()->hasRole('ASISTENTE COMERCIAL') ||
+                                auth()->user()->hasRole('PRICING') ||
                                 auth()->user()->hasRole('SAC')
                             )
                                 <div x-data="{ isActive: false, open: false }">
@@ -1136,6 +1239,36 @@
                                                 <span class="ml-2 text-sm"> Panel de Porcentajes </span>
                                             </a>
                                         @endif
+
+                                        {{-- Tara --}}
+                                        @if (
+                                            auth()->user()->hasRole('SUPER ADMIN') ||
+                                            auth()->user()->hasRole('JEFE COMERCIAL') ||
+                                            auth()->user()->hasRole('SAC')
+                                        )
+                                            <a href="{{ route('tara-settings.index') }}"
+                                                class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                                role="button" aria-haspopup="true">
+                                                <span aria-hidden="true">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                                    </svg>
+                                                </span>
+                                                <span class="ml-2 text-sm"> Tara </span>
+                                            </a>
+                                        @endif
+
+                                        {{-- Esquema de Seguridad --}}
+                                        <a href="{{ route('security-schema.index') }}"
+                                            class="flex items-center p-2 font-medium text-[#202020] transition-colors rounded-md hover:bg-[#FBEBE2]"
+                                            role="button" aria-haspopup="true">
+                                            <span aria-hidden="true">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                                </svg>
+                                            </span>
+                                            <span class="ml-2 text-sm"> Esquema de Seguridad </span>
+                                        </a>
                                     </div>
                                 </div>
                             @endif
@@ -1633,6 +1766,7 @@
 
     @livewireScripts
     {{-- Alpine.js ya está incluido en Livewire, no necesitamos cargarlo manualmente --}}
+    @vite('resources/js/sidebar-server-metrics.js')
 
     <script>
         const setup = () => {

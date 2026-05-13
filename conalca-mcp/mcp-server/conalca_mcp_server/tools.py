@@ -1038,18 +1038,25 @@ CAMPOS ESTÁTICOS INCLUIDOS:
         async def get_conductores_filtrados(cotizacion_id: int, estado_llamada: Optional[str] = None) -> List[TextContent]:
             """Obtiene conductores filtrados por cotización"""
             try:
-                # Construir query base
+                # Construir query base CON JOIN a cotizacion_models para obtener fecha de cargue
                 query = """
                 SELECT 
-                    id, identificador_unico, cotizacion_id, group_cotization_id,
-                    nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
-                    peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
-                    disponible, score, estado_llamada, call_id, fecha_llamada,
-                    mercancia, peso_carga, empaque,
-                    created_at, updated_at
-                FROM llamadas_conductores
-                WHERE cotizacion_id = %s
-                    AND deleted_at IS NULL
+                    lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                    lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                    lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                    lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.fecha_llamada,
+                    lc.mercancia, lc.peso_carga, lc.empaque,
+                    lc.created_at, lc.updated_at,
+                    cm.ciudad_origen as cot_ciudad_origen,
+                    cm.ciudad_destino as cot_ciudad_destino,
+                    cm.fecha_hora_descargue_cargue as fecha_cargue,
+                    cm.peso_mercancia as cot_peso_mercancia,
+                    cm.tipo_producto as cot_tipo_producto,
+                    cm.vehiculo_requerido as cot_vehiculo_requerido
+                FROM llamadas_conductores lc
+                LEFT JOIN cotizacion_models cm ON lc.cotizacion_id = cm.id
+                WHERE lc.cotizacion_id = %s
+                    AND lc.deleted_at IS NULL
                 """
                 params = [cotizacion_id]
                 
@@ -1064,6 +1071,16 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                 
                 conductores = []
                 for row in results:
+                    # Formatear fecha de cargue si existe
+                    fecha_cargue = None
+                    if row['fecha_cargue']:
+                        try:
+                            fecha_dt = row['fecha_cargue']
+                            # Formato legible: "27 de abril de 2026"
+                            fecha_cargue = fecha_dt.strftime('%d de %B de %Y') if fecha_dt else None
+                        except:
+                            fecha_cargue = str(row['fecha_cargue']) if row['fecha_cargue'] else None
+                    
                     conductores.append({
                         "id": row['id'],
                         "identificador_unico": row['identificador_unico'],
@@ -1087,7 +1104,16 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                         "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
                         "empaque": row['empaque'],
                         "created_at": str(row['created_at']) if row['created_at'] else None,
-                        "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                        "updated_at": str(row['updated_at']) if row['updated_at'] else None,
+                        # Datos de la cotización asociados
+                        "info_cotizacion": {
+                            "fecha_cargue": fecha_cargue,
+                            "origen": row['cot_ciudad_origen'],
+                            "destino": row['cot_ciudad_destino'],
+                            "peso": row['cot_peso_mercancia'],
+                            "producto": row['cot_tipo_producto'],
+                            "vehiculo": row['cot_vehiculo_requerido']
+                        } if row['fecha_cargue'] or row['cot_ciudad_origen'] else None
                     })
                 
                 return [TextContent(
@@ -1348,3 +1374,82 @@ CAMPOS ESTÁTICOS INCLUIDOS:
                 
             except Exception as e:
                 return [TextContent(type="text", text=f"Error al actualizar conversation_id: {str(e)}")]
+        
+        @self.server.tool(
+            name="search_or_create_client",
+            description="Busca un cliente por NIT/documento o nombre. Si no existe, ofrece crearlo automáticamente para continuar con el proceso de cotización."
+        )
+        async def search_or_create_client(
+            nit: Optional[str] = None,
+            name: Optional[str] = None,
+            create_if_not_exists: bool = False,
+            cliente: Optional[str] = None,
+            documento: Optional[str] = None,
+            telefono: Optional[str] = None,
+            direccion: Optional[str] = None,
+            ciudad: Optional[str] = None
+        ) -> List[TextContent]:
+            """
+            Busca cliente por NIT o nombre. Si no existe y create_if_not_exists=True,
+            crea el cliente y retorna los datos para continuar con la cotización.
+            """
+            try:
+                additional_data = {}
+                if create_if_not_exists:
+                    additional_data = {
+                        'create_if_not_exists': True,
+                        'cliente': cliente,
+                        'documento': documento,
+                        'telefono': telefono,
+                        'direccion': direccion,
+                        'ciudad': ciudad
+                    }
+                
+                result = await self.repository.search_or_create_client(
+                    nit=nit,
+                    name=name,
+                    additional_data=additional_data if create_if_not_exists else None
+                )
+                
+                if result['found']:
+                    client = result['client']
+                    return [TextContent(
+                        type="text",
+                        text=json.dumps({
+                            'success': True,
+                            'found': True,
+                            'client_id': client.id,
+                            'cliente': client.cliente,
+                            'documento': client.documento,
+                            'telefono': client.telefono,
+                            'ciudad': client.ciudad,
+                            'message': result['message']
+                        }, indent=2, ensure_ascii=False)
+                    )]
+                else:
+                    if create_if_not_exists:
+                        return [TextContent(
+                            type="text",
+                            text=json.dumps({
+                                'success': False,
+                                'found': False,
+                                'message': 'No se pudo crear el cliente. Verifique los datos proporcionados.',
+                                'error': 'Faltan datos requeridos (cliente y documento) o el documento ya existe.'
+                            }, indent=2, ensure_ascii=False)
+                        )]
+                    else:
+                        return [TextContent(
+                            type="text",
+                            text=json.dumps({
+                                'success': False,
+                                'found': False,
+                                'message': result['message'],
+                                'prompt': result['prompt'],
+                                'required_fields': result['required_fields'],
+                                'next_step': 'Para crear el cliente, llame nuevamente esta función con create_if_not_exists=True y proporcione: cliente (requerido), documento (requerido), telefono, direccion, ciudad.'
+                            }, indent=2, ensure_ascii=False)
+                        )]
+                        
+            except Exception as e:
+                logger.error(f"Error en search_or_create_client: {e}")
+                return [TextContent(type="text", text=f"Error al buscar/crear cliente: {str(e)}")]

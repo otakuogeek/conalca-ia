@@ -80,10 +80,10 @@ class SilogtranTransform
             'itesoltra_nombreexportador'          => 1,
             'itesoltra_datosagenteduana'          => 1,
             'itesoltra_datosbodegaingresa'        => 1,
-            'ingresa_ciudad_codigo'               => 11001000,
+            'ingresa_ciudad_codigo'               => '11001000',
             'itesoltra_ingresatipo'               => 'IMPORTACION',
             'itesoltra_datospagoalamcenamientobodega'=> 1,
-            'pago_ciudad_codigo'                  => 11001000,
+            'pago_ciudad_codigo'                  => '11001000',
             'itesoltra_pagotipo'                  => 'IMPORTACION',
             'itesoltra_nombreimportador'          => 1,
             'itesoltra_descripcionbrevemercancia' => 1,
@@ -146,6 +146,25 @@ class SilogtranTransform
             /* Valor COP - debe ser 1 como mínimo según Silogtran */
             'itesoltra_acompanamientovalor'     => $a['itesoltra_acompanamientovalor']     ?? 1,
         ];
+    }
+    /* ------------------------------------------------------------------
+    | COSTOS
+    |------------------------------------------------------------------*/
+    public static function costos(array $items = []): array
+    {
+        if (empty($items)) {
+            return [];
+        }
+
+        return array_map(fn(array $c) => [
+            'tipvalrem_codigo'                => $c['tipvalrem_codigo']        ?? '',
+            'itesoltra_valorunitario'         => $c['valor_unitario']          ?? 0,
+            'itesoltra_valorcostounitario'    => $c['valor_costo_unitario']    ?? 0,
+            'itesoltra_facturable'            => $c['facturable']              ?? 'NO',
+            'itesoltra_observacioncosto'      => $c['observacion_costo']       ?? '',
+            'itesoltra_aplicaflete'           => $c['aplica_flete']            ?? 'NO',
+            'tercero_codigo_proveedor'        => $c['proveedor_codigo']        ?? '',
+        ], $items);
     }
     
 }

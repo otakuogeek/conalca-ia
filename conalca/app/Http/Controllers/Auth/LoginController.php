@@ -98,7 +98,18 @@ class LoginController extends Controller
 
     public function logout(Request $request)
     {
+        // Cerrar sesión de autenticación
         auth()->logout();
-        return redirect()->route('auth.login');
+        
+        // Invalidar la sesión actual
+        $request->session()->invalidate();
+        
+        // Regenerar el token CSRF
+        $request->session()->regenerateToken();
+        
+        // Limpiar todas las cookies de sesión
+        $request->session()->flush();
+        
+        return redirect()->route('auth.login')->with('message', 'Sesión cerrada exitosamente');
     }
 }

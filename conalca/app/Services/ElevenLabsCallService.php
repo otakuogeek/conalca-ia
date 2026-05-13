@@ -13,14 +13,17 @@ class ElevenLabsCallService
     private $baseUrl;
     private $agentId;
     private $agentPhoneNumberId;
+    private $twilioPhoneNumberId;
+    private $callProvider;
 
     public function __construct()
     {
         $this->apiKey = config('services.elevenlabs.api_key', env('ELEVENLABS_API_KEY'));
         $this->baseUrl = 'https://api.elevenlabs.io';
-        // Usar config() en lugar de env() para obtener la configuración correcta
         $this->agentId = config('services.elevenlabs.agent_id'); 
         $this->agentPhoneNumberId = config('services.elevenlabs.agent_phone_number_id');
+        $this->twilioPhoneNumberId = config('services.elevenlabs.twilio_phone_number_id');
+        $this->callProvider = config('services.elevenlabs.call_provider', 'zadarma');
     }
 
     /**
@@ -128,13 +131,22 @@ class ElevenLabsCallService
                 'cotizacion_id' => $llamada->id_cotizacion
             ]);
 
+            // Determinar endpoint y phone number ID según proveedor configurado
+            if ($this->callProvider === 'twilio') {
+                $endpoint = '/v1/convai/twilio/outbound-call';
+                $phoneNumberId = $this->twilioPhoneNumberId;
+            } else {
+                $endpoint = '/v1/convai/sip-trunk/outbound-call';
+                $phoneNumberId = $this->agentPhoneNumberId;
+            }
+
             // Realizar la llamada a ElevenLabs
             $response = Http::withHeaders([
                 'xi-api-key' => $this->apiKey,
                 'Content-Type' => 'application/json'
-            ])->post($this->baseUrl . '/v1/convai/sip-trunk/outbound-call', [
+            ])->post($this->baseUrl . $endpoint, [
                 'agent_id' => $this->agentId,
-                'agent_phone_number_id' => $this->agentPhoneNumberId,
+                'agent_phone_number_id' => $phoneNumberId,
                 'to_number' => $phoneNumber,
                 'conversation_initiation_client_data' => [
                     'llamada_id' => $llamada->id_llamada,
@@ -257,14 +269,34 @@ class ElevenLabsCallService
 
     /**
      * Make outbound call via SIP trunk (New ElevenLabs Conversational AI API)
+     * Supports both Zadarma (SIP Trunk) and Twilio providers
+     * 
+     * @param string $toNumber Phone number to call
+     * @param array|null $clientData Client data for conversation context
+     * @param string|null $provider Force provider: 'zadarma' or 'twilio' (null = use config default)
      */
-    public function makeDirectSipCall(string $toNumber, array $clientData = null): array
+    public function makeDirectSipCall(string $toNumber, array $clientData = null, ?string $provider = null): array
     {
+        $activeProvider = $provider ?? $this->callProvider;
+        
         try {
-            Log::info('ElevenLabs SIP Trunk: Iniciando llamada saliente', [
+            // Determine endpoint and phone number ID based on provider
+            if ($activeProvider === 'twilio') {
+                $endpoint = '/v1/convai/twilio/outbound-call';
+                $phoneNumberId = $this->twilioPhoneNumberId;
+                $providerLabel = 'Twilio';
+            } else {
+                $endpoint = '/v1/convai/sip-trunk/outbound-call';
+                $phoneNumberId = $this->agentPhoneNumberId;
+                $providerLabel = 'Zadarma SIP Trunk';
+            }
+
+            Log::info("ElevenLabs {$providerLabel}: Iniciando llamada saliente", [
                 'to_number' => $toNumber,
                 'agent_id' => $this->agentId,
-                'agent_phone_number_id' => $this->agentPhoneNumberId
+                'agent_phone_number_id' => $phoneNumberId,
+                'provider' => $activeProvider,
+                'endpoint' => $endpoint
             ]);
 
             // Validar número de teléfono
@@ -280,7 +312,7 @@ class ElevenLabsCallService
             
             $payload = [
                 'agent_id' => $this->agentId,
-                'agent_phone_number_id' => $this->agentPhoneNumberId,
+                'agent_phone_number_id' => $phoneNumberId,
                 'to_number' => $formattedNumber
             ];
 
@@ -294,15 +326,16 @@ class ElevenLabsCallService
                     'xi-api-key' => $this->apiKey,
                     'Content-Type' => 'application/json'
                 ])
-                ->post($this->baseUrl . '/v1/convai/sip-trunk/outbound-call', $payload);
+                ->post($this->baseUrl . $endpoint, $payload);
 
             if ($response->successful()) {
                 $data = $response->json();
                 
-                Log::info('ElevenLabs SIP Trunk: Llamada iniciada exitosamente', [
+                Log::info("ElevenLabs {$providerLabel}: Llamada iniciada exitosamente", [
                     'conversation_id' => $data['conversation_id'] ?? null,
                     'sip_call_id' => $data['sip_call_id'] ?? null,
-                    'to_number' => $formattedNumber
+                    'to_number' => $formattedNumber,
+                    'provider' => $activeProvider
                 ]);
 
                 return [
@@ -310,28 +343,32 @@ class ElevenLabsCallService
                     'conversation_id' => $data['conversation_id'] ?? null,
                     'sip_call_id' => $data['sip_call_id'] ?? null,
                     'message' => $data['message'] ?? 'Call initiated successfully',
-                    'to_number' => $formattedNumber
+                    'to_number' => $formattedNumber,
+                    'provider' => $activeProvider
                 ];
             } else {
                 $error = $response->json();
-                Log::error('ElevenLabs SIP Trunk: Error en llamada saliente', [
+                Log::error("ElevenLabs {$providerLabel}: Error en llamada saliente", [
                     'status' => $response->status(),
                     'error' => $error,
-                    'to_number' => $formattedNumber
+                    'to_number' => $formattedNumber,
+                    'provider' => $activeProvider
                 ]);
 
                 return [
                     'success' => false,
                     'error' => $error['detail'] ?? 'Call failed',
                     'status_code' => $response->status(),
-                    'to_number' => $formattedNumber
+                    'to_number' => $formattedNumber,
+                    'provider' => $activeProvider
                 ];
             }
 
         } catch (\Exception $e) {
-            Log::error('ElevenLabs SIP Trunk: Excepción en llamada saliente', [
+            Log::error("ElevenLabs: Excepción en llamada saliente ({$activeProvider})", [
                 'error' => $e->getMessage(),
-                'to_number' => $toNumber
+                'to_number' => $toNumber,
+                'provider' => $activeProvider
             ]);
 
             return [
@@ -377,12 +414,11 @@ class ElevenLabsCallService
     }
 
     /**
-     * Test connection to ElevenLabs SIP trunk API
+     * Test connection to ElevenLabs API
      */
     public function testSipTrunkConnection(): array
     {
         try {
-            // Test basic API connection
             $response = Http::timeout(30)
                 ->withHeaders([
                     'xi-api-key' => $this->apiKey,
@@ -390,12 +426,17 @@ class ElevenLabsCallService
                 ])
                 ->get($this->baseUrl . '/v1/voices');
 
+            $phoneNumberId = $this->callProvider === 'twilio' 
+                ? $this->twilioPhoneNumberId 
+                : $this->agentPhoneNumberId;
+
             if ($response->successful()) {
                 return [
                     'success' => true,
-                    'message' => 'Connection to ElevenLabs SIP API successful',
+                    'message' => 'Connection to ElevenLabs API successful',
                     'agent_id' => $this->agentId,
-                    'agent_phone_number_id' => $this->agentPhoneNumberId,
+                    'agent_phone_number_id' => $phoneNumberId,
+                    'call_provider' => $this->callProvider,
                     'api_responsive' => true
                 ];
             } else {
@@ -436,5 +477,23 @@ class ElevenLabsCallService
         
         // International numbers should have between 7 and 15 digits
         return strlen($digitsOnly) >= 7 && strlen($digitsOnly) <= 15;
+    }
+
+    /**
+     * Get the active call provider name
+     */
+    public function getCallProvider(): string
+    {
+        return $this->callProvider;
+    }
+
+    /**
+     * Get the active phone number ID based on current provider
+     */
+    public function getActivePhoneNumberId(): string
+    {
+        return $this->callProvider === 'twilio' 
+            ? $this->twilioPhoneNumberId 
+            : $this->agentPhoneNumberId;
     }
 }

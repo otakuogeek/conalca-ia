@@ -1,0 +1,489 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Log;
+
+/**
+ * 🔧 SERVICIO DE PREPROCESAMIENTO DE TEXTO
+ * 
+ * Normaliza y limpia el texto de entrada para mejorar la extracción de datos.
+ * Separa palabras pegadas, corrige errores comunes y estandariza el formato.
+ */
+class TextPreprocessorService
+{
+    /**
+     * Palabras clave que frecuentemente se pegan con otras palabras
+     * Ordenadas por longitud descendente para evitar conflictos
+     */
+    private static array $keywordsThatNeedSpace = [
+        // Separadores de múltiples rutas (más largos primero)
+        'adicionalmente' => ' adicionalmente ',
+        'adicional' => ' adicional ',
+        'también' => ' también ',
+        'tambien' => ' también ',
+        'además' => ' además ',
+        'ademas' => ' además ',
+        
+        // Verbos de solicitud
+        'requiero' => ' requiero ',
+        'necesito' => ' necesito ',
+        'solicito' => ' solicito ',
+        
+        // Preposiciones y conectores
+        'porunvalor' => ' por un valor ',
+        'porun' => ' por un ',
+        'porel' => ' por el ',
+        'porla' => ' por la ',
+        'deun' => ' de un ',
+        'dela' => ' de la ',
+        'delvalor' => ' del valor ',
+        'conun' => ' con un ',
+        'sinun' => ' sin un ',
+        'enun' => ' en un ',
+        'ala' => ' a la ',
+        'ael' => ' a el ',
+        
+        // Unidades y medidas
+        'toneladas' => ' toneladas ',
+        'tonelada' => ' tonelada ',
+        'kilogramos' => ' kilogramos ',
+        'kilogramo' => ' kilogramo ',
+        'millones' => ' millones ',
+        'millón' => ' millón ',
+        'millon' => ' millón ',
+        'unidades' => ' unidades ',
+        'unidad' => ' unidad ',
+        
+        // Tipos de empaque
+        'encajas' => ' en cajas ',
+        'ensacos' => ' en sacos ',
+        'enbultos' => ' en bultos ',
+        'enpallets' => ' en pallets ',
+        'enestibas' => ' en estibas ',
+        
+        // Tara
+        'sintara' => ' sin tara ',
+        'contara' => ' con tara ',
+        'incluyetara' => ' incluye tara ',
+        'noincluyetara' => ' no incluye tara ',
+        
+        // Valor declarado
+        'valordeclarado' => ' valor declarado ',
+        'valorasegurado' => ' valor asegurado ',
+        
+        // Vehículos
+        'tipovehículo' => ' tipo vehículo ',
+        'tipovehiculo' => ' tipo vehículo ',
+        'tipodevehículo' => ' tipo de vehículo ',
+        'tipodevehiculo' => ' tipo de vehículo ',
+        
+        // Cotización
+        'cotización' => ' cotización ',
+        'cotizacion' => ' cotización ',
+    ];
+
+    /**
+     * Patrones regex para separar palabras pegadas comunes
+     * Formato: [patrón => reemplazo]
+     */
+    private static array $regexPatterns = [
+        // Palabra + "por" + siguiente palabra (ej: "neumáticospor" -> "neumáticos por")
+        '/([a-záéíóúñ]{3,})(por)\s/ui' => '$1 $2 ',
+        
+        // Palabra + "de" + siguiente palabra (ej: "cajasde" -> "cajas de")
+        '/([a-záéíóúñ]{3,})(de)\s/ui' => '$1 $2 ',
+        
+        // 🔧 DESACTIVADO: Patrón peligroso que divide "origen" incorrectamente
+        // El patrón '/([a-záéíóúñ]{3,})(en)\s/ui' => '$1 $2 ' causaba "origen" → "orig en"
+        // Si se necesita separar "en", agregar casos específicos (ej: "cajsen" -> "cajas en")
+        
+        // Palabra + "con" + siguiente palabra
+        '/([a-záéíóúñ]{3,})(con)\s/ui' => '$1 $2 ',
+        
+        // Palabra + "sin" + siguiente palabra
+        '/([a-záéíóúñ]{3,})(sin)\s/ui' => '$1 $2 ',
+        
+        // Palabra + "son" + siguiente palabra (ej: "cajsson" -> "cajas son")
+        '/([a-záéíóúñ]{3,})(son)\s/ui' => '$1 $2 ',
+        
+        // Número + unidad pegada (ej: "13toneladas" -> "13 toneladas")
+        '/(\d+)(toneladas?|kg|kilos?|kilogramos?|millones?|unidades?)/ui' => '$1 $2',
+        
+        // Palabra + "adicional" (ej: "cajasadicional" -> "cajas adicional")
+        '/([a-záéíóúñ]{3,})(adicional)/ui' => '$1 $2',
+        
+        // Palabra + "también" (ej: "cajastambién" -> "cajas también")
+        '/([a-záéíóúñ]{3,})(tambi[eé]n)/ui' => '$1 $2',
+        
+        // Palabra + "requiero/necesito/solicito"
+        '/([a-záéíóúñ]{3,})(requiero|necesito|solicito)/ui' => '$1 $2',
+        
+        // "valor" + número pegado (ej: "valor30" -> "valor 30")
+        '/(valor)\s*(\d+)/ui' => '$1 $2',
+        
+        // Número + "millones" pegado sin espacio antes
+        '/(\d+)(mill[oó]n(?:es)?)/ui' => '$1 $2',
+        
+        // Cotización pegada con preposición (ej: "cotizaciónde" -> "cotización de")
+        '/(cotizaci[oó]n)(de|desde|para)/ui' => '$1 $2',
+        
+        // Preposición "a" pegada con ciudad (ej: "aBuenaventura" -> "a Buenaventura")
+        // NOTA: Solo cuando hay espacio antes y mayúscula después
+        '/\s(a)([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)/u' => ' $1 $2',
+        
+        // Ciudad pegada con preposición larga (NO incluir "a" porque causa falsos positivos como Buenaventur-a)
+        '/([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)(hacia|hasta)\s/u' => '$1 $2 ',
+    ];
+
+    /**
+     * Correcciones de errores ortográficos comunes
+     */
+    /**
+     * Abreviaciones comunes que se expanden
+     */
+    private static array $abbreviations = [
+        'emb' => 'embalaje',
+        'cant' => 'cantidad',
+        'prod' => 'producto',
+        'val' => 'valor',
+        'decl' => 'declarado',
+        'orig' => 'origen',
+        'dest' => 'destino',
+        'veh' => 'vehículo',
+        'cot' => 'cotización',
+        'pto' => 'puerto',
+        'ton' => 'toneladas',
+        'kg' => 'kilogramos',
+        'uds' => 'unidades',
+        'pza' => 'pieza',
+        'pzas' => 'piezas',
+    ];
+
+    /**
+     * Palabras que se escriben mal comúnmente (speech-to-text)
+     */
+    private static array $commonMistakes = [
+        // 🔧 FIX: Embalaje debe corregirse ANTES de eliminar "la je"
+        // "embala je" → "embalaje" PRIMERO
+        'embala je' => 'embalaje',
+        'embalage' => 'embalaje',
+        'enbalaje' => 'embalaje',
+        'embalages' => 'embalajes',
+        // 🔧 FIX BUG #530: "laje" eliminado porque causaba que "embalaje" → "emba"
+        // La palabra "laje" se eliminaba de "embalaje", dejando solo "emba"
+        // SOLUCIÓN: NO eliminar "laje" automáticamente
+        // Contenedor mal escrito
+        'contenedro' => 'contenedor',
+        'contenedo' => 'contenedor',
+        // Destino mal escrito
+        'destio' => 'destino',
+        'desitno' => 'destino',
+        // Origen mal escrito
+        'orígen' => 'origen',
+        'origén' => 'origen',
+        'origne' => 'origen',
+    ];
+
+    private static array $spellingCorrections = [
+        'toneldas' => 'toneladas',
+        'tonelaads' => 'toneladas',
+        'toneldaas' => 'toneladas',
+        'kilograos' => 'kilogramos',
+        'kiligramos' => 'kilogramos',
+        'millnes' => 'millones',
+        'milones' => 'millones',
+        'milllones' => 'millones',
+        'unidaes' => 'unidades',
+        'unidads' => 'unidades',
+        'cotizcion' => 'cotización',
+        'cotizaion' => 'cotización',
+        'cotizacin' => 'cotización',
+        'bueanventura' => 'buenaventura',
+        'buenavetnura' => 'buenaventura',
+        'cartagean' => 'cartagena',
+        'cartgena' => 'cartagena',
+        'bogta' => 'bogotá',
+        'bogotá' => 'bogotá',
+        'medellin' => 'medellín',
+        'meedllin' => 'medellín',
+        'barranquila' => 'barranquilla',
+        'barranqilla' => 'barranquilla',
+        'bucaramnaga' => 'bucaramanga',
+        'bucramanga' => 'bucaramanga',
+        'vehiculo' => 'vehículo',
+        'vehicluo' => 'vehículo',
+        'patineta' => 'patineta',
+        'dobletrqoue' => 'dobletroque',
+        'dobletroqeu' => 'dobletroque',
+        'tractocmaion' => 'tractocamión',
+        'neumaticos' => 'neumáticos',
+        'neuamticos' => 'neumáticos',
+        'plasticos' => 'plásticos',
+        'platsicos' => 'plásticos',
+    ];
+
+    /**
+     * 🚀 MÉTODO PRINCIPAL: Preprocesa el texto completo
+     * 
+     * @param string $text Texto original del usuario
+     * @return string Texto normalizado y limpio
+     */
+    public static function preprocess(string $text): string
+    {
+        $originalText = $text;
+        
+        Log::info('🔧 TextPreprocessor: Iniciando preprocesamiento', [
+            'original_length' => strlen($text),
+            'preview' => substr($text, 0, 100)
+        ]);
+
+        // 1. Normalizar espacios múltiples y saltos de línea
+        $text = self::normalizeWhitespace($text);
+        
+        // 2. Expandir abreviaciones comunes
+        $text = self::expandAbbreviations($text);
+        
+        // 3. Corregir errores comunes de speech-to-text
+        $text = self::fixCommonMistakes($text);
+        
+        // 4. Corregir errores ortográficos comunes
+        $text = self::fixSpellingErrors($text);
+        
+        // 5. Separar palabras clave pegadas (usando keywords estáticos)
+        $text = self::separateKeywords($text);
+        
+        // 6. Aplicar patrones regex para separaciones más complejas
+        $text = self::applyRegexPatterns($text);
+        
+        // 7. Normalizar espacios nuevamente después de las separaciones
+        $text = self::normalizeWhitespace($text);
+        
+        // 8. Normalizar acentos y caracteres especiales
+        $text = self::normalizeAccents($text);
+
+        $hasChanges = $text !== $originalText;
+        
+        Log::info('🔧 TextPreprocessor: Preprocesamiento completado', [
+            'has_changes' => $hasChanges,
+            'final_length' => strlen($text),
+            'preview' => substr($text, 0, 100)
+        ]);
+
+        if ($hasChanges) {
+            Log::info('📝 TextPreprocessor: Cambios realizados', [
+                'original' => substr($originalText, 0, 200),
+                'processed' => substr($text, 0, 200)
+            ]);
+        }
+
+        return $text;
+    }
+
+    /**
+     * Normaliza espacios en blanco múltiples y saltos de línea
+     */
+    private static function normalizeWhitespace(string $text): string
+    {
+        // Preservar saltos de línea pero normalizar espacios
+        $text = preg_replace('/[ \t]+/', ' ', $text);
+        
+        // Normalizar múltiples saltos de línea a uno solo
+        $text = preg_replace('/\n\s*\n/', "\n", $text);
+        
+        // Eliminar espacios al inicio y final de cada línea
+        $lines = explode("\n", $text);
+        $lines = array_map('trim', $lines);
+        $text = implode("\n", $lines);
+        
+        return trim($text);
+    }
+
+    /**
+     * Corrige errores ortográficos comunes
+     */
+    private static function fixSpellingErrors(string $text): string
+    {
+        $textLower = mb_strtolower($text);
+        
+        foreach (self::$spellingCorrections as $wrong => $correct) {
+            // Buscar la palabra incorrecta (case insensitive)
+            $pattern = '/\b' . preg_quote($wrong, '/') . '\b/ui';
+            $text = preg_replace($pattern, $correct, $text);
+        }
+        
+        return $text;
+    }
+
+    /**
+     * Expande abreviaciones comunes
+     */
+    private static function expandAbbreviations(string $text): string
+    {
+        foreach (self::$abbreviations as $abbr => $full) {
+            // Solo expandir si la abreviación es una palabra completa (no parte de otra)
+            $pattern = '/\b' . preg_quote($abbr, '/') . '\b/ui';
+            $text = preg_replace($pattern, $full, $text);
+        }
+        
+        Log::info('🔧 Abreviaciones expandidas', ['result' => substr($text, 0, 100)]);
+        
+        return $text;
+    }
+
+    /**
+     * Corrige errores comunes de speech-to-text
+     */
+    private static function fixCommonMistakes(string $text): string
+    {
+        foreach (self::$commonMistakes as $wrong => $correct) {
+            // 🔧 FIX: Agregar límites de palabra para evitar matches parciales
+            // Sin \b: "contenedo" hace match en "contenedoR" → "contenedorr" ❌
+            // Con \b: "contenedo" NO hace match en "contenedor" ✅
+            $pattern = '/\b' . preg_quote($wrong, '/') . '\b/ui';
+            $text = preg_replace($pattern, $correct, $text);
+        }
+        
+        // Limpiar espacios extra que puedan quedar
+        $text = preg_replace('/\s+/', ' ', $text);
+        
+        return trim($text);
+    }
+
+    /**
+     * Separa palabras clave que están pegadas
+     */
+    private static function separateKeywords(string $text): string
+    {
+        $textLower = mb_strtolower($text);
+        
+        // 🔧 FIX BUG #530: Palabras protegidas que NO deben separarse
+        // Estas palabras contienen substrings que podrían coincidir con keywords
+        // pero deben mantenerse intactas
+        $protectedWords = [
+            'embalaje',
+            'embalajes',
+            'embalada',
+            'embaladas',
+            'embalado',
+            'embalados',
+            'contenedor', // FIX: Prevenir "contenedor" → "contenedorr"
+            'contenedores',
+        ];
+        
+        // Marcar palabras protegidas con placeholders temporales
+        $placeholders = [];
+        foreach ($protectedWords as $i => $word) {
+            $placeholder = "___PROTECTED_{$i}___";
+            // Buscar la palabra completa (case insensitive)
+            $pattern = '/\b' . preg_quote($word, '/') . '\b/ui';
+            if (preg_match($pattern, $text, $matches)) {
+                $placeholders[$placeholder] = $matches[0]; // Guardar con mayúsculas/minúsculas originales
+                $text = preg_replace($pattern, $placeholder, $text);
+            }
+        }
+        
+        // Ordenar keywords por longitud descendente para evitar conflictos
+        $keywords = self::$keywordsThatNeedSpace;
+        uksort($keywords, function($a, $b) {
+            return strlen($b) - strlen($a);
+        });
+        
+        foreach ($keywords as $keyword => $replacement) {
+            // Solo aplicar si la palabra está pegada (sin espacios alrededor)
+            // Buscar el keyword precedido o seguido por letras
+            $pattern = '/([a-záéíóúñ])(' . preg_quote($keyword, '/') . ')([a-záéíóúñ])?/ui';
+            
+            $text = preg_replace_callback($pattern, function($matches) use ($replacement) {
+                $before = $matches[1] ?? '';
+                $after = $matches[3] ?? '';
+                return $before . $replacement . $after;
+            }, $text);
+        }
+        
+        // Restaurar palabras protegidas
+        foreach ($placeholders as $placeholder => $original) {
+            $text = str_replace($placeholder, $original, $text);
+        }
+        
+        return $text;
+    }
+
+    /**
+     * Aplica patrones regex para separaciones más complejas
+     */
+    private static function applyRegexPatterns(string $text): string
+    {
+        foreach (self::$regexPatterns as $pattern => $replacement) {
+            $text = preg_replace($pattern, $replacement, $text);
+        }
+        
+        return $text;
+    }
+
+    /**
+     * Normaliza acentos y caracteres especiales
+     */
+    private static function normalizeAccents(string $text): string
+    {
+        // Asegurar que ciertos acentos comunes estén correctos
+        $replacements = [
+            'bogota' => 'bogotá',
+            'medellin' => 'medellín',
+            'cotizacion' => 'cotización',
+            'vehiculo' => 'vehículo',
+            'tambien' => 'también',
+            'ademas' => 'además',
+            'millon' => 'millón',
+        ];
+        
+        foreach ($replacements as $without => $with) {
+            // Solo reemplazar si la palabra está en minúsculas y sin acento
+            $pattern = '/\b' . preg_quote($without, '/') . '\b/u';
+            $text = preg_replace($pattern, $with, $text);
+        }
+        
+        return $text;
+    }
+
+    /**
+     * 🎯 Método específico para detectar si el texto necesita preprocesamiento
+     * Útil para decidir si aplicar el preprocesamiento o no
+     */
+    public static function needsPreprocessing(string $text): bool
+    {
+        // Verificar si hay palabras pegadas comunes
+        $patterns = [
+            '/[a-záéíóúñ](adicional|también|además|requiero|necesito)/ui',
+            '/[a-záéíóúñ](por|de|en|con|sin)\s/ui',
+            '/\d+(toneladas?|millones?|unidades?)/ui',
+            '/(cajas|sacos|bultos)(adicional|también|por|de)/ui',
+        ];
+        
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
+     * 🔍 Método de debug para ver qué cambios se harían
+     */
+    public static function debug(string $text): array
+    {
+        $original = $text;
+        $processed = self::preprocess($text);
+        
+        return [
+            'original' => $original,
+            'processed' => $processed,
+            'has_changes' => $original !== $processed,
+            'original_length' => strlen($original),
+            'processed_length' => strlen($processed),
+            'needs_preprocessing' => self::needsPreprocessing($original),
+        ];
+    }
+}

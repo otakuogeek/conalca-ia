@@ -1,5 +1,5 @@
 // resources/js/components/CotizacionInicial/PricingModal.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import { 
@@ -9,7 +9,15 @@ import {
   fetchPercentageSettings,
   fetchVehicleCapacityGuide         
  } from '../../services/pricingService';
-import { FaSpinner, FaInfoCircle } from 'react-icons/fa';
+import { requestPricingRoute } from '../../services/solicitations';
+import { FaSpinner, FaInfoCircle, FaTrashAlt, FaUndoAlt, FaExclamationTriangle, FaCopy, FaPlus, FaShieldAlt } from 'react-icons/fa';
+import { getSecurityProtocol } from './utils/securityProtocol';
+import { fetchSchemaForPricing } from '../../services/securitySchemaService';
+
+// Póliza excedente thresholds
+const POLIZA_THRESHOLD_OPTIONAL = 1_000_000_000;  // 1.000 millones
+const POLIZA_THRESHOLD_MANDATORY = 1_500_000_000; // 1.500 millones
+const IVA_RATE = 0.19; // 19%
 
 const PricingModal = ({ 
   onClose, 
@@ -34,6 +42,11 @@ const PricingModal = ({
   const [vehicleGuide, setVehicleGuide] = useState([]);
   const [loadingGuide, setLoadingGuide] = useState(false);
   const [guideError, setGuideError] = useState(null);
+  const [removedReturnRoutes, setRemovedReturnRoutes] = useState([]);
+  const [missingPricingRoutes, setMissingPricingRoutes] = useState([]);
+  const [pricingRequestSent, setPricingRequestSent] = useState(false);
+  const [sendingPricingRequest, setSendingPricingRequest] = useState(false);
+  const [userSecuritySchema, setUserSecuritySchema] = useState(null);
   const [rentabilityDefaults, setRentabilityDefaults] = useState({
     min: 17,
     avg: 24,
@@ -55,6 +68,9 @@ const PricingModal = ({
   }, [percentageSettings.min, rentabilityDefaults.min]);
     
   const showBlockingSpinner = loadingPricings || loadingSuggestions;
+
+  // Track whether return routes (devolución) for import containers have been injected
+  const returnRoutesInjected = useRef(false);
 
   const routesSignature = useMemo(() => (
     JSON.stringify(
@@ -86,6 +102,12 @@ const PricingModal = ({
 
   useEffect(() => {
     loadPercentageSettings();
+  }, []);
+
+  useEffect(() => {
+    fetchSchemaForPricing()
+      .then(({ data }) => setUserSecuritySchema(data))
+      .catch(() => setUserSecuritySchema(null));
   }, []);
 
   useEffect(() => {
@@ -174,22 +196,145 @@ const PricingModal = ({
 const loadPricingsForRoutes = async () => {
   setLoadingPricings(true);
   try {
+    // --- Auto-inject return (devolución) routes for IMPORTACION with containers ---
+    let routesToProcess = [...quoteData];
+    const isImport = (clientData?.operationType || '').toUpperCase() === 'IMPORTACION';
+
+    if (!returnRoutesInjected.current && isImport) {
+      const withReturns = [];
+      quoteData.forEach((route) => {
+        withReturns.push(route);
+        const empaque = (route.tipo_embajale || '').toUpperCase();
+        if (empaque.includes('CONTENEDOR') && !route.isReturnRoute) {
+          withReturns.push({
+            ...route,
+            id: null,
+            // Display shows reversed direction (city → port)
+            ciudad_origen: route.ciudad_destino,
+            ciudad_destino: route.ciudad_origen,
+            // Keep original direction for pricing lookup
+            _pricingOrigin: route.ciudad_origen,
+            _pricingDestination: route.ciudad_destino,
+            isReturnRoute: true,
+            select_value: null,
+            vehiculo_requerido: null,
+            porcentaje: route.porcentaje || 0,
+          });
+        }
+      });
+      returnRoutesInjected.current = true;
+      if (withReturns.length > quoteData.length) {
+        routesToProcess = withReturns;
+        setQuoteData(withReturns);
+      }
+    }
+
+    // --- Fetch pricings for each route ---
+    const isImportOp = (clientData?.operationType || '').toUpperCase() === 'IMPORTACION';
+    const isExportOp = (clientData?.operationType || '').toUpperCase() === 'EXPORTACION';
     const responses = await Promise.all(
-      quoteData.map(route => {
-        if (!route.ciudad_origen || !route.ciudad_destino) return Promise.resolve([]);
+      routesToProcess.map(route => {
+        const fetchOrigin = route.isReturnRoute ? route._pricingOrigin : route.ciudad_origen;
+        const fetchDestination = route.isReturnRoute ? route._pricingDestination : route.ciudad_destino;
+
+        if (!fetchOrigin || !fetchDestination) return Promise.resolve([]);
+
+        // Determine condition: return routes that coexist with their forward route
+        // are IDA-REGRESO (round-trip) — use special pricing
+        let condition;
+        if (route.isReturnRoute) {
+          condition = 'IMPORTACION IDA-REGRESO';
+        } else if (isImportOp) {
+          condition = 'IMPORTACION';
+        } else if (isExportOp) {
+          condition = 'EXPORTACION';
+        }
+
+        // Extract container size (20 or 40) from tipo_embajale
+        // Handles: CONTENEDOR 20, CONTENEDOR (1) 20 PIES, 1X40' HC, 40' GP, etc.
+        const empaque = (route.tipo_embajale || '').toUpperCase();
+        let containerSize;
+        if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(empaque)) {
+          if (/40/.test(empaque)) containerSize = '40';
+          else if (/20/.test(empaque)) containerSize = '20';
+        }
+
         return fetchLatestPricingsByRoute({
-          origin: route.ciudad_origen,
-          destination: route.ciudad_destino,
-          cargo_weight: route.peso_mercancia || 0,
+          origin: fetchOrigin,
+          destination: fetchDestination,
+          cargo_weight: route.isReturnRoute ? 0 : (route.peso_mercancia || 0),
+          condition,
+          is_return: route.isReturnRoute ? true : undefined,
+          container_size: containerSize,
         })
-          .then(({ data }) => data)
+          .then(({ data }) => {
+            // Client-side filter: if container route, keep only matching container size
+            if (containerSize) {
+              return data.filter(p => {
+                const vt = (p.vehicle_type || '').toUpperCase();
+                const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+                if (!isContainerType) return true;
+                return vt.includes(containerSize);
+              });
+            }
+            return data;
+          })
           .catch(error => {
             console.error('[PricingModal] Error loading pricing for route', route, error);
             return [];
           });
       })
     );
-    setPricings(responses);
+
+    // === FILTRO POR TAMAÑO DE CONTENEDOR ===
+    // Filtrar responses según el tipo_embajale de cada ruta
+    // Si es CONTENEDOR 20, solo mostrar opciones de 20'. Si es 40, solo 40'.
+    const filteredResponses = responses.map((routePricings, idx) => {
+      const route = routesToProcess[idx];
+      const empaque = (route?.tipo_embajale || route?.empaque || '').toUpperCase();
+      
+      // Detectar tamaño de contenedor
+      let containerSize = null;
+      if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(empaque)) {
+        if (/40/.test(empaque)) containerSize = '40';
+        else if (/20/.test(empaque)) containerSize = '20';
+      }
+
+      console.log(`[PricingModal] Route ${idx} container filter:`, { empaque, containerSize, totalOptions: routePricings.length });
+
+      if (!containerSize) return routePricings; // No es contenedor, devolver todo
+
+      // Filtrar: solo contenedores del tamaño correcto + vehículos no-contenedor
+      // Incluye tanto "CONTENEDOR 20'" como "DEV CNT 20'" (devolución)
+      const filtered = routePricings.filter(p => {
+        const vt = (p.vehicle_type || '').toUpperCase();
+        const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+        if (!isContainerType) return true;
+        return vt.includes(containerSize);
+      });
+
+      console.log(`[PricingModal] Route ${idx} after filter:`, { filteredCount: filtered.length });
+      return filtered;
+    });
+
+    setPricings(filteredResponses);
+
+    // Detect routes with no pricing options available
+    const missing = [];
+    routesToProcess.forEach((route, idx) => {
+      if (!responses[idx] || responses[idx].length === 0) {
+        const origin = route.ciudad_origen || '';
+        const destination = route.ciudad_destino || '';
+        if (origin && destination) {
+          // Avoid duplicates in the list
+          const key = `${origin}-${destination}`;
+          if (!missing.find(m => `${m.origin}-${m.destination}` === key)) {
+            missing.push({ origin, destination, routeIndex: idx, isReturn: route.isReturnRoute || false });
+          }
+        }
+      }
+    });
+    setMissingPricingRoutes(missing);
   } catch (error) {
     console.error('[PricingModal] Error loading all pricings:', error);
   } finally {
@@ -242,29 +387,51 @@ const requestAISuggestions = async (currentKey) => {
     console.log('[PricingModal] Auto-select suggestions:', suggestions);
 
     Object.entries(suggestions).forEach(([routeIndex, suggestion]) => {
+      const route = quoteData[Number(routeIndex)];
       const routePricings = pricings[routeIndex] || [];
       let pricingForRoute = null;
 
-      // Prefer matching by pricing_id (guarantees exact row)
-      if (suggestion.pricing_id) {
-        pricingForRoute = routePricings.find(
-          p => Number(p.id) === Number(suggestion.pricing_id)
-        );
-      }
-
-      // Fallback: match by vehicle type (and optionally the price) if no ID
-      if (!pricingForRoute) {
+      // For return routes: auto-select based on parent container size
+      if (route?.isReturnRoute) {
+        const parentEmpaque = (route.tipo_embajale || '').toUpperCase();
+        const containerSize = parentEmpaque.includes("40") ? "40'" : "20'";
+        // Find cheapest DEV CNT matching the container size (COMPENSACIÓN first)
         pricingForRoute = routePricings.find(p =>
-          p.vehicle_type === suggestion.vehicle_type &&
-          (
-            suggestion.price === undefined ||
-            Number(p.price) === Number(suggestion.price)
-          )
+          p.vehicle_type.includes(containerSize) && p.vehicle_type.includes('COMPENSACIÓN')
+        ) || routePricings.find(p =>
+          p.vehicle_type.includes(containerSize)
         );
+
+        if (pricingForRoute) {
+          // Set the suggestion text to match the auto-selected option
+          setVehicleSuggestions(prev => ({
+            ...prev,
+            [routeIndex]: { vehicle_type: pricingForRoute.vehicle_type }
+          }));
+        }
+      } else {
+        // For main routes: use AI suggestion
+        // Prefer matching by pricing_id (guarantees exact row)
+        if (suggestion.pricing_id) {
+          pricingForRoute = routePricings.find(
+            p => Number(p.id) === Number(suggestion.pricing_id)
+          );
+        }
+
+        // Fallback: match by vehicle type (and optionally the price) if no ID
+        if (!pricingForRoute) {
+          pricingForRoute = routePricings.find(p =>
+            p.vehicle_type === suggestion.vehicle_type &&
+            (
+              suggestion.price === undefined ||
+              Number(p.price) === Number(suggestion.price)
+            )
+          );
+        }
       }
 
       if (!pricingForRoute) {
-        console.warn(`[PricingModal] No pricing option matches AI suggestion for route ${routeIndex}`, suggestion, routePricings);
+        console.warn(`[PricingModal] No pricing option matches for route ${routeIndex}`, suggestion, routePricings);
         return;
       }
 
@@ -295,7 +462,7 @@ const requestAISuggestions = async (currentKey) => {
 
     setQuoteData(prev => prev.map((route, index) => 
       index === routeIndex 
-        ? { ...route, select_value: targetId, vehiculo_requerido: selectedPricing.vehicle_type }
+        ? { ...route, select_value: targetId, vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido, vehiculo_requerido: selectedPricing.vehicle_type }
         : route
     ));
   };
@@ -306,6 +473,281 @@ const requestAISuggestions = async (currentKey) => {
         ? { ...route, [parameterName]: parseFloat(value) || 0 }
         : route
     ));
+  };
+
+  // --- Extras (dynamic "Otro" items) ---
+  const addExtra = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])];
+      extras.push({ nombre: '', valor: 0 });
+      return { ...route, extras };
+    }));
+  };
+
+  const removeExtra = (routeIndex, extraIndex) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])].filter((_, i) => i !== extraIndex);
+      return { ...route, extras };
+    }));
+  };
+
+  const updateExtra = (routeIndex, extraIndex, field, value) => {
+    setQuoteData(prev => prev.map((route, index) => {
+      if (index !== routeIndex) return route;
+      const extras = [...(route.extras || [])];
+      extras[extraIndex] = { ...extras[extraIndex], [field]: value };
+      return { ...route, extras };
+    }));
+  };
+
+  const getExtrasTotal = (route) => {
+    return (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+  };
+
+  // --- Póliza excedente (valor declarado) ---
+  const getValorDeclarado = (route) => {
+    // Handle multiple possible field names and formatted strings
+    const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+    // Remove dots/commas used as thousands separators (e.g. "2.000.000.000")
+    const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+    return Number(cleaned) || 0;
+  };
+
+  const calculatePolizaExcedente = (route) => {
+    const valorDeclarado = getValorDeclarado(route);
+    console.log('[PricingModal] Póliza check:', {
+      valor_declarado: route.valor_declarado,
+      valorMercancia: route.valorMercancia,
+      valorDeclaradoParsed: valorDeclarado,
+      threshold: POLIZA_THRESHOLD_OPTIONAL,
+    });
+    const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+    const isOptional = valorDeclarado > POLIZA_THRESHOLD_OPTIONAL && valorDeclarado <= POLIZA_THRESHOLD_MANDATORY;
+    const showPoliza = isMandatory || isOptional;
+
+    if (!showPoliza) return { show: false, mandatory: false, enabled: false, excedente: 0, tarifaValue: 0, iva: 0, total: 0 };
+
+    const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+    const useLowerThreshold = Boolean(route.poliza_use_lower_threshold);
+    const baseThreshold = useLowerThreshold ? POLIZA_THRESHOLD_OPTIONAL : POLIZA_THRESHOLD_MANDATORY;
+    const excedente = valorDeclarado - baseThreshold;
+    const tarifaRate = Number(route.tarifa_poliza) || 0;
+    const tarifaValue = excedente * (tarifaRate / 100);
+    const iva = tarifaValue * IVA_RATE;
+    const total = enabled ? tarifaValue + iva : 0;
+
+    return { show: true, mandatory: isMandatory, enabled, excedente, tarifaRate, tarifaValue, iva, total };
+  };
+
+  const handlePolizaToggle = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, poliza_excedente_enabled: !route.poliza_excedente_enabled }
+        : route
+    ));
+  };
+
+  const handlePolizaThresholdToggle = (routeIndex) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, poliza_use_lower_threshold: !route.poliza_use_lower_threshold }
+        : route
+    ));
+  };
+
+  const handleTarifaPolizaChange = (routeIndex, value) => {
+    const tarifa = parseFloat(value) || 0;
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, tarifa_poliza: tarifa }
+        : route
+    ));
+  };
+
+  // --- Security protocol value fields ---
+  const handleSecurityValueChange = (routeIndex, fieldName, value) => {
+    setQuoteData(prev => prev.map((route, index) =>
+      index === routeIndex
+        ? { ...route, [fieldName]: parseFloat(value) || 0 }
+        : route
+    ));
+  };
+
+  // Metropolitan areas / nearby towns → treated as URBANO
+  const METRO_AREAS = [
+    ['BOGOTA', 'SOACHA', 'CHIA', 'ZIPAQUIRA', 'MOSQUERA', 'FUNZA', 'COTA', 'CAJICA', 'TOCANCIPA', 'SOPO', 'LA CALERA', 'TABIO', 'TENJO', 'GACHANCIPA', 'SIBATE', 'FACATATIVA', 'MADRID', 'BOJACA', 'CHOCONTA'],
+    ['MEDELLIN', 'ENVIGADO', 'ITAGUI', 'BELLO', 'SABANETA', 'COPACABANA', 'LA ESTRELLA', 'CALDAS', 'GIRARDOTA', 'BARBOSA'],
+    ['CALI', 'YUMBO', 'PALMIRA', 'JAMUNDI', 'CANDELARIA'],
+    ['BARRANQUILLA', 'SOLEDAD', 'MALAMBO', 'GALAPA', 'PUERTO COLOMBIA'],
+    ['BUCARAMANGA', 'FLORIDABLANCA', 'GIRON', 'PIEDECUESTA'],
+    ['CARTAGENA', 'TURBACO', 'ARJONA'],
+    ['PEREIRA', 'DOSQUEBRADAS'],
+    ['MANIZALES', 'VILLAMARIA'],
+    ['CUCUTA', 'VILLA DEL ROSARIO', 'LOS PATIOS'],
+    ['IBAGUE', 'ALVARADO', 'PIEDRAS'],
+    ['SANTA MARTA', 'CIENAGA'],
+    ['VILLAVICENCIO', 'ACACIAS', 'RESTREPO'],
+    ['PASTO', 'CHACHAGUI'],
+    ['ARMENIA', 'CIRCASIA', 'CALARCA'],
+    ['POPAYAN', 'PIENDAMO', 'TIMBIO'],
+    ['MONTERIA', 'CERETE'],
+    ['NEIVA', 'RIVERA'],
+    ['TUNJA', 'COMBITA', 'OICATA', 'SORACÁ'],
+  ];
+
+  const isUrbanRoute = (origin, destination) => {
+    const o = (origin || '').toUpperCase().trim();
+    const d = (destination || '').toUpperCase().trim();
+    if (!o || !d) return false;
+    if (o === d) return true;
+    return METRO_AREAS.some(area => area.includes(o) && area.includes(d));
+  };
+
+  // Map security measure labels to route field names
+  const SECURITY_FIELD_MAP = {
+    'GPS': 'seguridad_gps',
+    'Candado satelital': 'seguridad_candado',
+    '1 Acompañante vehicular': 'seguridad_acompanante',
+    '2 Acompañantes vehiculares': 'seguridad_acompanante',
+    '1 Motorizado': 'seguridad_motorizado',
+    '2 Motorizados': 'seguridad_motorizado',
+  };
+
+  // Extended lookup to handle dynamic counts from user security schema
+  const getSecurityFieldName = (item) => {
+    if (SECURITY_FIELD_MAP[item]) return SECURITY_FIELD_MAP[item];
+    if (/Acompañante|Acompañantes/.test(item)) return 'seguridad_acompanante';
+    if (/Motorizado|Motorizados/.test(item)) return 'seguridad_motorizado';
+    return null;
+  };
+
+  const getSecurityTotal = (route) => {
+    return (Number(route.seguridad_candado) || 0)
+      + (Number(route.seguridad_acompanante) || 0)
+      + (Number(route.seguridad_motorizado) || 0);
+  };
+
+  // Build protocol from user's security schema configuration
+  const getUserSecurityProtocol = (route) => {
+    const COBERTURA_MAXIMA = 800_000_000;
+    const productName = (route.tipo_producto || route.producto || '').toUpperCase().trim();
+    const productCode = route.producto_codigo || null;
+    const valorDeclarado = getValorDeclarado(route);
+
+    if (!valorDeclarado) return null;
+
+    // Determine the exact category the product belongs to using products_by_category
+    const productsByCategory = userSecuritySchema.products_by_category || {};
+    let detectedCategory = 'bajo_riesgo'; // Default: if not found anywhere, it's bajo riesgo
+
+    const categoryPriority = ['alto_riesgo_nivel_1', 'alto_riesgo_nivel_2', 'no_amparada', 'bajo_riesgo'];
+    for (const cat of categoryPriority) {
+      const catProducts = productsByCategory[cat] || [];
+      const found = catProducts.some(p => {
+        const pName = (p.name || '').toUpperCase().trim();
+        const pCode = p.product_code;
+        // Match by product_code first (most reliable)
+        if (productCode && pCode && String(productCode) === String(pCode)) return true;
+        // Match by name
+        return productName === pName || productName.includes(pName) || pName.includes(productName);
+      });
+      if (found) {
+        detectedCategory = cat;
+        break;
+      }
+    }
+
+    // Category display config
+    const categoryConfig = {
+      alto_riesgo_nivel_1: { level: 'Alto Riesgo — Primer Nivel', label: 'ALTO RIESGO', color: 'red', rangeKey: 'alto_riesgo_nivel_1' },
+      alto_riesgo_nivel_2: { level: 'Alto Riesgo — Segundo Nivel', label: 'ALTO RIESGO', color: 'orange', rangeKey: 'alto_riesgo_nivel_2' },
+      bajo_riesgo:         { level: 'Bajo Riesgo', label: 'BAJO RIESGO', color: 'green', rangeKey: 'bajo_riesgo' },
+      bajo_riesgo_quimicos:{ level: 'Bajo Riesgo — Químicos', label: 'BAJO RIESGO', color: 'green', rangeKey: 'bajo_riesgo_quimicos' },
+      no_amparada:         { level: 'NO Amparada por Póliza', label: 'NO AMPARADA', color: 'purple', rangeKey: null },
+    };
+
+    const config = categoryConfig[detectedCategory] || categoryConfig.bajo_riesgo;
+
+    // If product is "no_amparada", show warning - no ranges apply
+    if (detectedCategory === 'no_amparada') {
+      return {
+        riskCategory: detectedCategory,
+        valorDeclarado,
+        exceedsCobertura: true,
+        coberturaMaxima: 0,
+        nacional: ['⚠ Mercancía NO amparada por nuestra póliza'],
+        urbano: ['⚠ Mercancía NO amparada por nuestra póliza'],
+        level: config.level,
+        color: config.color,
+        label: config.label,
+        noAmparada: true,
+      };
+    }
+
+    // Find matching price range for the valor declarado in the detected category
+    const ranges = userSecuritySchema[config.rangeKey] || [];
+    let matchedRange = ranges.find(r => {
+      const from = Number(r.price_from) || 0;
+      const to = Number(r.price_to);
+      return valorDeclarado >= from && valorDeclarado <= to;
+    });
+
+    // If no exact match but ranges exist, use the highest range (value exceeds all ranges)
+    if (!matchedRange && ranges.length > 0) {
+      matchedRange = ranges.reduce((max, r) => {
+        return (Number(r.price_to) || 0) > (Number(max.price_to) || 0) ? r : max;
+      }, ranges[0]);
+    }
+
+    // No ranges configured at all for this category
+    if (!matchedRange) {
+      // Still return the detected category info so we don't fall back to hardcoded protocol
+      const exceedsCobertura = valorDeclarado > COBERTURA_MAXIMA;
+      return {
+        riskCategory: detectedCategory,
+        valorDeclarado,
+        exceedsCobertura,
+        coberturaMaxima: COBERTURA_MAXIMA,
+        nacional: ['No aplica'],
+        urbano: ['No aplica'],
+        level: config.level,
+        color: config.color,
+        label: config.label,
+      };
+    }
+
+    // Convert boolean/integer measures to label arrays
+    const buildMeasureList = (measure) => {
+      if (!measure) return ['No aplica'];
+      const list = [];
+      if (measure.gps) list.push('GPS');
+      if (measure.candado_satelital) list.push('Candado satelital');
+      const vehicular = Number(measure.acompanamiento_vehicular) || 0;
+      if (vehicular === 1) list.push('1 Acompañante vehicular');
+      if (vehicular >= 2) list.push(`${vehicular} Acompañantes vehiculares`);
+      const motorizado = Number(measure.acompanamiento_motorizado) || 0;
+      if (motorizado === 1) list.push('1 Motorizado');
+      if (motorizado >= 2) list.push(`${motorizado} Motorizados`);
+      return list.length > 0 ? list : ['No aplica'];
+    };
+
+    const nacionalMeasure = matchedRange.measures?.find(m => m.scope === 'nacional');
+    const urbanoMeasure = matchedRange.measures?.find(m => m.scope === 'urbano');
+    const exceedsCobertura = valorDeclarado > COBERTURA_MAXIMA;
+
+    return {
+      riskCategory: detectedCategory,
+      valorDeclarado,
+      exceedsCobertura,
+      coberturaMaxima: COBERTURA_MAXIMA,
+      nacional: buildMeasureList(nacionalMeasure),
+      urbano: buildMeasureList(urbanoMeasure),
+      level: config.level,
+      color: config.color,
+      label: config.label,
+    };
   };
 
   const getAutomaticParameters = (route) => {
@@ -389,6 +831,168 @@ const requestAISuggestions = async (currentKey) => {
     setPorcentajeGlobal(null);
   };
 
+  // --- Duplicate a route ---
+  const duplicateRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route) return;
+
+    // Find where to insert: after the route and its devolución (if any)
+    let insertIndex = routeIndex + 1;
+    // If this is a main route with a devolución right after, skip past it
+    if (!route.isReturnRoute && quoteData[insertIndex]?.isReturnRoute) {
+      insertIndex++;
+    }
+
+    const newRoute = {
+      ...route,
+      id: null,
+      select_value: null,
+      vehiculo_requerido: null,
+      isDuplicate: true,
+      _duplicateOf: routeIndex,
+    };
+
+    // Insert into quoteData
+    setQuoteData(prev => [
+      ...prev.slice(0, insertIndex),
+      newRoute,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Copy pricings options for the duplicated route
+    setPricings(prev => [
+      ...prev.slice(0, insertIndex),
+      prev[routeIndex] || [],
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Shift selectedPricings indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      Object.keys(prev).map(Number).sort((a, b) => a - b).forEach(idx => {
+        if (idx >= insertIndex) {
+          newSelected[idx + 1] = prev[idx];
+        } else {
+          newSelected[idx] = prev[idx];
+        }
+      });
+      return newSelected;
+    });
+  };
+
+  // --- Remove a duplicated route ---
+  const removeDuplicateRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route || !route.isDuplicate) return;
+
+    setQuoteData(prev => prev.filter((_, i) => i !== routeIndex));
+    setPricings(prev => prev.filter((_, i) => i !== routeIndex));
+
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      let newIdx = 0;
+      Object.keys(prev).map(Number).sort((a, b) => a - b).forEach(idx => {
+        if (idx === routeIndex) return;
+        newSelected[newIdx] = prev[idx];
+        newIdx++;
+      });
+      return newSelected;
+    });
+  };
+
+  // --- Remove a return route (devolución) ---
+  const removeReturnRoute = (routeIndex) => {
+    const route = quoteData[routeIndex];
+    if (!route || !route.isReturnRoute) return;
+
+    // Store the removed route with its associated data for recovery
+    setRemovedReturnRoutes(prev => [
+      ...prev,
+      {
+        route: { ...route },
+        pricing: pricings[routeIndex] || [],
+        selectedPricing: selectedPricings[routeIndex] || null,
+        // Track which parent route it belongs to (the route just before it)
+        parentOrigin: route.ciudad_destino, // reversed, so parent origin = return destination
+        parentDestination: route.ciudad_origen,
+      }
+    ]);
+
+    // Remove from quoteData
+    setQuoteData(prev => prev.filter((_, i) => i !== routeIndex));
+
+    // Remove from pricings array
+    setPricings(prev => prev.filter((_, i) => i !== routeIndex));
+
+    // Rebuild selectedPricings with updated indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      let newIdx = 0;
+      Object.keys(prev).sort((a, b) => Number(a) - Number(b)).forEach(key => {
+        const idx = Number(key);
+        if (idx === routeIndex) return; // skip removed
+        newSelected[newIdx] = prev[idx];
+        newIdx++;
+      });
+      return newSelected;
+    });
+  };
+
+  // --- Recover a previously removed return route ---
+  const recoverReturnRoute = (removedIndex) => {
+    const removed = removedReturnRoutes[removedIndex];
+    if (!removed) return;
+
+    // Find where to insert: after the parent route
+    let insertAfter = -1;
+    quoteData.forEach((r, i) => {
+      if (
+        r.ciudad_origen === removed.parentOrigin &&
+        r.ciudad_destino === removed.parentDestination &&
+        !r.isReturnRoute
+      ) {
+        insertAfter = i;
+      }
+    });
+
+    const insertIndex = insertAfter >= 0 ? insertAfter + 1 : quoteData.length;
+
+    // Re-insert into quoteData
+    setQuoteData(prev => [
+      ...prev.slice(0, insertIndex),
+      removed.route,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Re-insert into pricings
+    setPricings(prev => [
+      ...prev.slice(0, insertIndex),
+      removed.pricing,
+      ...prev.slice(insertIndex),
+    ]);
+
+    // Rebuild selectedPricings with shifted indices
+    setSelectedPricings(prev => {
+      const newSelected = {};
+      const sortedKeys = Object.keys(prev).map(Number).sort((a, b) => a - b);
+      sortedKeys.forEach(idx => {
+        if (idx >= insertIndex) {
+          newSelected[idx + 1] = prev[idx];
+        } else {
+          newSelected[idx] = prev[idx];
+        }
+      });
+      // Restore selected pricing for recovered route
+      if (removed.selectedPricing) {
+        newSelected[insertIndex] = removed.selectedPricing;
+      }
+      return newSelected;
+    });
+
+    // Remove from removed list
+    setRemovedReturnRoutes(prev => prev.filter((_, i) => i !== removedIndex));
+  };
+
   const calculateFinalValue = (routeIndex) => {
     const route = quoteData[routeIndex];
     const pricing = selectedPricings[routeIndex];
@@ -405,8 +1009,19 @@ const requestAISuggestions = async (currentKey) => {
       parametersTotal += Number(route[param.name]) || 0;
     });
 
+    const extrasTotal = getExtrasTotal(route);
+
+    // Póliza excedente
+    const poliza = calculatePolizaExcedente(route);
+    const polizaTotal = poliza.total;
+
+    // Security protocol costs
+    const securityTotal = getSecurityTotal(route);
+
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    return valueWithMargin + acompanamiento + parametersTotal;
+    const total = valueWithMargin + acompanamiento + parametersTotal + extrasTotal + polizaTotal + securityTotal;
+    // Redondear hacia arriba al múltiplo de 5000 más cercano
+    return Math.ceil(total / 5000) * 5000;
   };
 
   const canContinue = () => {
@@ -445,6 +1060,27 @@ const requestAISuggestions = async (currentKey) => {
   //   }
   // };
 
+    const handleRequestPricingRoutes = async () => {
+      if (missingPricingRoutes.length === 0) return;
+      setSendingPricingRequest(true);
+      try {
+        const { data } = await requestPricingRoute({
+          routes: missingPricingRoutes.map(r => ({
+            origin: r.origin,
+            destination: r.destination,
+          })),
+          group_id: clientData?.groupId || null,
+        });
+        setPricingRequestSent(true);
+        console.log('[PricingModal] Pricing route request sent:', data);
+      } catch (error) {
+        console.error('[PricingModal] Error sending pricing route request:', error);
+        alert('Error al enviar la solicitud. Intenta nuevamente.');
+      } finally {
+        setSendingPricingRequest(false);
+      }
+    };
+
     const handleContinue = async () => {
       if (!canContinue()) {
         alert('Completa todos los campos requeridos antes de continuar.');
@@ -472,10 +1108,21 @@ const requestAISuggestions = async (currentKey) => {
           tipo_embajale: route.tipo_embajale,
           tipo_producto: route.tipo_producto,
           vehiculo_requerido: route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
+          vehiculo_filtrado: route.vehiculo_filtrado || route.vehiculo_requerido || selectedPricings[index]?.vehicle_type,
           valor_declarado: route.valor_declarado,
+          poliza_excedente_enabled: route.poliza_excedente_enabled || false,
+          poliza_use_lower_threshold: route.poliza_use_lower_threshold || false,
+          tarifa_poliza: route.tarifa_poliza || 0,
+          poliza_excedente_total: calculatePolizaExcedente(route).total || 0,
+          // Security protocol costs
+          seguridad_candado: route.seguridad_candado || 0,
+          seguridad_acompanante: route.seguridad_acompanante || 0,
+          seguridad_motorizado: route.seguridad_motorizado || 0,
+          seguridad_total: getSecurityTotal(route),
           pricing_id: selectedPricings[index]?.id ?? null,
           porcentaje: route.porcentaje,
           valor_cliente: route.finalValue,
+          is_return_route: route.isReturnRoute || false,
           // add any extra fields you expect to persist (candado_satelital, etc.)
         }));
 
@@ -686,11 +1333,93 @@ const requestAISuggestions = async (currentKey) => {
         {/* Layout principal */}
         <div className="flex flex-row gap-8 h-[650px]">
           {/* Tabla de rutas y precios - mayor espacio */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-3/5">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full w-[70%]">
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex-shrink-0">
-              <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-base font-600 text-gray-700 product-sans">Configuración de Rutas y Precios</h4>
+                {removedReturnRoutes.length > 0 && (
+                  <div className="flex items-center space-x-2">
+                    {removedReturnRoutes.map((removed, rIdx) => (
+                      <button
+                        key={rIdx}
+                        type="button"
+                        onClick={() => recoverReturnRoute(rIdx)}
+                        className="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 hover:border-blue-300 transition-all duration-200 shadow-sm"
+                        title={`Recuperar devolución ${removed.route.ciudad_origen} → ${removed.route.ciudad_destino}`}
+                      >
+                        <FaUndoAlt className="w-3 h-3 mr-1.5" />
+                        Recuperar {removed.route.ciudad_origen?.substring(0, 3)}-{removed.route.ciudad_destino?.substring(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="overflow-x-auto flex-1 min-h-0">
+              {/* Alert for routes without pricing */}
+              {missingPricingRoutes.length > 0 && (
+                <div className={`mx-4 mt-3 mb-2 rounded-lg border p-4 ${pricingRequestSent ? 'bg-green-50 border-green-300' : 'bg-amber-50 border-amber-300'}`}>
+                  <div className="flex items-start space-x-3">
+                    <FaExclamationTriangle className={`mt-0.5 flex-shrink-0 ${pricingRequestSent ? 'text-green-500' : 'text-amber-500'}`} />
+                    <div className="flex-1">
+                      {pricingRequestSent ? (
+                        <>
+                          <p className="text-sm font-semibold text-green-700 product-sans">
+                            ✅ Solicitud enviada al equipo de Pricing
+                          </p>
+                          <p className="text-xs text-green-600 mt-1 product-sans">
+                            Se ha notificado al equipo de Pricing para que creen las tarifas de las siguientes rutas. 
+                            Podrás continuar con esta cotización una vez estén configuradas.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {missingPricingRoutes.map((r, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-medium product-sans">
+                                {r.isReturn ? '↩ ' : ''}{r.origin} → {r.destination}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-semibold text-amber-800 product-sans">
+                            Rutas sin tarifa configurada
+                          </p>
+                          <p className="text-xs text-amber-700 mt-1 product-sans">
+                            Las siguientes rutas no tienen precios en el sistema. Envía una solicitud al equipo de Pricing para que los configuren.
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {missingPricingRoutes.map((r, i) => (
+                              <span key={i} className="inline-flex items-center text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full font-medium product-sans">
+                                {r.isReturn ? '↩ ' : ''}{r.origin} → {r.destination}
+                              </span>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleRequestPricingRoutes}
+                            disabled={sendingPricingRequest}
+                            className="mt-3 inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg shadow-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {sendingPricingRequest ? (
+                              <>
+                                <FaSpinner className="animate-spin mr-2" />
+                                Enviando solicitud...
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                                </svg>
+                                Solicitar creación de precio al equipo Pricing
+                              </>
+                            )}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-700 text-sm font-600 border-b border-gray-200 bg-gray-50">
@@ -698,19 +1427,65 @@ const requestAISuggestions = async (currentKey) => {
                     <th className="text-left px-4 py-3 product-sans min-w-[120px]">Destino</th>
                     <th className="text-left px-4 py-3 product-sans min-w-[140px]">Vehículo</th>
                     <th className="text-center px-4 py-3 product-sans min-w-[110px]">Precio Base</th>
-                    <th className="text-center px-4 py-3 product-sans min-w-[120px]">Parámetros</th>
-                    <th className="text-center px-4 py-3 product-sans min-w-[100px]">Rent.(%)</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[100px]">Parámetros</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[160px]">Extras</th>
+                    <th className="text-center px-4 py-3 product-sans min-w-[80px]">Rent.(%)</th>
                     <th className="text-center px-4 py-3 product-sans min-w-[120px]">Valor Cliente</th>
                   </tr>
                 </thead>
                 <tbody>
                   {quoteData.map((route, index) => {
                     const automaticParameters = getAutomaticParameters(route);
+                    const isReturn = route.isReturnRoute;
+                    const isDuplicate = route.isDuplicate;
+                    
+                    // Determine if separator needed: new group starts at non-return, non-duplicate routes after index 0
+                    const isGroupStart = index > 0 && !isReturn && !isDuplicate;
                     
                     return (
-                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
+                      <React.Fragment key={index}>
+                        {isGroupStart && (
+                          <tr>
+                            <td colSpan="8" className="px-0 py-0">
+                              <div className="border-t-2 border-orange-200 mx-4 my-1"></div>
+                            </td>
+                          </tr>
+                        )}
+                        <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150 ${isReturn ? 'bg-blue-50/40' : ''} ${isDuplicate ? 'bg-amber-50/30' : ''}`}>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
-                          {route.ciudad_origen || '-'}
+                          <div className="flex items-center flex-wrap gap-1">
+                            {isReturn && (
+                              <>
+                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 whitespace-nowrap">
+                                  ↩ DEVOLUCIÓN
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeReturnRoute(index)}
+                                  title="Eliminar ruta de devolución"
+                                  className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                                >
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
+                                </button>
+                              </>
+                            )}
+                            {isDuplicate && (
+                              <>
+                                <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 whitespace-nowrap">
+                                  📋 DUPLICADA
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeDuplicateRoute(index)}
+                                  title="Eliminar ruta duplicada"
+                                  className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors duration-150"
+                                >
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
+                                </button>
+                              </>
+                            )}
+                            <span>{route.ciudad_origen || '-'}</span>
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-sm font-500 text-gray-700 product-sans">
                           {route.ciudad_destino || '-'}
@@ -720,7 +1495,6 @@ const requestAISuggestions = async (currentKey) => {
                           {vehicleSuggestions[index] && (
                             <div className="text-xs mb-2 rounded bg-blue-50 text-blue-600 px-2 py-1">
                               IA sugiere: <strong>{vehicleSuggestions[index].vehicle_type}</strong>
-                              <span className="text-gray-500"> — {vehicleSuggestions[index].reason}</span>
                             </div>
                           )}
                           
@@ -729,10 +1503,29 @@ const requestAISuggestions = async (currentKey) => {
                             onChange={(e) => handleVehicleSelect(index, e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg h-10 focus:outline-none focus:ring-2 focus:ring-orange-400"
                           >
-                            <option value="">Selecciona vehículo</option>
-                            {(pricings[index] || []).map(pricing => (
+                            <option value="">{isReturn ? 'Selecciona tipo devolución' : 'Selecciona vehículo'}</option>
+                            {(() => {
+                              // Filter pricings by container size from tipo_embajale (safety net)
+                              const routeEmpaque = (route.tipo_embajale || '').toUpperCase();
+                              let routeContainerSize = null;
+                              if (/CONTENEDOR|CONTAINER|\d+\s*[Xx']|PIES|\bGP\b|\bHC\b|\bHQ\b|\bOT\b|\bFR\b|\bRF\b/.test(routeEmpaque)) {
+                                if (/40/.test(routeEmpaque)) routeContainerSize = '40';
+                                else if (/20/.test(routeEmpaque)) routeContainerSize = '20';
+                              }
+
+                              return (pricings[index] || []).filter(pricing => {
+                                const vt = (pricing.vehicle_type || '').toUpperCase();
+                                const isContainerType = vt.includes('CONTENEDOR') || vt.includes('DEV CNT');
+
+                                if (routeContainerSize) {
+                                  if (isContainerType) return vt.includes(routeContainerSize);
+                                  return true;
+                                }
+                                return true;
+                              });
+                            })().map(pricing => (
                               <option key={pricing.id} value={pricing.id}>
-                                {pricing.vehicle_type} - ${Number(pricing.price).toLocaleString()}
+                                {pricing.vehicle_type}{pricing.extra ? ` (${pricing.extra})` : ''} - ${Number(pricing.price).toLocaleString()}
                               </option>
                             ))}
                           </select>
@@ -745,17 +1538,17 @@ const requestAISuggestions = async (currentKey) => {
                         <td className="px-4 py-3">
                           {/* Parámetros automáticos */}
                           {automaticParameters.length > 0 ? (
-                            <div className="space-y-3">
+                            <div className="space-y-1.5">
                               {automaticParameters.map((param) => (
-                                <div key={param.name} className="flex flex-col items-center">
-                                  <label className={`text-xs font-medium mb-1 text-${param.color}-600 product-sans text-center`}>
+                                <div key={param.name} className="flex items-center gap-1.5">
+                                  <label className={`text-[10px] font-medium text-${param.color}-600 product-sans whitespace-nowrap w-16 text-right`}>
                                     {param.label}
                                   </label>
                                   <input
                                     type="number"
                                     value={route[param.name] || ''}
                                     onChange={(e) => handleParameterChange(index, param.name, e.target.value)}
-                                    className={`w-24 px-3 py-2 text-sm text-center border border-${param.color}-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-${param.color}-400 product-sans`}
+                                    className={`w-20 px-2 py-1 text-xs text-center border border-${param.color}-300 rounded focus:outline-none focus:ring-1 focus:ring-${param.color}-400 product-sans`}
                                     placeholder="$"
                                     min="0"
                                   />
@@ -765,6 +1558,44 @@ const requestAISuggestions = async (currentKey) => {
                           ) : (
                             <div className="text-sm text-gray-400 text-center">-</div>
                           )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="space-y-1.5">
+                            {(route.extras || []).map((extra, eIdx) => (
+                              <div key={eIdx} className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={extra.nombre || ''}
+                                  onChange={(e) => updateExtra(index, eIdx, 'nombre', e.target.value)}
+                                  className="w-20 px-1.5 py-1 text-[11px] border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-400 product-sans placeholder-gray-400"
+                                  placeholder="Nombre"
+                                />
+                                <input
+                                  type="number"
+                                  value={extra.valor || ''}
+                                  onChange={(e) => updateExtra(index, eIdx, 'valor', e.target.value)}
+                                  className="w-20 px-1.5 py-1 text-[11px] text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-orange-400 product-sans"
+                                  placeholder="$ Valor"
+                                  min="0"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeExtra(index, eIdx)}
+                                  className="p-0.5 text-red-400 hover:text-red-600 rounded transition-colors"
+                                  title="Quitar"
+                                >
+                                  <FaTrashAlt className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => addExtra(index)}
+                              className="inline-flex items-center gap-1 text-[10px] text-orange-500 hover:text-orange-600 font-medium product-sans"
+                            >
+                              <FaPlus className="w-2.5 h-2.5" /> Agregar
+                            </button>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col items-center space-y-2">
@@ -786,11 +1617,217 @@ const requestAISuggestions = async (currentKey) => {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="text-sm font-700 text-orange-600">
-                            ${Number(calculateFinalValue(index)).toLocaleString()}
-                          </span>
+                          <div className="flex flex-col items-center space-y-1">
+                            <span className="text-sm font-700 text-orange-600">
+                              ${Number(calculateFinalValue(index)).toLocaleString()}
+                            </span>
+                            {!isDuplicate && (
+                              <button
+                                type="button"
+                                onClick={() => duplicateRoute(index)}
+                                title="Duplicar ruta con otro precio"
+                                className="p-1 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded transition-colors duration-150"
+                              >
+                                <FaCopy className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
+                      {/* --- Póliza Excedente sub-row --- */}
+                      {(() => {
+                        const poliza = calculatePolizaExcedente(route);
+                        if (!poliza.show) return null;
+                        return (
+                          <tr className={`border-b border-gray-100 ${poliza.mandatory ? 'bg-red-50/30' : 'bg-amber-50/30'}`}>
+                            <td colSpan="8" className="px-4 py-3">
+                              <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: poliza.mandatory ? '#f87171' : '#fbbf24', backgroundColor: poliza.mandatory ? '#fef2f2' : '#fffbeb' }}>
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${poliza.mandatory ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                      {poliza.mandatory ? '⚠ OBLIGATORIO' : '⚡ OPCIONAL'}
+                                    </span>
+                                    <span className="text-sm font-600 text-gray-700 product-sans">
+                                      Póliza Valor Declarado Excedido
+                                    </span>
+                                    <span className="text-xs text-gray-500 product-sans">
+                                      (Valor declarado: ${getValorDeclarado(route).toLocaleString()})
+                                    </span>
+                                  </div>
+                                  {!poliza.mandatory && (
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={poliza.enabled}
+                                        onChange={() => handlePolizaToggle(index)}
+                                        className="sr-only peer"
+                                      />
+                                      <div className="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-400"></div>
+                                      <span className="ml-2 text-xs text-gray-600 product-sans">Aplicar</span>
+                                    </label>
+                                  )}
+                                </div>
+
+                                {(poliza.enabled || poliza.mandatory) && (
+                                  <div className="grid grid-cols-5 gap-4 items-end pt-1">
+                                    <div>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <label className="text-[10px] font-medium text-gray-500 product-sans">VALOR DECLARADO EXCEDIDO</label>
+                                        <label className="relative inline-flex items-center cursor-pointer" title={route.poliza_use_lower_threshold ? 'Base: $1.000M → Excedente mayor' : 'Base: $1.500M (default)'}>
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(route.poliza_use_lower_threshold)}
+                                            onChange={() => handlePolizaThresholdToggle(index)}
+                                            className="sr-only peer"
+                                          />
+                                          <div className="relative w-7 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-500"></div>
+                                          <span className="ml-1 text-[9px] text-gray-500 product-sans">{route.poliza_use_lower_threshold ? '1B' : '1.5B'}</span>
+                                        </label>
+                                      </div>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.excedente).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">TARIFA (%)</label>
+                                      <input
+                                        type="number"
+                                        value={route.tarifa_poliza || ''}
+                                        onChange={(e) => handleTarifaPolizaChange(index, e.target.value)}
+                                        className="w-full px-3 py-2 text-sm text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 product-sans"
+                                        placeholder="0.15"
+                                        min="0"
+                                        step="0.01"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">VALOR TARIFA</label>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.tarifaValue).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-gray-500 product-sans block mb-1">IVA (19%)</label>
+                                      <div className="px-3 py-2 text-sm font-600 text-gray-700 bg-gray-100 rounded-lg product-sans">
+                                        ${Number(poliza.iva).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-medium text-orange-600 product-sans block mb-1 font-bold">TOTAL PÓLIZA</label>
+                                      <div className="px-3 py-2 text-sm font-700 text-orange-600 bg-orange-50 border border-orange-200 rounded-lg product-sans">
+                                        ${Number(poliza.total).toLocaleString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })()}
+                      {/* --- Protocolo de Seguridad sub-row --- */}
+                      {(() => {
+                        const protocol = (userSecuritySchema?.has_schema
+                          ? getUserSecurityProtocol(route)
+                          : null) || getSecurityProtocol(route, clientData, getValorDeclarado);
+                        if (!protocol.valorDeclarado) return null;
+                        const colorMap = {
+                          red: { bg: 'bg-red-50', border: 'border-red-300', badge: 'bg-red-100 text-red-700', text: 'text-red-700', icon: 'text-red-500' },
+                          orange: { bg: 'bg-orange-50', border: 'border-orange-300', badge: 'bg-orange-100 text-orange-700', text: 'text-orange-700', icon: 'text-orange-500' },
+                          purple: { bg: 'bg-purple-50', border: 'border-purple-300', badge: 'bg-purple-100 text-purple-700', text: 'text-purple-700', icon: 'text-purple-500' },
+                          green: { bg: 'bg-green-50', border: 'border-green-300', badge: 'bg-green-100 text-green-700', text: 'text-green-700', icon: 'text-green-500' },
+                        };
+                        const c = colorMap[protocol.color] || colorMap.green;
+
+                        // Determine route scope: urban or nacional
+                        const urban = isUrbanRoute(route.ciudad_origen, route.ciudad_destino);
+                        const scopeLabel = urban ? 'Urbano' : 'Nacional';
+                        const scopeMeasures = urban ? protocol.urbano : protocol.nacional;
+
+                        // Build editable fields from the applicable scope's measures
+                        const securityFields = [];
+                        const addedFields = new Set();
+                        scopeMeasures.forEach(item => {
+                          if (item.startsWith('⚠') || item === 'No aplica' || item === 'GPS') return;
+                          const fieldName = getSecurityFieldName(item);
+                          if (fieldName && !addedFields.has(fieldName)) {
+                            addedFields.add(fieldName);
+                            securityFields.push({ label: item, field: fieldName });
+                          }
+                        });
+
+                        const secTotal = getSecurityTotal(route);
+
+                        return (
+                          <tr className={`border-b border-gray-100 ${c.bg}`}>
+                            <td colSpan="8" className="px-4 py-2">
+                              <div className={`rounded-lg border ${c.border} p-3 ${c.bg}`}>
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <FaShieldAlt className={`${c.icon} w-3.5 h-3.5`} />
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${c.badge}`}>
+                                      {protocol.label}
+                                    </span>
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${urban ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                      {scopeLabel}
+                                    </span>
+                                    <span className="text-xs text-gray-500 product-sans">
+                                      {protocol.level} — Valor: ${protocol.valorDeclarado.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  {protocol.exceedsCobertura && (
+                                    <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded flex items-center gap-1">
+                                      <FaExclamationTriangle className="w-2.5 h-2.5" />
+                                      Excede cobertura ($800M)
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Medidas requeridas - solo el scope aplicable */}
+                                <div className="mb-3">
+                                  <div className="text-[10px] font-semibold text-gray-500 mb-1 product-sans uppercase">{scopeLabel}</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    {scopeMeasures.map((item, i) => (
+                                      <span key={i} className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${item.startsWith('⚠') ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
+                                        {item}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Input fields for each security measure */}
+                                {securityFields.length > 0 && (
+                                  <div className="border-t border-gray-200 pt-2">
+                                    <div className="text-[10px] font-semibold text-gray-500 mb-2 product-sans uppercase">Ingrese costos de seguridad</div>
+                                    <div className="flex flex-wrap gap-3 items-end">
+                                      {securityFields.map(({ label, field }) => (
+                                        <div key={field} className="flex flex-col">
+                                          <label className="text-[10px] font-medium text-gray-500 product-sans mb-1">{label}</label>
+                                          <input
+                                            type="number"
+                                            value={route[field] || ''}
+                                            onChange={(e) => handleSecurityValueChange(index, field, e.target.value)}
+                                            className="w-28 px-2 py-1.5 text-sm text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 product-sans"
+                                            placeholder="$ 0"
+                                            min="0"
+                                          />
+                                        </div>
+                                      ))}
+                                      <div className="flex flex-col">
+                                        <label className="text-[10px] font-bold text-orange-600 product-sans mb-1">TOTAL SEGURIDAD</label>
+                                        <div className="w-28 px-2 py-1.5 text-sm text-center font-700 text-orange-600 bg-orange-50 border border-orange-200 rounded-lg product-sans">
+                                          ${Number(secTotal).toLocaleString()}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })()}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -799,7 +1836,7 @@ const requestAISuggestions = async (currentKey) => {
           </div>
 
           {/* Tarjetas de rentabilidad */}
-          <div className="flex flex-row justify-between h-full space-x-4 w-2/5">
+          <div className="flex flex-row justify-between h-full space-x-4 w-[30%]">
             <RentabilityCard
               title="PROPUESTA #1"
               subtitle={`RENTABILIDAD MÍNIMA (${rentabilityDefaults.scope === 'route' ? 'Ruta' : 'Global'})`}
@@ -863,6 +1900,13 @@ const requestAISuggestions = async (currentKey) => {
   );
 };
 
+// Shared helper for póliza valor declarado parsing
+const parseValorDeclarado = (route) => {
+  const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+  const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+  return Number(cleaned) || 0;
+};
+
 const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quoteData, selectedPricings, clientData }) => {
   const calculateTotal = () => {
     return Object.keys(selectedPricings).reduce((total, index) => {
@@ -879,7 +1923,28 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
           parametersTotal += Number(route[param.name]) || 0;
         });
 
-        return total + withMargin + parametersTotal;
+        const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+
+        // Póliza excedente
+        let polizaTotal = 0;
+        const valorDeclarado = parseValorDeclarado(route);
+        if (valorDeclarado > POLIZA_THRESHOLD_OPTIONAL) {
+          const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+          const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+          if (enabled) {
+            const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+            const tarifaRate = Number(route.tarifa_poliza) || 0;
+            const tarifaValue = excedente * (tarifaRate / 100);
+            polizaTotal = tarifaValue + (tarifaValue * IVA_RATE);
+          }
+        }
+
+        // Security protocol costs
+        const securityTotal = (Number(route.seguridad_candado) || 0)
+          + (Number(route.seguridad_acompanante) || 0)
+          + (Number(route.seguridad_motorizado) || 0);
+
+        return total + withMargin + parametersTotal + extrasTotal + polizaTotal + securityTotal;
       }
 
       return total;
@@ -962,7 +2027,7 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
         
         <div className="border-t border-gray-200 pt-2 flex-1 w-full flex flex-col items-center justify-center">
           {/* Lista de precios por ruta */}
-          <div className="flex flex-col space-y-3 mb-2 w-full items-center justify-center">
+          <div className="flex flex-col space-y-1 mb-2 w-full items-center justify-center">
             {quoteData.map((route, index) => {
               const pricing = selectedPricings[index];
               let finalRoutePrice = 0;
@@ -977,18 +2042,48 @@ const RentabilityCard = ({ title, subtitle, percentage, isActive, onSelect, quot
                   parametersTotal += Number(route[param.name]) || 0;
                 });
 
-                finalRoutePrice = withMargin + parametersTotal;
+                const extrasTotal = (route.extras || []).reduce((sum, e) => sum + (Number(e.valor) || 0), 0);
+
+                // Póliza excedente
+                let polizaTotal = 0;
+                const valorDeclarado = parseValorDeclarado(route);
+                if (valorDeclarado > POLIZA_THRESHOLD_OPTIONAL) {
+                  const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+                  const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+                  if (enabled) {
+                    const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+                    const tarifaRate = Number(route.tarifa_poliza) || 0;
+                    const tarifaValue = excedente * (tarifaRate / 100);
+                    polizaTotal = tarifaValue + (tarifaValue * IVA_RATE);
+                  }
+                }
+
+                // Security protocol costs
+                const securityTotal = (Number(route.seguridad_candado) || 0)
+                  + (Number(route.seguridad_acompanante) || 0)
+                  + (Number(route.seguridad_motorizado) || 0);
+
+                finalRoutePrice = withMargin + parametersTotal + extrasTotal + polizaTotal + securityTotal;
               }
+
+              const isReturn = route.isReturnRoute;
+              const isDuplicate = route.isDuplicate;
+              const isGroupStart = index > 0 && !isReturn && !isDuplicate;
               
               return (
-                <div key={index} className="flex flex-col items-center w-full">
-                  <div className="text-xs text-gray-500 product-sans mb-1 text-center">
-                    {(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                <React.Fragment key={index}>
+                  {isGroupStart && (
+                    <div className="w-4/5 border-t border-gray-200 my-1"></div>
+                  )}
+                  <div className="flex flex-col items-center w-full">
+                    <div className="text-xs text-gray-500 product-sans mb-0.5 text-center">
+                      {isReturn ? '↩ ' : ''}{isDuplicate ? '📋 ' : ''}{(route.ciudad_origen || '').substring(0, 3)}-{(route.ciudad_destino || '').substring(0, 3)}
+                    </div>
+                    <div className={`text-xs font-600 product-sans text-center ${isDuplicate ? 'text-amber-600' : 'text-orange-600'}`}>
+                      ${Number(finalRoutePrice).toLocaleString()}
+                    </div>
                   </div>
-                  <div className="text-xs font-600 text-orange-600 product-sans text-center">
-                    ${Number(finalRoutePrice).toLocaleString()}
-                  </div>
-                </div>
+                </React.Fragment>
               );
             })}
           </div>

@@ -191,4 +191,53 @@ class SolicitationController extends Controller
 
         return response()->json($sol);
     }
+
+    /* ───── Solicitud automática de ruta faltante en pricing ── */
+    public function requestPricingRoute(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'routes'   => 'required|array|min:1',
+            'routes.*.origin'      => 'required|string',
+            'routes.*.destination'  => 'required|string',
+            'group_id' => 'nullable|integer',
+        ]);
+
+        $created = [];
+
+        foreach ($request->routes as $route) {
+            $origin      = strtoupper(trim($route['origin']));
+            $destination  = strtoupper(trim($route['destination']));
+
+            // Avoid duplicates: skip if an open request already exists for the same route
+            $exists = Solicitation::where('origin', $origin)
+                ->where('destination', $destination)
+                ->where('type', 'PRICING_ROUTE_REQUEST')
+                ->whereNotIn('status', ['FINALIZED', 'REJECTED'])
+                ->exists();
+
+            if ($exists) continue;
+
+            $created[] = Solicitation::create([
+                'created_by'  => $user->id,
+                'origin'      => $origin,
+                'destination'  => $destination,
+                'type'        => 'PRICING_ROUTE_REQUEST',
+                'group_id'    => $request->group_id,
+                'importance'  => 'HIGH',
+                'status'      => 'PENDING',
+                'description' => "Solicitud automática: No existen tarifas configuradas para la ruta {$origin} → {$destination}. Por favor crear pricing para esta ruta.",
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'created' => count($created),
+            'message' => count($created) > 0
+                ? count($created) . ' solicitud(es) creada(s) para el equipo de Pricing.'
+                : 'Ya existen solicitudes pendientes para estas rutas.',
+            'solicitations' => $created,
+        ], 201);
+    }
 }

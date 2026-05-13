@@ -15,116 +15,556 @@ const EditRoutesModal = ({
   setQuoteData,
   clientData
 }) => {
-  const [localRoutes, setLocalRoutes] = useState(quoteData || []);
+  // Normalizar quoteData: puede venir como array (recuperación) u objeto (chat)
+  const normalizedRoutes = React.useMemo(() => {
+    if (!quoteData) return [];
+    if (Array.isArray(quoteData)) return quoteData;
+    // Si es objeto, convertir a array
+    return [quoteData];
+  }, [quoteData]);
+  
+  // 🔥 FIX: Inicializar vacío para evitar duplicación - se llenará desde BD
+  const [localRoutes, setLocalRoutes] = useState([]);
   const [cities, setCities] = useState([]);
   const [packings, setPackings] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [catalogsLoaded, setCatalogsLoaded] = useState(false);
 
-  // Load routes if empty
+  // 1️⃣ PRIMERO: Cargar cities, packings, products EN PARALELO
   useEffect(() => {
-    const loadRoutes = async () => {
-      if (!groupId || (quoteData && quoteData.length)) return;
+    const loadCatalogs = async () => {
       setLoading(true);
       try {
-        const resp = await fetch(`/api/chat/quote/routes/${groupId}`, {
-          headers: { Accept: 'application/json' },
-        });
-        const data = await resp.json();
-        if (data.success && data.data?.routes) {
-          setLocalRoutes(data.data.routes);
-          setQuoteData(data.data.routes);
+        const [citiesResp, packingsResp, productsResp] = await Promise.all([
+          fetchCities(),
+          fetchPackings(),
+          fetchProducts()
+        ]);
+        
+        if (citiesResp.data.success) {
+          console.log('🌍 Ciudades cargadas:', citiesResp.data.data.length);
+          setCities(citiesResp.data.data || []);
         } else {
-          setError('Unable to load routes');
+          setError('Error cargando ciudades');
         }
+        
+        if (packingsResp.data.success) {
+          console.log('📦 Embalajes cargados:', packingsResp.data.data.length);
+          console.log('Muestra:', packingsResp.data.data.slice(0, 5));
+          setPackings(packingsResp.data.data || []);
+        } else {
+          setError('Error cargando embalajes');
+        }
+        
+        if (productsResp.data.success) {
+          console.log('📊 Productos cargados:', productsResp.data.data.length);
+          setProducts(productsResp.data.data || []);
+        } else {
+          setError('Error cargando productos');
+        }
+        
+        // Marcar catálogos como cargados
+        setCatalogsLoaded(true);
+        console.log('✅ Todos los catálogos cargados - listo para cargar rutas');
+        
       } catch (err) {
-        setError('Network error loading routes');
+        console.error('❌ Error cargando catálogos:', err);
+        setError('Error de red al cargar catálogos');
       } finally {
         setLoading(false);
       }
     };
-    loadRoutes();
-  }, [groupId, quoteData, setQuoteData]);
-
-  // Load cities, packings, products
-  useEffect(() => {
-    const loadCities = async () => {
-      try {
-        const resp = await fetchCities();
-        const data = resp.data;
-        if (data.success) setCities(data.data || []);
-        else setError('Unable to load cities');
-      } catch {
-        setError('Network error loading cities');
-      }
-    };
-    const loadPackings = async () => {
-      try {
-        const resp = await fetchPackings();
-        const data = resp.data;
-        if (data.success) setPackings(data.data || []);
-        else setError('Unable to load packings');
-      } catch {
-        setError('Network error loading packings');
-      }
-    };
-    const loadProducts = async () => {
-      try {
-        const resp = await fetchProducts();
-        const data = resp.data;
-        if (data.success) setProducts(data.data || []);
-        else setError('Unable to load products');
-      } catch {
-        setError('Network error loading products');
-      }
-    };
-    loadCities();
-    loadPackings();
-    loadProducts();
+    
+    loadCatalogs();
   }, []);
+
+  // Normaliza una ruta usando extracted_data si viene como JSON/array en BD
+  const applyExtractedFallback = (route, idx = 0, allExtractedData = null) => {
+    // Si se pasa allExtractedData directamente desde el padre, usarlo
+    let extracted = allExtractedData || route.extracted_data;
+    
+    if (!extracted) {
+      console.log(`⚠️ Ruta ${idx}: No hay extracted_data, usando route tal cual`);
+      return route;
+    }
+
+    try {
+      if (typeof extracted === 'string') {
+        extracted = JSON.parse(extracted);
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo parsear extracted_data:', err);
+      return route;
+    }
+
+    const arr = Array.isArray(extracted)
+      ? extracted
+      : Object.values(extracted).filter(v => v && typeof v === 'object');
+
+    const extractedRoute = arr[idx];
+    if (!extractedRoute) {
+      console.warn(`⚠️ Ruta ${idx}: No se encontró extracted_data en índice ${idx}, usando route directamente`);
+      return route;
+    }
+
+    // PRIORIZAR extracted_data porque tiene los valores del prompt inicial
+    // route.empaque puede estar vacío o con valor incorrecto en la primera extracción
+    const empaqueValue = extractedRoute.empaque || extractedRoute.tipo_embajale || extractedRoute.embalaje || route.empaque || route.tipo_embajale || '';
+    
+    console.log(`🔧 applyExtractedFallback Ruta ${idx + 1}:`, {
+      '✅ USANDO': empaqueValue,
+      'extracted.empaque (PRIORIDAD)': extractedRoute.empaque,
+      'extracted.tipo_embajale': extractedRoute.tipo_embajale,
+      'route.empaque (fallback)': route.empaque,
+      'route.tipo_embajale': route.tipo_embajale,
+      'extracted.empaque_id': extractedRoute.empaque_id,
+      'route.empaque_id': route.empaque_id,
+      'incluye_tara': extractedRoute.incluye_tara || route.incluye_tara
+    });
+    
+    return {
+      ...route,
+      tipo_embajale: empaqueValue,
+      tipo_embalaje: empaqueValue,
+      empaque: empaqueValue,
+      // IGNORAR empaque_id de extracted_data - viene incorrecto (6 para todos)
+      // Usar SOLO el nombre del empaque
+      empaque_id: null,
+      producto: extractedRoute.producto || extractedRoute.tipo_producto || route.producto || '',
+      tipo_producto: extractedRoute.tipo_producto || extractedRoute.producto || route.tipo_producto || '',
+      producto_codigo: extractedRoute.producto_codigo || route.producto_codigo || '',
+      peso_mercancia: extractedRoute.peso_kg || extractedRoute.peso || extractedRoute.peso_mercancia || route.peso_mercancia || '',
+      cantidad: extractedRoute.cantidad || extractedRoute.cantidad_unidades || route.cantidad || '',
+      ciudad_origen: extractedRoute.origen || extractedRoute.ciudad_origen || route.ciudad_origen || '',
+      ciudad_destino: extractedRoute.destino || extractedRoute.ciudad_destino || route.ciudad_destino || '',
+      valor_declarado: extractedRoute.valor_declarado || extractedRoute.valor || extractedRoute.valor_mercancia || route.valor_declarado || '',
+      incluye_tara: extractedRoute.incluye_tara === true || route.incluye_tara === true
+    };
+  };
+
+  // 2️⃣ SEGUNDO: Cargar rutas desde BD SOLO cuando catalogsLoaded sea true
+  useEffect(() => {
+    if (!catalogsLoaded) {
+      console.log('⏳ Esperando a que se carguen los catálogos...');
+      return;
+    }
+    
+    const loadRoutes = async () => {
+      if (!groupId) {
+        console.warn('⚠️ EditRoutesModal: No groupId provided');
+        return;
+      }
+      
+      console.log('💾 Cargando rutas desde BD para group_id:', groupId);
+      console.log('📊 Estado inicial de localRoutes:', localRoutes.length, 'ruta(s)');
+      console.log('📊 Estado inicial de quoteData:', Array.isArray(quoteData) ? quoteData.length : (quoteData ? 1 : 0), 'ruta(s)');
+      setLoading(true);
+      
+      try {
+        const resp = await fetch(`/api/chat/quote/routes/${groupId}`, {
+          headers: { 
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+          },
+        });
+        
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        }
+        
+        const data = await resp.json();
+        console.log('✅ Rutas recuperadas desde BD:', data);
+        
+        if (data.success && data.data?.routes) {
+          console.log('🔍 RUTAS CRUDAS ANTES DE APLICAR FALLBACK:', JSON.stringify(data.data.routes, null, 2));
+          
+          // Obtener extracted_data del primer elemento (todas las rutas comparten el mismo extracted_data)
+          const firstRoute = data.data.routes[0];
+          let parsedExtractedData = null;
+          
+          if (firstRoute?.extracted_data) {
+            try {
+              parsedExtractedData = typeof firstRoute.extracted_data === 'string'
+                ? JSON.parse(firstRoute.extracted_data)
+                : firstRoute.extracted_data;
+              console.log('📋 extracted_data parseado:', parsedExtractedData);
+            } catch (err) {
+              console.warn('⚠️ Error parseando extracted_data:', err);
+            }
+          }
+          
+          const routes = data.data.routes.map((r, i) => applyExtractedFallback(r, i, parsedExtractedData));
+          console.log(`📦 ${routes.length} ruta(s) encontrada(s)`);
+          
+          // Debug: verificar tipo_embajale Y que los IDs se preserven
+          routes.forEach((r, i) => {
+            console.log(`Ruta ${i + 1} - id: ${r.id}, tipo_embajale: ${r.tipo_embajale}, empaque: ${r.empaque}`);
+          });
+          
+          setLocalRoutes(routes);
+          // NO actualizar quoteData aquí - solo trabajar con localRoutes para evitar duplicación
+        } else {
+          console.warn('⚠️ No se encontraron rutas guardadas');
+          // Si no hay rutas en BD, usar quoteData pasado como prop
+          if (normalizedRoutes.length > 0) {
+            console.log('🔄 Usando rutas desde props (recién creadas)');
+            setLocalRoutes(normalizedRoutes.map((r, i) => applyExtractedFallback(r, i)));
+          } else {
+            setError('No se encontraron rutas para este grupo');
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error cargando rutas:', err);
+        setError('Error de red al cargar rutas: ' + err.message);
+        // Fallback: usar normalizedRoutes si hay error
+        if (normalizedRoutes.length > 0) {
+          setLocalRoutes(normalizedRoutes.map((r, i) => applyExtractedFallback(r, i)));
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadRoutes();
+  }, [catalogsLoaded, groupId]); // Depende de catalogsLoaded Y groupId
+
+  // Función auxiliar para normalizar texto (quitar tildes, mayúsculas, espacios, puntos)
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return text
+      .toString()
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar tildes/acentos
+      .replace(/[.,:;!?]/g, '') // 🆕 Quitar puntuación
+      .trim();
+  };
+
+  // Normalizar con manejo de plural/singular para embalajes
+  const normalizePackingName = (text) => {
+    if (!text) return '';
+    let normalized = normalizeText(text);
+    
+    // Remover plural común en español (terminaciones -S, -ES)
+    if (normalized.endsWith('S') && normalized.length > 2) {
+      normalized = normalized.slice(0, -1); // BOLSAS -> BOLSA, CAJAS -> CAJA
+    }
+    if (normalized.endsWith('ES') && normalized.length > 3) {
+      normalized = normalized.slice(0, -2); // TONELES -> TONEL
+    }
+    
+    return normalized;
+  };
+
+  // 🆕 Ciudades principales que deben tener prioridad cuando hay ambigüedad
+  // (ej: CARTAGENA debe ser BOLIVAR, no NARIÑO)
+  const CIUDADES_PRINCIPALES = {
+    'CARTAGENA': 'BOLIVAR',
+    'ARMENIA': 'QUINDIO',
+    'CALI': 'VALLE DEL CAUCA',
+    'MEDELLIN': 'ANTIOQUIA',
+    'BOGOTA': 'CUNDINAMARCA',
+    'BARRANQUILLA': 'ATLANTICO',
+    'BUCARAMANGA': 'SANTANDER',
+    'PEREIRA': 'RISARALDA',
+    'MANIZALES': 'CALDAS',
+    'IBAGUE': 'TOLIMA',
+    'CUCUTA': 'NORTE DE SANTANDER',
+    'SANTA MARTA': 'MAGDALENA',
+    'VILLAVICENCIO': 'META',
+    'PASTO': 'NARINO',
+    'NEIVA': 'HUILA',
+    'MONTERIA': 'CORDOBA',
+    'VALLEDUPAR': 'CESAR',
+    'TUNJA': 'BOYACA',
+    'POPAYAN': 'CAUCA',
+    'SINCELEJO': 'SUCRE',
+    'RIOHACHA': 'LA GUAJIRA',
+    'QUIBDO': 'CHOCO',
+    'FLORENCIA': 'CAQUETA',
+    'YOPAL': 'CASANARE',
+    'BUENAVENTURA': 'VALLE DEL CAUCA',
+  };
 
   // Helpers to preselect if route has code or name
   const resolveCityCode = (routeValue) => {
     if (!routeValue) return '';
+    
+    console.log('🔍 resolveCityCode INPUT:', routeValue);
+    
+    // Buscar por código exacto
     const byCode = cities.find(c => String(c.ciudad_codigo) === String(routeValue));
-    if (byCode) return byCode.ciudad_codigo;
+    if (byCode) {
+      console.log(`✅ Ciudad encontrada por código: ${byCode.ciudad_codigo}`);
+      return byCode.ciudad_codigo;
+    }
 
-    const byName = cities.find(c => {
-      const name = c.ciudad_nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+    // Buscar por nombre normalizado (sin tildes, sin case-sensitive, sin puntuación)
+    const normalizedRoute = normalizeText(routeValue);
+    
+    // 🆕 PRIMERO: Extraer solo el nombre de la ciudad (sin departamento)
+    // Para poder aplicar la lógica de prioridad incluso si viene "CARTAGENA - NARIÑO" o "SANTA MARTA - NARIÑO"
+    const ciudadSinDepto = normalizedRoute.split('-')[0].trim();
+    
+    console.log(`🔍 ciudadSinDepto: "${ciudadSinDepto}"`);
+    
+    // Verificar si esta ciudad tiene un departamento principal definido
+    const deptoPrincipal = CIUDADES_PRINCIPALES[ciudadSinDepto];
+    
+    if (deptoPrincipal) {
+      const normalizedDeptoPrincipal = normalizeText(deptoPrincipal);
+      console.log(`🔄 Ciudad principal detectada: "${ciudadSinDepto}" → debe ser "${deptoPrincipal}" (normalizado: "${normalizedDeptoPrincipal}")`);
+      
+      // Buscar la ciudad principal en el catálogo - BÚSQUEDA EXACTA del departamento
+      const principal = cities.find(c => {
+        const normalizedCityName = normalizeText(c.ciudad_nombre || '');
+        const normalizedDeptName = normalizeText(c.departamento_nombre || '');
+        const nombreCiudad = normalizedCityName.split('-')[0].trim();
+        
+        // Match si: nombre ciudad coincide Y departamento coincide EXACTAMENTE
+        const matchesCiudad = nombreCiudad === ciudadSinDepto;
+        const matchesDepto = normalizedDeptName === normalizedDeptoPrincipal;
+        
+        if (matchesCiudad && nombreCiudad === 'SANTA MARTA') {
+          console.log(`  🔎 Evaluando: ${c.ciudad_nombre} | Depto: "${normalizedDeptName}" === "${normalizedDeptoPrincipal}"? ${matchesDepto}`);
+        }
+        
+        return matchesCiudad && matchesDepto;
+      });
+      
+      if (principal) {
+        console.log(`✅ Ciudad PRINCIPAL encontrada: "${routeValue}" → ${principal.ciudad_nombre} - ${principal.departamento_nombre} (${principal.ciudad_codigo})`);
+        return principal.ciudad_codigo;
+      } else {
+        console.warn(`⚠️ No se encontró ciudad principal para "${ciudadSinDepto}" con depto "${deptoPrincipal}"`);
+        // Listar todas las ciudades con ese nombre para debug
+        const allMatches = cities.filter(c => normalizeText(c.ciudad_nombre || '').split('-')[0].trim() === ciudadSinDepto);
+        console.log(`  Ciudades encontradas con nombre "${ciudadSinDepto}":`, allMatches.map(c => `${c.ciudad_nombre} - ${c.departamento_nombre} (${c.ciudad_codigo})`));
+        
+        // Si tenemos matches, elegir la primera que coincida por orden (ya vienen ordenadas del backend)
+        if (allMatches.length > 0) {
+          // Buscar específicamente la del departamento principal
+          const correcta = allMatches.find(c => normalizeText(c.departamento_nombre || '') === normalizeText(deptoPrincipal));
+          if (correcta) {
+            console.log(`✅ Ciudad encontrada por fallback depto: ${correcta.ciudad_nombre} (${correcta.ciudad_codigo})`);
+            return correcta.ciudad_codigo;
+          }
+          // Si aún no la encuentra, usar la primera (ordenadas del backend)
+          console.log(`⚠️ Usando primera coincidencia: ${allMatches[0].ciudad_nombre} (${allMatches[0].ciudad_codigo})`);
+          return allMatches[0].ciudad_codigo;
+        }
+      }
+    }
+    
+    // Si no tiene ciudad principal o no se encontró, búsqueda exacta
+    const byExactName = cities.find(c => {
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      return normalizedCity === normalizedRoute;
     });
-    return byName ? byName.ciudad_codigo : '';
+    
+    if (byExactName) {
+      console.log(`✅ Ciudad encontrada (exacta): "${routeValue}" → código ${byExactName.ciudad_codigo} (${byExactName.ciudad_nombre})`);
+      return byExactName.ciudad_codigo;
+    }
+    
+    // Búsqueda parcial: buscar ciudades que comiencen con el nombre
+    // 🔥 FIX: Priorizar ciudades principales si hay candidatas múltiples
+    const candidatas = cities.filter(c => {
+      const normalizedCity = normalizeText(c.ciudad_nombre || '');
+      const nombreCiudad = normalizedCity.split('-')[0].trim();
+      return nombreCiudad === ciudadSinDepto || normalizedCity.startsWith(ciudadSinDepto + ' -');
+    });
+    
+    if (candidatas.length > 0) {
+      // Si hay múltiples candidatas, priorizar la que tenga el departamento principal
+      if (candidatas.length > 1 && CIUDADES_PRINCIPALES[ciudadSinDepto]) {
+        const deptoPref = normalizeText(CIUDADES_PRINCIPALES[ciudadSinDepto]);
+        const preferida = candidatas.find(c => {
+          const normalizedDept = normalizeText(c.departamento_nombre || '');
+          return normalizedDept === deptoPref || normalizedDept.includes(deptoPref);
+        });
+        if (preferida) {
+          console.log(`✅ Ciudad PREFERIDA encontrada entre candidatas: "${routeValue}" → ${preferida.ciudad_nombre} (${preferida.ciudad_codigo})`);
+          return preferida.ciudad_codigo;
+        }
+      }
+      
+      console.log(`✅ Ciudad encontrada (parcial): "${routeValue}" → código ${candidatas[0].ciudad_codigo} (${candidatas[0].ciudad_nombre})`);
+      return candidatas[0].ciudad_codigo;
+    }
+    
+    console.warn(`⚠️ Ciudad NO encontrada: "${routeValue}" (normalizado: "${normalizedRoute}")`);
+    return '';
   };
 
   const resolvePackingCode = (routeValue) => {
-    if (!routeValue) return '';
-    const byCode = packings.find(p => String(p.Codigo) === String(routeValue));
-    if (byCode) return byCode.Codigo;
+    if (!routeValue) {
+      console.log('📦 resolvePackingCode: valor vacío, retornando string vacío');
+      return '';
+    }
 
-    const byName = packings.find(p => {
-      const name = p.Nombre || p.nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+    const value = routeValue?.Codigo ?? routeValue?.codigo ?? routeValue?.empaque_id ?? routeValue?.id ?? routeValue;
+    const isNumeric = !isNaN(value) && !isNaN(parseFloat(value));
+
+    console.log('🔍 resolvePackingCode INPUT:', {
+      routeValueOriginal: routeValue,
+      valueExtraido: value,
+      tipo: typeof value,
+      esNumerico: isNumeric,
+      packingsDisponibles: packings.length,
+      todosLosEmbalajes: packings.map(p => ({ Codigo: p.Codigo, Nombre: p.Nombre }))
     });
-    return byName ? byName.Codigo : '';
+    
+    // Si el valor es un string (nombre), buscar primero por nombre
+    if (!isNumeric) {
+      // Normalizar con manejo de plural/singular
+      const normalizedRoute = normalizePackingName(value);
+      console.log('🔤 Buscando por NOMBRE primero:', { original: value, normalizado: normalizedRoute });
+      
+      const byName = packings.find(p => {
+        const name = p.Nombre || p.nombre || p.nome || '';
+        const normalized = normalizePackingName(name);
+        const match = normalized === normalizedRoute;
+        console.log(`  "${normalizedRoute}" === "${normalized}" (${name})? ${match}`);
+        return match;
+      });
+      
+      if (byName) {
+        console.log('✅ Embalaje encontrado por NOMBRE:', byName);
+        return byName.Codigo;
+      }
+      
+      // Segundo intento: buscar con match parcial (contiene)
+      const byPartialMatch = packings.find(p => {
+        const name = p.Nombre || p.nombre || p.nome || '';
+        const normalized = normalizePackingName(name);
+        const match = normalized.includes(normalizedRoute) || normalizedRoute.includes(normalized);
+        if (match) console.log(`  Match parcial: "${normalizedRoute}" <-> "${normalized}" (${name})`);
+        return match;
+      });
+      
+      if (byPartialMatch) {
+        console.log('✅ Embalaje encontrado por MATCH PARCIAL:', byPartialMatch);
+        return byPartialMatch.Codigo;
+      }
+    }
+    
+    // Buscar por código solo si es numérico
+    const byCode = packings.find(p => String(p.Codigo ?? p.codigo ?? p.empaque_id ?? p.id) === String(value));
+    if (byCode) {
+      console.log('✅ Embalaje encontrado por CÓDIGO:', byCode);
+      return byCode.Codigo;
+    }
+
+    // Último intento: buscar por nombre normalizado si no se encontró por código
+    const normalizedRoute = normalizePackingName(value);
+    console.log('🔤 Último intento por nombre normalizado:', { original: value, normalizado: normalizedRoute });
+    
+    const byName = packings.find(p => {
+      const name = p.Nombre || p.nombre || p.nome || '';
+      const normalized = normalizePackingName(name);
+      console.log(`  Comparando: "${normalizedRoute}" === "${normalized}" (${name})`);
+      return normalized === normalizedRoute;
+    });
+    
+    if (byName) {
+      console.log('✅ Embalaje encontrado por NOMBRE:', byName);
+      return byName.Codigo;
+    }
+    
+    console.warn('⚠️ Embalaje NO encontrado para:', value, 'en', packings.length, 'opciones');
+    console.warn('   Embalajes disponibles:', packings.map(p => p.Nombre || p.nome).join(', '));
+    return '';
   };
 
   const resolveProductCode = (routeValue) => {
-    if (!routeValue) return '';
+    if (!routeValue) {
+      console.log('📦 resolveProductCode: valor vacío');
+      return '';
+    }
+    
+    console.log('🔍 resolveProductCode:', {
+      routeValue,
+      productsLength: products.length,
+      productsSample: products.slice(0, 3)
+    });
+    
+    // Buscar por código
     const byCode = products.find(p => String(p.producto_codigo) === String(routeValue));
-    if (byCode) return byCode.producto_codigo;
+    if (byCode) {
+      console.log('✅ Producto encontrado por código:', byCode);
+      return byCode.producto_codigo;
+    }
 
+    // Buscar por nombre normalizado
+    const normalizedRoute = normalizeText(routeValue);
     const byName = products.find(p => {
       const name = p.producto_nombre || p.nombre || '';
-      return name.toString().toLowerCase() === String(routeValue).toLowerCase();
+      return normalizeText(name) === normalizedRoute;
     });
-    return byName ? byName.producto_codigo : '';
+    
+    if (byName) {
+      console.log('✅ Producto encontrado por nombre:', byName);
+      return byName.producto_codigo;
+    }
+    
+    console.warn('⚠️ Producto NO encontrado en BD:', routeValue, '- usaré el valor como texto personalizado');
+    // Si no se encuentra, retornar el valor original (producto personalizado)
+    return routeValue;
+  };
+
+  // Tabla de capacidades de vehículos (kg) - tomada de vehiculos_pricing
+  const vehicleCapacities = {
+    'CAMIONETA': 2000,
+    'TURBO': 4000,
+    'SENCILLO': 9000,
+    'PATINETA2': 20000,
+    'PATINETA3': 25000,
+    'TRACTOMULA 2': 30000,
+    'TRACTOMULA 3': 34000
+  };
+
+  // Función para recomendar vehículo basado en peso
+  const recommendVehicle = (weight) => {
+    if (!weight || weight <= 0) return 'SENCILLO';
+    
+    const weightNum = parseFloat(weight);
+    
+    // Ordenar por capacidad ascendente y seleccionar el primero que pueda llevar el peso
+    const sortedVehicles = Object.entries(vehicleCapacities)
+      .sort((a, b) => a[1] - b[1]);
+    
+    for (const [vehicle, capacity] of sortedVehicles) {
+      if (weightNum <= capacity) {
+        console.log(`🚚 Recomendando ${vehicle} para ${weightNum} kg (capacidad: ${capacity} kg)`);
+        return vehicle;
+      }
+    }
+    
+    // Si excede todas las capacidades, retornar el más grande
+    console.log(`⚠️ Peso ${weightNum} kg excede todas las capacidades, recomendando TRACTOMULA 3`);
+    return 'TRACTOMULA 3';
   };
 
   const handleChange = (index, field, value) => {
     setLocalRoutes(prev =>
-      prev.map((r, i) => (i === index ? { ...r, [field]: value } : r))
+      prev.map((r, i) => {
+        if (i !== index) return r;
+        
+        const updated = { ...r, [field]: value };
+        
+        // Si cambió el peso, auto-recomendar vehículo
+        if (field === 'peso_mercancia' && value) {
+          const recommendedVehicle = recommendVehicle(value);
+          updated.vehiculo_requerido = recommendedVehicle;
+          console.log(`🔄 Peso actualizado a ${value} kg, vehículo recomendado: ${recommendedVehicle}`);
+        }
+        
+        return updated;
+      })
     );
   };
 
@@ -154,20 +594,20 @@ const EditRoutesModal = ({
         throw new Error(data.error || 'Server error saving routes');
       }
 
+      // Actualizar IDs en localRoutes
       if (data.data?.routes) {
-        setLocalRoutes(prev =>
-          prev.map((r, i) => ({
-            ...r,
-            id: data.data.routes[i]?.id || r.id || null,
-          }))
-        );
-        setQuoteData(prev =>
-          prev.map((r, i) => ({
-            ...r,
-            id: data.data.routes[i]?.id || r.id || null,
-          }))
-        );
+        const updatedRoutes = localRoutes.map((r, i) => ({
+          ...r,
+          id: data.data.routes[i]?.id || r.id || null,
+        }));
+        
+        setLocalRoutes(updatedRoutes);
+        // Actualizar quoteData UNA SOLA VEZ al guardar
+        setQuoteData(updatedRoutes);
+        
+        console.log('✅ Rutas guardadas y actualizadas:', updatedRoutes.length, 'ruta(s)');
       }
+      
       onNext && onNext();
     } catch (err) {
       setError(err.message);
@@ -183,8 +623,8 @@ const EditRoutesModal = ({
   }));
 
   const packingOptions = packings.map(p => ({
-    value: p.Codigo,
-    label: p.Nombre || p.nombre || p.Codigo,
+    value: p.Codigo || p.codigo || p.empaque_id || p.id,
+    label: p.Nombre || p.nombre || p.nome || p.empaque || p.Codigo,
   }));
 
   const productOptions = products.map(prod => ({
@@ -193,9 +633,22 @@ const EditRoutesModal = ({
   }));
 
   const addRoute = () => {
-    setLocalRoutes(prev => [
-      ...prev,
-      {
+    setLocalRoutes(prev => {
+      // Copiar datos de la última ruta si existe
+      const lastRoute = prev.length > 0 ? prev[prev.length - 1] : null;
+      
+      const newRoute = lastRoute ? {
+        id: null,
+        ciudad_origen: '', // NO copiar ciudades
+        ciudad_destino: '', // NO copiar ciudades
+        peso_mercancia: lastRoute.peso_mercancia || '',
+        cantidad: lastRoute.cantidad || '',
+        tipo_embajale: lastRoute.tipo_embajale || '',
+        tipo_producto: lastRoute.tipo_producto || '',
+        producto_codigo: lastRoute.producto_codigo || '',
+        vehiculo_requerido: lastRoute.vehiculo_requerido || '',
+        valor_declarado: lastRoute.valor_declarado || '',
+      } : {
         id: null,
         ciudad_origen: '',
         ciudad_destino: '',
@@ -205,8 +658,12 @@ const EditRoutesModal = ({
         tipo_producto: '',
         vehiculo_requerido: '',
         valor_declarado: '',
-      },
-    ]);
+      };
+      
+      console.log('➕ Nueva ruta agregada con datos copiados:', newRoute);
+      
+      return [...prev, newRoute];
+    });
   };
 
   const removeRoute = (index) => {
@@ -228,8 +685,39 @@ const EditRoutesModal = ({
             {localRoutes.map((route, index) => {
               const selectedOriginCode = resolveCityCode(route.ciudad_origen);
               const selectedDestinationCode = resolveCityCode(route.ciudad_destino);
-              const selectedPackingCode = resolvePackingCode(route.tipo_embajale);
+              
+              // EMBALAJE: Usar NOMBRE directamente sin resolución a código
+              const packingName = route.empaque || route.tipo_embajale || route.tipo_embalaje || '';
+              
+              console.log(`🚨 DEBUG RUTA ${index + 1}:`, {
+                'route.empaque': route.empaque,
+                'route.tipo_embajale': route.tipo_embajale,
+                'packingName': packingName
+              });
+              
+              // Crear opción directamente con el nombre, sin buscar código
+              const selectedPackingOption = packingName 
+                ? { value: packingName, label: packingName }
+                : null;
+              
+              console.log(`🔍 selectedPackingOption:`, selectedPackingOption);
+              
+              // PRODUCTO: Lógica existente
               const selectedProductCode = resolveProductCode(route.tipo_producto);
+              
+              console.log(`📋 Ruta ${index + 1} - Valores resueltos:`, {
+                origen: { valor: route.ciudad_origen, codigo: selectedOriginCode },
+                destino: { valor: route.ciudad_destino, codigo: selectedDestinationCode },
+                embalaje: { 
+                  'route.empaque': route.empaque, 
+                  'route.tipo_embajale': route.tipo_embajale,
+                  'packingName': packingName,
+                  'selectedPackingCode': selectedPackingCode,
+                  'selectedPackingOption': selectedPackingOption
+                },
+                producto: { valor: route.tipo_producto, codigo: selectedProductCode },
+                incluye_tara: route.incluye_tara
+              });
 
               return (
                 <div key={index} className="border p-4 rounded-lg bg-gray-50 relative">
@@ -285,10 +773,16 @@ const EditRoutesModal = ({
                         classNamePrefix="rs"
                         placeholder="Seleccione embalaje"
                         options={packingOptions}
-                        value={packingOptions.find(o => String(o.value) === String(selectedPackingCode)) || null}
+                        value={selectedPackingOption}
                         onChange={(opt) => {
-                          const packing = packings.find(p => String(p.Codigo) === String(opt?.value));
-                          handleChange(index, 'tipo_embajale', packing ? packing.Codigo : '');
+                          const packing = packings.find(p => String(p.Codigo ?? p.codigo ?? p.empaque_id ?? p.id) === String(opt?.value));
+                          const packingCode = packing ? (packing.Codigo ?? packing.codigo ?? packing.empaque_id ?? packing.id) : '';
+                          const packingName = packing
+                            ? (packing.Nombre || packing.nombre || packing.nome || packing.empaque || '')
+                            : (opt?.label || opt?.value || '');
+                          handleChange(index, 'tipo_embajale', packingCode || packingName);
+                          handleChange(index, 'empaque', packingName);
+                          handleChange(index, 'empaque_id', packingCode || null);
                         }}
                         isClearable
                       />
@@ -301,10 +795,17 @@ const EditRoutesModal = ({
                         classNamePrefix="rs"
                         placeholder="Seleccione producto"
                         options={productOptions}
-                        value={productOptions.find(o => String(o.value) === String(selectedProductCode)) || null}
+                        value={
+                          selectedProductCode
+                            ? productOptions.find(o => String(o.value) === String(selectedProductCode)) ||
+                              // Si no se encuentra en las opciones, crear opción personalizada
+                              { value: selectedProductCode, label: `${selectedProductCode} (personalizado)` }
+                            : null
+                        }
                         onChange={(opt) => {
                           const product = products.find(p => String(p.producto_codigo) === String(opt?.value));
-                          handleChange(index, 'tipo_producto', product ? product.producto_codigo : '');
+                          // Si es un producto de la BD, guardar código; si es personalizado, guardar texto
+                          handleChange(index, 'tipo_producto', product ? product.producto_codigo : (opt?.value || ''));
                         }}
                         isClearable
                       />
@@ -329,11 +830,33 @@ const EditRoutesModal = ({
                       />
                     </div>
                     <div>
-                      <label className="text-xs uppercase text-gray-500">Vehículo Requerido</label>
-                      <input
-                        className="w-full border rounded px-2 py-1 text-sm"
-                        value={route.vehiculo_requerido || ''}
-                        onChange={(e) => handleChange(index, 'vehiculo_requerido', e.target.value)}
+                      <label className="text-xs uppercase text-gray-500">
+                        Vehículo Requerido
+                        {route.peso_mercancia && (
+                          <span className="text-green-600 ml-2 text-xs normal-case">
+                            (Recomendado: {recommendVehicle(route.peso_mercancia)})
+                          </span>
+                        )}
+                      </label>
+                      <Select
+                        classNamePrefix="rs"
+                        placeholder="Seleccione vehículo"
+                        options={[
+                          { value: 'CAMIONETA', label: 'CAMIONETA (hasta 2,000 kg)' },
+                          { value: 'TURBO', label: 'TURBO (hasta 4,000 kg)' },
+                          { value: 'SENCILLO', label: 'SENCILLO (hasta 9,000 kg)' },
+                          { value: 'PATINETA2', label: 'PATINETA2 (hasta 20,000 kg)' },
+                          { value: 'PATINETA3', label: 'PATINETA3 (hasta 25,000 kg)' },
+                          { value: 'TRACTOMULA 2', label: 'TRACTOMULA 2 (hasta 30,000 kg)' },
+                          { value: 'TRACTOMULA 3', label: 'TRACTOMULA 3 (hasta 34,000 kg)' },
+                        ]}
+                        value={
+                          route.vehiculo_requerido
+                            ? { value: route.vehiculo_requerido, label: route.vehiculo_requerido }
+                            : null
+                        }
+                        onChange={(opt) => handleChange(index, 'vehiculo_requerido', opt?.value || '')}
+                        isClearable
                       />
                     </div>
                     <div>
@@ -354,9 +877,13 @@ const EditRoutesModal = ({
         <div className="flex items-center justify-between mt-4">
           <button
             onClick={addRoute}
-            className="px-3 py-2 bg-gray-100 border rounded text-sm"
+            className="px-4 py-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 hover:bg-blue-100 transition-colors flex items-center space-x-2"
+            title="Agrega una nueva ruta copiando los datos de la ruta anterior (excepto origen/destino)"
           >
-            + Add Route
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            <span>+ Add Route {localRoutes.length > 0 && '(copiar datos anteriores)'}</span>
           </button>
 
           <div className="space-x-2">

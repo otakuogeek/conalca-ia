@@ -22,19 +22,37 @@ class QuoteEmailController extends Controller
             // Validar datos requeridos
             $request->validate([
                 'group_id' => 'required|integer|exists:group_cotizations,id',
-                'client_email' => 'required|email',
+                'client_email' => 'required',
                 'email_data' => 'required|array'
             ]);
 
             $groupId = $request->group_id;
-            $clientEmail = $request->client_email;
             $emailData = $request->email_data;
+
+            // Normalize client_email: accept string (comma/semicolon separated) or array
+            $rawEmail = $request->client_email;
+            if (is_array($rawEmail)) {
+                $clientEmails = array_map('trim', $rawEmail);
+            } else {
+                $clientEmails = array_map('trim', preg_split('/[,;]/', $rawEmail));
+            }
+            $clientEmails = array_filter($clientEmails, function ($e) {
+                return filter_var($e, FILTER_VALIDATE_EMAIL) !== false;
+            });
+            $clientEmails = array_values($clientEmails);
+
+            if (empty($clientEmails)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se proporcionaron correos electrónicos válidos',
+                ], 422);
+            }
 
             Log::info('Iniciando envío de email de cotización', [
                 'group_id' => $groupId,
-                'client_email' => $clientEmail,
+                'client_emails' => $clientEmails,
+                'recipients_count' => count($clientEmails),
                 'user_id' => auth()->id(),
-                'email_data_routes' => $emailData['routes'] ?? [],
                 'email_data_keys' => array_keys($emailData)
             ]);
 
@@ -58,10 +76,14 @@ class QuoteEmailController extends Controller
                     return [
                         'ciudad_origen' => $cotizacion->ciudad_origen,
                         'ciudad_destino' => $cotizacion->ciudad_destino,
-                        'vehiculo_requerido' => $cotizacion->vehiculo_requerido,
+                        'vehiculo_requerido' => $cotizacion->vehiculo_filtrado ?? $cotizacion->vehiculo_requerido,
+                        'vehiculo_solicitado' => $cotizacion->vehiculo_requerido,
                         'peso_mercancia' => $cotizacion->peso_mercancia,
                         'valor' => $cotizacion->valor,
                         'valor_final' => $cotizacion->valor,
+                        'valor_declarado' => $cotizacion->valor_declarado,
+                        'tipo_producto' => $cotizacion->tipo_producto,
+                        'tipo_mercancia' => $cotizacion->tipo_mercancia,
                         'tipaco_codigo' => $cotizacion->tipaco_codigo ?? null,
                         'itesoltra_vehiculoacompanamiento' => $cotizacion->itesoltra_vehiculoacompanamiento ?? 0,
                         'itesoltra_acompanamientovalor' => $cotizacion->itesoltra_acompanamientovalor ?? 0,
@@ -103,6 +125,10 @@ class QuoteEmailController extends Controller
                 'routes'                => $this->prepareRoutesWithTotals($routesFromDB),
                 'total_price'           => $this->calculateTotalPrice($routesFromDB),
                 
+                // Datos de la solicitud original para comparativo
+                'cargo_type'            => $group->cargo_type ?? $emailData['cargo_type'] ?? null,
+                'operation_type'        => $group->operation_type ?? $emailData['operation_type'] ?? null,
+                
                 // Asesor
                 'asesor_name'           => $emailData['asesor_name'] ?? 'Asesor Comercial',
                 'asesor_phone'  => $emailData['asesor_phone'] ?? optional(auth()->user())->phone ?? '',
@@ -117,20 +143,21 @@ class QuoteEmailController extends Controller
                 'acceptOfferDecision'   => ''
             ];
 
-            // Enviar el email
-            Mail::to($clientEmail)->send(new StepCompleted($emailDataForMail));
+            // Enviar el email a todos los destinatarios
+            Mail::to($clientEmails)->send(new StepCompleted($emailDataForMail));
 
             Log::info('Email de cotización enviado exitosamente', [
                 'group_id' => $groupId,
-                'client_email' => $clientEmail,
+                'client_emails' => $clientEmails,
+                'recipients_count' => count($clientEmails),
                 'user_id' => auth()->id()
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Email enviado exitosamente',
+                'message' => 'Email enviado exitosamente a ' . count($clientEmails) . ' destinatario(s)',
                 'group_id' => $groupId,
-                'email_sent_to' => $clientEmail
+                'email_sent_to' => $clientEmails
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {

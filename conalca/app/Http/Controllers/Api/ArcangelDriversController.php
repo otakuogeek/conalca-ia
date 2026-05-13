@@ -7,6 +7,7 @@ use App\Models\CotizacionModel;
 use App\Models\LlamadaConductor;
 use App\Models\GroupCotization;
 use App\Services\ArcangelService;
+use App\Services\CotizacionCallWindowService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -50,11 +51,30 @@ class ArcangelDriversController extends Controller
             }
             
             $cotizacionId = $request->input('cotizacion_id');
-            $minScore = $request->input('min_score', 7);
+            $minScore = $request->input('min_score', 0);
             $limit = $request->input('limit', 50);
             
             // Obtener cotización
             $cotizacion = CotizacionModel::findOrFail($cotizacionId);
+
+            $callRestriction = app(CotizacionCallWindowService::class)->getCallRestriction($cotizacion);
+            if ($callRestriction) {
+                Log::warning('Búsqueda de conductores bloqueada por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $callRestriction['message'],
+                    'code' => $callRestriction['code'],
+                    'cotizacion_id' => $cotizacionId,
+                    'loading_at' => $callRestriction['loading_at'],
+                    'loading_at_label' => $callRestriction['loading_at_label'],
+                    'checked_at' => $callRestriction['checked_at'],
+                    'checked_at_label' => $callRestriction['checked_at_label'],
+                ], 422);
+            }
             
             if (!$cotizacion->ciudad_origen) {
                 return response()->json([
@@ -94,16 +114,81 @@ class ArcangelDriversController extends Controller
             ]);
             
             // Buscar en Arcángel API con todas las variantes del vehículo
-            $resultado = $this->arcangelService->getVehiculosFiltrados(
-                ciudad: $ciudadOrigen,
-                clases: $variantesVehiculo, // Ahora es un array de variantes
-                minScore: $minScore,
-                limit: $limit,
-                useCache: true,
-                cacheTTL: 15 // 15 minutos de cache
-            );
+            $vehiculos = [];
+            $fromCache = false;
+            $sourceStats = [
+                'city' => $ciudadOrigen,
+                'vehicle_requested' => $cotizacion->vehiculo_requerido,
+                'vehicle_variants' => $variantesVehiculo,
+                'min_score' => $minScore,
+                'city_total' => 0,
+                'filtered_total' => 0,
+            ];
             
-            $vehiculos = $resultado['vehiculos'] ?? [];
+            try {
+                $resultado = $this->arcangelService->getVehiculosFiltrados(
+                    ciudad: $ciudadOrigen,
+                    clases: $variantesVehiculo,
+                    minScore: $minScore,
+                    limit: $limit,
+                    useCache: false
+                );
+                $vehiculos = $resultado['vehiculos'] ?? [];
+                $vehiculos = $this->deduplicateVehicles($vehiculos);
+                $sourceStats['city_total'] = (int) ($resultado['total_original'] ?? count($vehiculos));
+                $sourceStats['filtered_total'] = count($vehiculos);
+            } catch (\Exception $arcErr) {
+                Log::warning('⚠️ Arcángel no disponible, buscando conductores en BD local', [
+                    'error' => substr($arcErr->getMessage(), 0, 150),
+                    'cotizacion_id' => $cotizacionId
+                ]);
+                
+                // Fallback: buscar conductores ya guardados en BD para esta cotización
+                $conductoresDB = LlamadaConductor::where('cotizacion_id', $cotizacionId)
+                    ->where('disponible', true)
+                    ->orderBy('score', 'desc')
+                    ->limit($limit)
+                    ->get();
+                
+                if ($conductoresDB->isEmpty()) {
+                    // Buscar por ciudad y tipo de vehículo (cualquier cotización)
+                    $conductoresDB = LlamadaConductor::where('ciudad_actual', 'LIKE', "%{$ciudadOrigen}%")
+                        ->whereIn('tipo_vehiculo', $variantesVehiculo)
+                        ->where('disponible', true)
+                        ->orderBy('score', 'desc')
+                        ->limit($limit)
+                        ->get();
+                }
+                
+                if ($conductoresDB->isNotEmpty()) {
+                    $vehiculos = $conductoresDB->map(function ($c) {
+                        return [
+                            'placa' => $c->placa,
+                            'conductor' => $c->nombre_conductor,
+                            'telefono' => $c->telefono,
+                            'clase' => $c->tipo_vehiculo ?? $c->clase_vehiculo,
+                            'carroceria' => $c->carroceria,
+                            'capacidad' => $c->capacidad,
+                            'score' => $c->score,
+                        ];
+                    })->toArray();
+                    $vehiculos = $this->deduplicateVehicles($vehiculos);
+                    $fromCache = true;
+                    $sourceStats['city_total'] = count($vehiculos);
+                    $sourceStats['filtered_total'] = count($vehiculos);
+                    
+                    Log::info('✅ Conductores obtenidos desde BD local (fallback)', [
+                        'total' => count($vehiculos),
+                        'cotizacion_id' => $cotizacionId
+                    ]);
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El servicio de Arcángel no está disponible y no hay conductores guardados previamente. Intente de nuevo en unos minutos.',
+                        'arcangel_error' => true
+                    ], 503);
+                }
+            }
             
             // Obtener el grupo de cotización desde la cotización (la relación correcta)
             $groupCotization = $cotizacion->group_cotization_id 
@@ -142,22 +227,60 @@ class ArcangelDriversController extends Controller
                 'total_guardados' => count($conductoresGuardados)
             ]);
             
-            // Formatear datos para el frontend
-            $conductores = array_map(function ($vehiculo) {
-                return [
-                    'placa' => $vehiculo['placa'] ?? 'N/A',
-                    'conductor' => $vehiculo['conductor'] ?? 'N/A',
-                    'telefono' => $vehiculo['telefono'] ?? 'N/A',
-                    'clase_vehiculo' => $vehiculo['clase'] ?? 'N/A',
-                    'carroceria' => $vehiculo['carroceria'] ?? 'N/A',
-                    'capacidad' => $vehiculo['capacidad'] ?? null,
-                    'score' => $vehiculo['score'] ?? 0,
-                    // La API de Arcángel solo retorna vehículos disponibles, por lo que siempre es true
-                    'disponible' => true,
-                    'ultima_actualizacion' => $vehiculo['ultimaActualizacion'] ?? null,
-                    'ultima_actualizacion' => $vehiculo['ultimaActualizacion'] ?? null,
-                ];
-            }, $vehiculos);
+            // Formatear datos para el frontend usando los registros guardados en BD
+            // Esto incluye estado_llamada y fecha_llamada de llamadas previas
+            $conductores = [];
+            
+            if (!empty($conductoresGuardados)) {
+                foreach ($conductoresGuardados as $cg) {
+                    $yaLlamado = !in_array($cg->estado_llamada, ['pendiente', null]);
+                    $arcangelVehicleType = data_get($cg->datos_adicionales, 'clase')
+                        ?? data_get($cg->datos_adicionales, 'tipo_vehiculo')
+                        ?? $cg->clase_vehiculo
+                        ?? $cg->tipo_vehiculo
+                        ?? 'N/A';
+
+                    $conductores[] = [
+                        'id' => $cg->id,
+                        'placa' => $cg->placa ?? 'N/A',
+                        'conductor' => $cg->nombre_conductor ?? 'N/A',
+                        'telefono' => $cg->telefono ?? 'N/A',
+                        'clase_vehiculo' => $cg->clase_vehiculo ?? 'N/A',
+                        'tipo_vehiculo_arcangel' => $arcangelVehicleType,
+                        'carroceria' => $cg->carroceria ?? 'N/A',
+                        'capacidad' => $cg->capacidad ?? null,
+                        'score' => $cg->score ?? 0,
+                        'disponible' => $cg->disponible ?? true,
+                        'ultima_actualizacion' => $cg->ultima_actualizacion,
+                        'ya_llamado' => $yaLlamado,
+                        'estado_llamada' => $cg->estado_llamada,
+                        'fecha_llamada' => $cg->fecha_llamada ? $cg->fecha_llamada->format('Y-m-d H:i') : null,
+                        'respuesta_llamada' => $cg->respuesta_llamada,
+                    ];
+                }
+                $conductores = $this->deduplicateFormattedDrivers($conductores);
+            } else {
+                // Fallback: formatear directamente desde la respuesta de Arcángel
+                foreach ($vehiculos as $vehiculo) {
+                    $conductores[] = [
+                        'placa' => $vehiculo['placa'] ?? 'N/A',
+                        'conductor' => $vehiculo['conductor'] ?? 'N/A',
+                        'telefono' => $vehiculo['telefono'] ?? 'N/A',
+                        'clase_vehiculo' => $vehiculo['clase'] ?? 'N/A',
+                        'tipo_vehiculo_arcangel' => $vehiculo['clase'] ?? $vehiculo['tipo_vehiculo'] ?? 'N/A',
+                        'carroceria' => $vehiculo['carroceria'] ?? 'N/A',
+                        'capacidad' => $vehiculo['capacidad'] ?? null,
+                        'score' => $vehiculo['score'] ?? 0,
+                        'disponible' => true,
+                        'ultima_actualizacion' => $vehiculo['ultimaActualizacion'] ?? null,
+                        'ya_llamado' => false,
+                        'estado_llamada' => null,
+                        'fecha_llamada' => null,
+                        'respuesta_llamada' => null,
+                    ];
+                }
+                $conductores = $this->deduplicateFormattedDrivers($conductores);
+            }
             
             return response()->json([
                 'success' => true,
@@ -176,7 +299,8 @@ class ArcangelDriversController extends Controller
                         'vehiculo_original' => $cotizacion->vehiculo_requerido,
                         'variantes_buscadas' => $variantesVehiculo,
                         'min_score' => $minScore
-                    ]
+                    ],
+                    'source_stats' => $sourceStats,
                 ],
                 'message' => count($conductores) > 0 
                     ? "Se encontraron " . count($conductores) . " conductores disponibles"
@@ -193,10 +317,60 @@ class ArcangelDriversController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Error al buscar conductores: ' . $e->getMessage(),
-                'error' => config('app.debug') ? $e->getTraceAsString() : null
+                'message' => 'No se pudo completar la búsqueda de conductores. Intente de nuevo.',
+                'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
+    }
+
+    private function deduplicateVehicles(array $vehiculos): array
+    {
+        $uniqueVehicles = [];
+
+        foreach ($vehiculos as $vehiculo) {
+            $telefono = preg_replace('/\D+/', '', (string) ($vehiculo['telefono'] ?? ''));
+            $placa = strtoupper(trim((string) ($vehiculo['placa'] ?? '')));
+            $nombre = strtoupper(trim((string) ($vehiculo['conductor'] ?? '')));
+            $key = $placa !== ''
+                ? "placa:{$placa}"
+                : ($telefono !== '' ? "telefono:{$telefono}" : "nombre:{$nombre}");
+
+            if (!isset($uniqueVehicles[$key])) {
+                $uniqueVehicles[$key] = $vehiculo;
+                continue;
+            }
+
+            if (($vehiculo['score'] ?? 0) > ($uniqueVehicles[$key]['score'] ?? 0)) {
+                $uniqueVehicles[$key] = $vehiculo;
+            }
+        }
+
+        return array_values($uniqueVehicles);
+    }
+
+    private function deduplicateFormattedDrivers(array $conductores): array
+    {
+        $uniqueDrivers = [];
+
+        foreach ($conductores as $conductor) {
+            $telefono = preg_replace('/\D+/', '', (string) ($conductor['telefono'] ?? ''));
+            $placa = strtoupper(trim((string) ($conductor['placa'] ?? '')));
+            $nombre = strtoupper(trim((string) ($conductor['conductor'] ?? '')));
+            $key = $placa !== '' && $placa !== 'N/A'
+                ? "placa:{$placa}"
+                : ($telefono !== '' ? "telefono:{$telefono}" : "nombre:{$nombre}");
+
+            if (!isset($uniqueDrivers[$key])) {
+                $uniqueDrivers[$key] = $conductor;
+                continue;
+            }
+
+            if (($conductor['score'] ?? 0) > ($uniqueDrivers[$key]['score'] ?? 0)) {
+                $uniqueDrivers[$key] = $conductor;
+            }
+        }
+
+        return array_values($uniqueDrivers);
     }
     
     /**
@@ -222,7 +396,7 @@ class ArcangelDriversController extends Controller
             
             $ciudad = $this->normalizarTexto($request->input('ciudad'));
             $vehiculo = $this->normalizarTexto($request->input('vehiculo'));
-            $minScore = $request->input('min_score', 7);
+            $minScore = $request->input('min_score', 0);
             $limit = $request->input('limit', 50);
             
             $resultado = $this->arcangelService->getVehiculosFiltrados(
@@ -230,8 +404,7 @@ class ArcangelDriversController extends Controller
                 clases: $vehiculo,
                 minScore: $minScore,
                 limit: $limit,
-                useCache: true,
-                cacheTTL: 15
+                useCache: false
             );
             
             $vehiculos = $resultado['vehiculos'] ?? [];
@@ -398,35 +571,39 @@ class ArcangelDriversController extends Controller
         }
         
         // MAPEO DE RESPALDO (fallback) si no hay relación en BD
+        // ⚠️ IMPORTANTE: Búsqueda ESTRICTA - Solo busca el tipo exacto solicitado
         $mapeoRespaldo = [
             // Tractomulas
             'TRACTO MULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
-            'TRACTO MULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
+            'TRACTO MULA' => ['TRACTOMULA'],
             'TRACTOMULA S3' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
-            'TRACTOMULA' => ['TRACTOMULA', 'TRACTOMULA3', 'TRACTOMULA 3'],
-            'ARTICULADO' => ['TRACTOMULA3', 'TRACTOMULA 3', 'TRACTOMULA S3'],
+            'TRACTOMULA3' => ['TRACTOMULA3', 'TRACTOMULA 3'],
+            'TRACTOMULA' => ['TRACTOMULA'],
+            'ARTICULADO' => ['TRACTOMULA3', 'TRACTOMULA 3'],
             'TRACTOCAMION' => ['TRACTOMULA3', 'TRACTOMULA 3'],
             
             // Sencillos
             'SENCILLO' => ['SENCILLO'],
             'CAMION SENCILLO' => ['SENCILLO'],
-            'RIGIDO' => ['SENCILLO', 'CAMIONETA', 'TURBO'],
             
             // Doble troque
             'DOBLE TROQUE' => ['DOBLE TROQUE', 'DOBLETROQUE'],
+            'DOBLETROQUE' => ['DOBLE TROQUE', 'DOBLETROQUE'],
             
-            // Camionetas
-            'CAMIONETA' => ['CAMIONETA', 'TURBO'],
-            'TURBO' => ['TURBO', 'CAMIONETA'],
+            // Camionetas y Turbo - BÚSQUEDA ESTRICTA
+            'CAMIONETA' => ['CAMIONETA'],
+            'TURBO' => ['TURBO'],
             
             // Patinetas
-            'PATINETA' => ['PATINETA', 'PATINETA2', 'PATINETA3'],
+            'PATINETA' => ['PATINETA'],
             'PATINETA 2' => ['PATINETA2', 'PATINETA 2'],
+            'PATINETA2' => ['PATINETA2', 'PATINETA 2'],
             'PATINETA 3' => ['PATINETA3', 'PATINETA 3'],
+            'PATINETA3' => ['PATINETA3', 'PATINETA 3'],
             
             // Contenedores
-            'CONTENEDOR 20' => ['TRACTOMULA 3', 'TRACTOMULA3', 'SENCILLO', 'PATINETA2', 'PATINETA3'],
-            'CONTENEDOR 40' => ['TRACTOMULA 3', 'TRACTOMULA3', 'PATINETA2', 'PATINETA3'],
+            'CONTENEDOR 20' => ['TRACTOMULA 3', 'TRACTOMULA3'],
+            'CONTENEDOR 40' => ['TRACTOMULA 3', 'TRACTOMULA3'],
         ];
         
         // Buscar coincidencia en el mapeo de respaldo
@@ -499,6 +676,20 @@ class ArcangelDriversController extends Controller
             
             // Obtener cotización
             $cotizacion = CotizacionModel::findOrFail($cotizacionId);
+
+            // Verificar si el conductor ya fue contactado y tiene respuesta para esta cotización
+            $conductorExistente = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacionId)
+                ->where('telefono', 'LIKE', '%' . substr(preg_replace('/\D+/', '', $telefono), -10) . '%')
+                ->first();
+
+            if ($conductorExistente && $conductorExistente->hasBeenContacted()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "El conductor {$conductorNombre} ya fue contactado y tiene una respuesta registrada para este servicio. No se volverá a llamar.",
+                    'already_contacted' => true,
+                    'respuesta' => $conductorExistente->respuesta_llamada
+                ], 409);
+            }
             
             // Registrar llamada en base de datos
             $llamada = \App\Models\Llamada::create([

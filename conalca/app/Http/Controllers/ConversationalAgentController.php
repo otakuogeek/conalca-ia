@@ -10,6 +10,7 @@ use App\Services\ConversationalAgentService;
 use App\Services\ElevenLabsService;
 use App\Services\CallQueueService;
 use App\Services\ArcangelService;
+use App\Services\CotizacionCallWindowService;
 use App\Models\DriverCallResponse;
 use App\Models\CotizacionModel;
 use App\Models\ConversationSession;
@@ -18,7 +19,6 @@ use App\Models\VehicleClass;
 use App\Models\Llamada;
 use App\Models\LlamadaConductor;
 use App\Jobs\ProcessElevenLabsCall;
-use App\Jobs\ProcessBatchElevenLabsCalls;
 
 class ConversationalAgentController extends Controller
 {
@@ -923,6 +923,15 @@ class ConversationalAgentController extends Controller
                 Log::error('ERROR: Cotización no encontrada', ['cotizacion_id' => $cotizacionId]);
                 return response()->json(['error' => 'Cotización no encontrada'], 404);
             }
+
+            if ($callRestriction = $this->getCotizacionCallRestriction($cotizacion)) {
+                Log::warning('Llamada conversacional bloqueada por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                ]);
+
+                return response()->json($this->buildCallRestrictionResponse($cotizacion, $callRestriction), 422);
+            }
             
             Log::info('Cotización encontrada', [
                 'id' => $cotizacion->id,
@@ -961,8 +970,7 @@ class ConversationalAgentController extends Controller
                 clases: $variantesVehiculo,
                 minScore: 0, // Sin filtro de score para llamadas
                 limit: 5, // Máximo 5 conductores
-                useCache: true,
-                cacheTTL: 15
+                useCache: false
             );
             
             $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1042,6 +1050,27 @@ class ConversationalAgentController extends Controller
                         'clase' => $conductor->clase_vehiculo,
                         'cotizacion_id' => $cotizacionId
                     ]);
+
+                    // Verificar si el conductor ya fue contactado y tiene respuesta
+                    if ($conductor->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacionId,
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'respuesta_llamada' => $conductor->respuesta_llamada,
+                            'driver_call_response_id' => $conductor->driver_call_response_id
+                        ]);
+                        
+                        $callResults[] = [
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'placa' => $conductor->placa,
+                            'phone' => $formattedPhone,
+                            'call_result' => ['success' => false, 'reason' => 'already_contacted'],
+                            'status' => 'skipped_already_contacted'
+                        ];
+                        continue;
+                    }
 
                     // Crear registro de llamada en tabla llamadas
                     Log::info('Creando registro de llamada en BD...');
@@ -1449,6 +1478,36 @@ class ConversationalAgentController extends Controller
             $groupCotizationId = $request->input('group_cotization_id');
             $singleCotizationId = $request->input('cotizacion_model_id');
 
+            // Protección contra doble clic: lock de cache
+            $lockId = $groupCotizationId ?? $singleCotizationId;
+
+            if (!$lockId) {
+                return response()->json(['error' => 'ID de grupo de cotización o ID de cotización individual requerido'], 400);
+            }
+
+            $lockKey = "register_calls_lock_{$lockId}";
+            if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
+                Log::warning('Doble registro detectado - llamadas ya fueron registradas', [
+                    'group_cotization_id' => $groupCotizationId,
+                    'cotizacion_model_id' => $singleCotizationId
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Las llamadas ya fueron registradas para este grupo',
+                    'duplicate_protection' => true,
+                    'total_cotizaciones' => 0,
+                    'calls_scheduled' => 0,
+                    'summary' => [
+                        'total_drivers_called' => 0,
+                        'successful_cotizaciones' => 0,
+                        'failed_cotizaciones' => 0,
+                        'execution_mode' => 'duplicate_blocked'
+                    ]
+                ], 200);
+            }
+            // Lock por 60 segundos para evitar doble clic
+            \Illuminate\Support\Facades\Cache::put($lockKey, true, 60);
+
             // Si se proporciona un ID individual, usarlo como un "grupo de uno"
             if ($singleCotizationId && !$groupCotizationId) {
                 Log::info('Procesando cotización individual como grupo', [
@@ -1460,6 +1519,8 @@ class ConversationalAgentController extends Controller
                 $cotizacion = CotizacionModel::find($singleCotizationId);
                 
                 if (!$cotizacion) {
+                    \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                     return response()->json([
                         'error' => 'Cotización no encontrada: ' . $singleCotizationId,
                         'cotizacion_model_id' => $singleCotizationId
@@ -1479,13 +1540,13 @@ class ConversationalAgentController extends Controller
                     ->get();
                 
                 if ($cotizaciones->isEmpty()) {
+                    \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                     return response()->json([
                         'error' => 'No se encontraron cotizaciones para el grupo: ' . $groupCotizationId,
                         'group_cotization_id' => $groupCotizationId
                     ], 404);
                 }
-            } else {
-                return response()->json(['error' => 'ID de grupo de cotización o ID de cotización individual requerido'], 400);
             }
 
             Log::info('Cotizaciones encontradas', [
@@ -1494,8 +1555,42 @@ class ConversationalAgentController extends Controller
                 'source' => $singleCotizationId ? 'individual' : 'grupo'
             ]);
 
+            $blockedCotizaciones = [];
+            $allowedCotizaciones = collect();
+
+            foreach ($cotizaciones as $cotizacion) {
+                $callRestriction = $this->getCotizacionCallRestriction($cotizacion);
+
+                if ($callRestriction) {
+                    $blockedCotizaciones[] = $this->buildCallRestrictionResponse($cotizacion, $callRestriction);
+                    continue;
+                }
+
+                $allowedCotizaciones->push($cotizacion);
+            }
+
+            if ($allowedCotizaciones->isEmpty()) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
+                Log::warning('Registro de llamadas bloqueado: todas las cotizaciones tienen cargue vencido', [
+                    'group_cotization_id' => $groupCotizationId,
+                    'cotizacion_model_id' => $singleCotizationId,
+                    'blocked_cotizaciones' => $blockedCotizaciones,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pueden realizar llamadas porque la fecha y hora de cargue ya pasaron.',
+                    'code' => 'loading_datetime_expired',
+                    'blocked_cotizaciones' => $blockedCotizaciones,
+                    'calls_scheduled' => 0,
+                ], 422);
+            }
+
+            $cotizaciones = $allowedCotizaciones;
+
             $callsScheduled = 0;
-            $errors = [];
+            $errors = $blockedCotizaciones;
             
             // Procesar cada cotización de forma asíncrona
             foreach ($cotizaciones as $cotizacion) {
@@ -1523,6 +1618,9 @@ class ConversationalAgentController extends Controller
                         continue;
                     }
 
+                    // Normalizar ciudad de origen antes de buscar conductores
+                    $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
+
                     // Buscar conductores desde la base de datos (ya fueron filtrados y guardados)
                     Log::info('Buscando conductores en BD para llamadas', [
                         'cotizacion_id' => $cotizacion->id
@@ -1532,7 +1630,6 @@ class ConversationalAgentController extends Controller
                         ->where('estado_llamada', 'pendiente')
                         ->where('disponible', true)
                         ->orderBy('score', 'desc')
-                        ->limit(10)
                         ->get();
                     
                     // Si no hay conductores en BD, intentar buscar en Arcángel como respaldo
@@ -1540,8 +1637,6 @@ class ConversationalAgentController extends Controller
                         Log::warning('No hay conductores en BD, buscando en Arcángel como respaldo', [
                             'cotizacion_id' => $cotizacion->id
                         ]);
-                        
-                        $ciudadOrigen = $this->normalizarTexto($cotizacion->ciudad_origen);
                         $pesoCarga = 0;
                         if ($cotizacion->peso_mercancia) {
                             $pesoCarga = floatval(str_replace([',', ' kg', ' KG'], '', $cotizacion->peso_mercancia));
@@ -1553,9 +1648,8 @@ class ConversationalAgentController extends Controller
                             ciudad: $ciudadOrigen,
                             clases: $variantesVehiculo,
                             minScore: 0,
-                            limit: 10,
-                            useCache: true,
-                            cacheTTL: 15
+                            limit: null,
+                            useCache: false
                         );
                         
                         $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1573,7 +1667,7 @@ class ConversationalAgentController extends Controller
                                 'placa' => $conductor->placa,
                                 'conductor' => $conductor->nombre_conductor,
                                 'telefono' => $conductor->telefono,
-                                'clase' => $conductor->tipo_vehiculo ?? $conductor->clase_vehiculo,
+                                'clase' => $conductor->clase_vehiculo ?? $conductor->tipo_vehiculo,
                                 'carroceria' => $conductor->carroceria,
                                 'capacidad' => $conductor->capacidad,
                                 'score' => $conductor->score,
@@ -1589,8 +1683,8 @@ class ConversationalAgentController extends Controller
                         ]);
                     }
 
-                    // Sistema de lotes: máximo 3 llamadas concurrentes
-                    $maxConcurrentCalls = 3;
+                    // Sistema de lotes: máximo 2 llamadas concurrentes (de 2 en 2)
+                    $maxConcurrentCalls = 2;
                     $totalVehiculos = count($vehiculos);
                     $batchCount = ceil($totalVehiculos / $maxConcurrentCalls);
                     
@@ -1634,9 +1728,38 @@ class ConversationalAgentController extends Controller
                             $cotizacionData
                         );
 
+                        // Verificar si el conductor ya fue contactado y tiene respuesta (positiva o negativa)
+                        if ($conductor->hasBeenContacted()) {
+                            Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'conductor_id' => $conductor->id,
+                                'conductor' => $conductor->nombre_conductor,
+                                'respuesta_llamada' => $conductor->respuesta_llamada,
+                                'driver_call_response_id' => $conductor->driver_call_response_id
+                            ]);
+                            continue;
+                        }
+
+                        // Verificar si ya existe una llamada activa para este conductor+cotización
+                        $llamadaExistente = \App\Models\Llamada::where('id_cotizacion', $cotizacion->id)
+                            ->where('conductor_id', $conductor->id)
+                            ->whereIn('queue_status', ['pending', 'processing', 'completed'])
+                            ->first();
+
+                        if ($llamadaExistente) {
+                            Log::info('Llamada duplicada detectada - saltando conductor', [
+                                'cotizacion_id' => $cotizacion->id,
+                                'conductor_id' => $conductor->id,
+                                'conductor' => $conductor->nombre_conductor,
+                                'llamada_existente_id' => $llamadaExistente->id_llamada,
+                                'queue_status' => $llamadaExistente->queue_status
+                            ]);
+                            continue;
+                        }
+
                         // Calcular número de lote (1, 2, 3, etc.)
-                        $batchNumber = floor($index / $maxConcurrentCalls) + 1;
-                        $batchPosition = ($index % $maxConcurrentCalls) + 1;
+                        $batchNumber = floor($callsScheduled / $maxConcurrentCalls) + 1;
+                        $batchPosition = ($callsScheduled % $maxConcurrentCalls) + 1;
 
                         // Crear registro de llamada con información de lote
                         $llamada = \App\Models\Llamada::create([
@@ -1664,16 +1787,15 @@ class ConversationalAgentController extends Controller
                         ]);
                     }
 
-                    // Iniciar el procesamiento del primer lote
+                    // NO despachar batch aquí - solo registrar llamadas.
+                    // El dispatch se hace en startElevenLabsCalls() cuando el usuario confirma "Iniciar Llamadas".
                     if ($callsScheduled > 0) {
-                        ProcessBatchElevenLabsCalls::dispatch($cotizacion->id, 1, $maxConcurrentCalls, 150)
-                            ->delay(now()->addSeconds(5)); // Pequeño delay inicial
-                        
-                        Log::info('Sistema de lotes iniciado para cotización desde Arcángel', [
+                        Log::info('Llamadas registradas para cotización desde Arcángel (pendientes de inicio)', [
                             'cotizacion_id' => $cotizacion->id,
+                            'total_llamadas' => $callsScheduled,
                             'total_batches' => $batchCount,
                             'calls_per_batch' => $maxConcurrentCalls,
-                            'delay_between_batches' => 150
+                            'nota' => 'Llamadas se iniciarán cuando el usuario confirme via startElevenLabsCalls'
                         ]);
                     }
 
@@ -1706,6 +1828,10 @@ class ConversationalAgentController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            if (isset($lockKey)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+            }
+
             Log::error("Error iniciando llamadas asíncronas para grupo: " . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
@@ -1765,8 +1891,7 @@ class ConversationalAgentController extends Controller
                 clases: $variantesVehiculo,
                 minScore: 0,
                 limit: 5,
-                useCache: true,
-                cacheTTL: 15
+                useCache: false
             );
             
             $vehiculos = $resultado['vehiculos'] ?? [];
@@ -1868,6 +1993,34 @@ class ConversationalAgentController extends Controller
                         'batch_position' => $batchPosition
                     ]);
 
+                    // Verificar si el conductor ya fue contactado y tiene respuesta (positiva o negativa)
+                    if ($conductor->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'conductor_id' => $conductor->id,
+                            'conductor' => $conductor->nombre_conductor,
+                            'respuesta_llamada' => $conductor->respuesta_llamada,
+                            'driver_call_response_id' => $conductor->driver_call_response_id
+                        ]);
+                        continue;
+                    }
+
+                    // Verificar si ya existe una llamada activa para este conductor+cotización
+                    $llamadaExistente = \App\Models\Llamada::where('id_cotizacion', $cotizacion->id)
+                        ->where('conductor_id', $conductor->id)
+                        ->whereIn('queue_status', ['pending', 'processing', 'completed'])
+                        ->first();
+
+                    if ($llamadaExistente) {
+                        Log::info('Llamada duplicada detectada en registerCalls - saltando conductor', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'conductor_id' => $conductor->id,
+                            'llamada_existente_id' => $llamadaExistente->id_llamada,
+                            'queue_status' => $llamadaExistente->queue_status
+                        ]);
+                        continue;
+                    }
+
                     // Crear registro en la tabla llamadas CON información de lote
                     $llamada = \App\Models\Llamada::create([
                         'id_cotizacion' => $cotizacion->id,
@@ -1916,31 +2069,17 @@ class ConversationalAgentController extends Controller
             ]);
 
             // ======================================
-            // EJECUTAR LAS LLAMADAS DESPUÉS DEL REGISTRO
+            // NO EJECUTAR LLAMADAS AUTOMÁTICAMENTE
+            // Las llamadas se iniciarán solo cuando el usuario confirme
+            // via startElevenLabsCalls()
             // ======================================
             
             if (!empty($registeredCalls)) {
-                Log::info('Iniciando ejecución de llamadas para cotización', [
+                Log::info('Llamadas registradas - pendientes de confirmación del usuario', [
                     'cotizacion_id' => $cotizacion->id,
-                    'total_calls_to_execute' => count($registeredCalls),
-                    'batch_count' => $batchCount
-                ]);
-
-                // Programar las llamadas comenzando por el primer lote
-                // El job se auto-encadenará para procesar los siguientes lotes
-                \App\Jobs\ProcessBatchElevenLabsCalls::dispatch(
-                    $cotizacion->id,
-                    1, // Comenzar con batch número 1
-                    $maxConcurrentCalls,
-                    150 // Delay de 150 segundos entre lotes (2.5 minutos)
-                )->onQueue('calls');
-
-                Log::info('Job de llamadas despachado', [
-                    'cotizacion_id' => $cotizacion->id,
-                    'job' => 'ProcessBatchElevenLabsCalls',
-                    'queue' => 'calls',
-                    'starting_batch' => 1,
-                    'total_batches' => $batchCount
+                    'total_calls_registered' => count($registeredCalls),
+                    'batch_count' => $batchCount,
+                    'nota' => 'Las llamadas se iniciarán cuando el usuario confirme via startElevenLabsCalls'
                 ]);
             }
 
@@ -2053,6 +2192,29 @@ class ConversationalAgentController extends Controller
                         'phone' => $firstPhone,
                         'cotizacion_id' => $cotizacion->id
                     ]);
+
+                    // Verificar si este conductor ya fue contactado y tiene respuesta para esta cotización
+                    $conductorContactado = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacion->id)
+                        ->where('telefono', 'LIKE', '%' . substr($firstPhone, -10) . '%')
+                        ->first();
+
+                    if ($conductorContactado && $conductorContactado->hasBeenContacted()) {
+                        Log::info('Conductor ya contactado con respuesta (legacy flow) - no se vuelve a llamar', [
+                            'cotizacion_id' => $cotizacion->id,
+                            'driver_id' => $driver->id,
+                            'conductor' => $conductorContactado->nombre_conductor,
+                            'respuesta_llamada' => $conductorContactado->respuesta_llamada
+                        ]);
+                        
+                        $callResults[] = [
+                            'driver_id' => $driver->id,
+                            'driver_name' => $vehiculo['conductor'] ?? 'N/A',
+                            'phone' => $firstPhone,
+                            'call_result' => ['success' => false, 'reason' => 'already_contacted'],
+                            'status' => 'skipped_already_contacted'
+                        ];
+                        continue;
+                    }
 
                     // Crear registro de llamada en tabla llamadas
                     $llamada = Llamada::create([
@@ -2266,29 +2428,74 @@ class ConversationalAgentController extends Controller
                 'cotizacion_id' => $cotizacionId
             ]);
 
+            // Protección contra doble despacho: usar lock de cache (resiliente a errores de cache)
+            $lockKey = "start_calls_lock_{$cotizacionId}";
+            try {
+                if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
+                    Log::warning('Doble despacho detectado - llamadas ya están siendo procesadas', [
+                        'cotizacion_id' => $cotizacionId
+                    ]);
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Las llamadas ya están siendo procesadas para esta cotización',
+                        'cotizacion_id' => $cotizacionId,
+                        'llamadas_programadas' => 0,
+                        'duplicate_protection' => true
+                    ], 200);
+                }
+                // Lock por 120 segundos para evitar doble clic
+                \Illuminate\Support\Facades\Cache::put($lockKey, true, 120);
+            } catch (\Exception $cacheException) {
+                Log::warning('No se pudo verificar/crear lock de cache, continuando sin protección de doble despacho', [
+                    'cotizacion_id' => $cotizacionId,
+                    'error' => $cacheException->getMessage()
+                ]);
+            }
+
             // Verificar que la cotización existe
             $cotizacion = CotizacionModel::find($cotizacionId);
             if (!$cotizacion) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                 return response()->json([
                     'error' => 'Cotización no encontrada'
                 ], 404);
             }
 
+            if ($callRestriction = $this->getCotizacionCallRestriction($cotizacion)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+                $cancelledCalls = $this->cancelPendingCallsForExpiredLoad($cotizacion, $callRestriction);
+
+                Log::warning('Inicio de llamadas ElevenLabs bloqueado por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                    'cancelled_calls' => $cancelledCalls,
+                ]);
+
+                $response = $this->buildCallRestrictionResponse($cotizacion, $callRestriction);
+                $response['cancelled_calls'] = $cancelledCalls;
+
+                return response()->json($response, 422);
+            }
+
             // Verificar que la cotización no esté rechazada
             if ($cotizacion->decision_cliente === 'rechazada') {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                 return response()->json([
                     'error' => 'No se pueden iniciar llamadas para cotizaciones rechazadas',
                     'decision_cliente' => $cotizacion->decision_cliente
                 ], 400);
             }
 
-            // Buscar llamadas pendientes para esta cotización
+            // Buscar SOLO llamadas pendientes que NO estén ya en procesamiento
             $llamadas = \App\Models\Llamada::where('id_cotizacion', $cotizacionId)
                 ->where('status', \App\Models\Llamada::STATUS_PENDIENTE)
+                ->where('queue_status', 'pending')
                 ->get();
 
             if ($llamadas->isEmpty()) {
-                Log::info('No hay llamadas pendientes para esta cotización', [
+                Log::info('No hay llamadas pendientes (o ya están en procesamiento) para esta cotización', [
                     'cotizacion_id' => $cotizacionId
                 ]);
                 
@@ -2302,7 +2509,8 @@ class ConversationalAgentController extends Controller
             }
 
             // Procesar llamadas de forma asíncrona para evitar timeouts
-            $maxConcurrentCalls = 3;
+            // Sistema actualizado: 2 en 2 con 1 minuto de diferencia
+            $maxConcurrentCalls = 2;
             $totalLlamadas = $llamadas->count();
             $batchCount = ceil($totalLlamadas / $maxConcurrentCalls);
             $callsScheduled = 0;
@@ -2378,33 +2586,38 @@ class ConversationalAgentController extends Controller
                 ]);
             }
 
-            // Iniciar el procesamiento del primer lote si hay llamadas
+            // Iniciar el procesamiento usando CallQueueManager basado en webhooks
+            // En lugar de lotes con delays fijos, el QueueManager despacha hasta 2 llamadas
+            // simultáneas y espera webhooks de ElevenLabs para despachar las siguientes
             if ($callsScheduled > 0) {
-                ProcessBatchElevenLabsCalls::dispatch($cotizacionId, 1, $maxConcurrentCalls, 150)
-                    ->delay(now()->addSeconds(5)); // Pequeño delay inicial
+                $dispatchResult = \App\Services\CallQueueManager::dispatchNextCalls($cotizacionId);
                 
-                Log::info('Sistema de lotes iniciado para cotización existente', [
+                Log::info('Sistema de cola webhook iniciado para cotización', [
                     'cotizacion_id' => $cotizacionId,
-                    'total_batches' => $batchCount,
-                    'calls_per_batch' => $maxConcurrentCalls,
-                    'delay_between_batches' => 150
+                    'total_llamadas' => $callsScheduled,
+                    'dispatched_now' => $dispatchResult['dispatched'],
+                    'max_concurrent' => \App\Services\CallQueueManager::getMaxConcurrentCalls(),
+                    'nota' => 'Cola controlada por webhooks: cuando una llamada termina, se despacha la siguiente'
                 ]);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Llamadas organizadas en lotes y programadas exitosamente',
+                'message' => 'Llamadas programadas con control de cola por webhooks',
                 'cotizacion_id' => $cotizacionId,
                 'calls_scheduled' => $callsScheduled,
-                'total_batches' => $batchCount,
-                'calls_per_batch' => $maxConcurrentCalls,
-                'delay_between_batches_seconds' => 150,
-                'estimated_completion_time' => now()->addSeconds($batchCount * 150),
+                'calls_dispatched_now' => $dispatchResult['dispatched'] ?? 0,
+                'max_concurrent' => \App\Services\CallQueueManager::getMaxConcurrentCalls(),
+                'queue_status' => \App\Services\CallQueueManager::getQueueStatus($cotizacionId),
                 'drivers' => $drivers,
-                'execution_mode' => 'batch_asynchronous'
+                'execution_mode' => 'webhook_queue'
             ]);
 
         } catch (\Exception $e) {
+            if (isset($lockKey)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+            }
+
             Log::error("Error iniciando llamadas ElevenLabs: " . $e->getMessage(), [
                 'cotizacion_id' => $cotizacionId,
                 'trace' => $e->getTraceAsString()
@@ -2468,6 +2681,41 @@ class ConversationalAgentController extends Controller
             // Otros casos: asumir que es internacional y agregar +
             return '+' . $cleanPhone;
         }
+    }
+
+    private function getCotizacionCallRestriction(CotizacionModel $cotizacion): ?array
+    {
+        return app(CotizacionCallWindowService::class)->getCallRestriction($cotizacion);
+    }
+
+    private function buildCallRestrictionResponse(CotizacionModel $cotizacion, array $restriction): array
+    {
+        return [
+            'success' => false,
+            'error' => $restriction['message'],
+            'message' => $restriction['message'],
+            'code' => $restriction['code'],
+            'cotizacion_id' => $cotizacion->id,
+            'group_cotization_id' => $cotizacion->group_cotization_id,
+            'loading_at' => $restriction['loading_at'],
+            'loading_at_label' => $restriction['loading_at_label'],
+            'checked_at' => $restriction['checked_at'],
+            'checked_at_label' => $restriction['checked_at_label'],
+        ];
+    }
+
+    private function cancelPendingCallsForExpiredLoad(CotizacionModel $cotizacion, array $restriction): int
+    {
+        return Llamada::where('id_cotizacion', $cotizacion->id)
+            ->where('queue_status', 'pending')
+            ->update([
+                'status' => Llamada::STATUS_FINALIZADA,
+                'call_status' => Llamada::CALL_STATUS_CANCELLED,
+                'queue_status' => 'cancelled',
+                'failure_reason' => $restriction['message'],
+                'call_notes' => $restriction['message'] . ' Cargue: ' . $restriction['loading_at_label'],
+                'processing_completed_at' => now(),
+            ]);
     }
 
     /**
@@ -2546,6 +2794,25 @@ class ConversationalAgentController extends Controller
                     if ($llamada->call_answered_at) {
                         $updateData['talk_duration_seconds'] = now()->diffInSeconds($llamada->call_answered_at);
                     }
+
+                    // Fetch transcript from ElevenLabs after call ends
+                    if ($llamada->elevenlabs_conversation_id) {
+                        try {
+                            $callService = app(\App\Services\ElevenLabsCallService::class);
+                            $convDetails = $callService->getConversationDetails($llamada->elevenlabs_conversation_id);
+                            if ($convDetails['success'] && !empty($convDetails['data'])) {
+                                $transcript = $this->extractTranscript($convDetails['data']);
+                                if ($transcript) {
+                                    $updateData['transcript'] = $transcript;
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning('No se pudo obtener transcripción de ElevenLabs', [
+                                'conversation_id' => $llamada->elevenlabs_conversation_id,
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
                     break;
 
                 case 'call_failed':
@@ -2598,6 +2865,39 @@ class ConversationalAgentController extends Controller
             
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Extraer transcripción formateada de los datos de conversación de ElevenLabs
+     */
+    private function extractTranscript(array $conversationData): ?string
+    {
+        $transcript = '';
+
+        // ElevenLabs API returns transcript in different possible formats
+        $messages = $conversationData['transcript'] 
+            ?? $conversationData['messages'] 
+            ?? $conversationData['conversation']['messages'] 
+            ?? $conversationData['conversation']['transcript'] 
+            ?? null;
+
+        if (is_array($messages)) {
+            foreach ($messages as $msg) {
+                $role = $msg['role'] ?? $msg['speaker'] ?? 'unknown';
+                $content = $msg['message'] ?? $msg['content'] ?? $msg['text'] ?? '';
+                if ($content) {
+                    $label = ($role === 'agent' || $role === 'assistant') ? 'Agente' : 'Conductor';
+                    $transcript .= "[{$label}]: {$content}\n";
+                }
+            }
+        }
+
+        // Also check for 'analysis' field which sometimes contains summary
+        if (empty($transcript) && !empty($conversationData['analysis']['transcript_summary'])) {
+            $transcript = $conversationData['analysis']['transcript_summary'];
+        }
+
+        return $transcript ?: null;
     }
 
     /**

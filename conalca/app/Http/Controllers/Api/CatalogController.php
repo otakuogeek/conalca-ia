@@ -12,6 +12,8 @@ use App\Models\Product;
 use App\Models\Packing;
 use App\Models\VehicleClass;
 use App\Models\Bodywork;
+use App\Models\TipoValorRemesa;
+use App\Models\Proveedor;
 
 
 class CatalogController extends Controller
@@ -27,14 +29,66 @@ class CatalogController extends Controller
                     ->get(['id', 'codigo', 'documento', 'cliente']);
     }
 
+    /**
+     * 🆕 Ciudades principales que deben tener prioridad cuando hay ambigüedad
+     */
+    private static $ciudadesPrincipales = [
+        'CARTAGENA' => 'BOLIVAR',
+        'ARMENIA' => 'QUINDIO',
+        'CALI' => 'VALLE',
+        'MEDELLIN' => 'ANTIOQUIA',
+        'BOGOTA' => 'CUNDINAMARCA',
+        'BARRANQUILLA' => 'ATLANTICO',
+        'BUCARAMANGA' => 'SANTANDER',
+        'PEREIRA' => 'RISARALDA',
+        'MANIZALES' => 'CALDAS',
+        'IBAGUE' => 'TOLIMA',
+        'CUCUTA' => 'NORTE DE SANTANDER',
+        'SANTA MARTA' => 'MAGDALENA',
+        'VILLAVICENCIO' => 'META',
+        'PASTO' => 'NARINO',
+        'NEIVA' => 'HUILA',
+        'MONTERIA' => 'CORDOBA',
+        'VALLEDUPAR' => 'CESAR',
+        'TUNJA' => 'BOYACA',
+        'POPAYAN' => 'CAUCA',
+        'SINCELEJO' => 'SUCRE',
+        'RIOHACHA' => 'GUAJIRA',
+        'QUIBDO' => 'CHOCO',
+        'FLORENCIA' => 'CAQUETA',
+        'YOPAL' => 'CASANARE',
+        'BUENAVENTURA' => 'VALLE',
+    ];
+
     public function ciudades(Request $r) {
         $q = $r->input('q', '');
+        $qUpper = mb_strtoupper(trim($q));
 
-        return City::where('ciudad_nombre', 'like', "%$q%")
-                // ->orWhere('ciudad_codigo', 'like', "%$q%")
-                ->orWhere('ciudad_codigodane', 'like', "%$q%")
-                ->limit(15)
-                ->get(['ciudad_codigo', 'ciudad_nombre', 'ciudad_codigodane']);
+        $results = City::where('estado_nombre', 'ACTIVO')
+                ->where(function($query) use ($q) {
+                    $query->where('ciudad_nombre', 'like', "%$q%")
+                          ->orWhere('ciudad_codigodane', 'like', "%$q%");
+                })
+                ->limit(30)
+                ->get(['ciudad_codigo', 'ciudad_nombre', 'ciudad_codigodane', 'municipio_nombre']);
+        
+        // 🆕 Si hay múltiples resultados, priorizar la ciudad principal
+        if ($results->count() > 1 && isset(self::$ciudadesPrincipales[$qUpper])) {
+            $deptoPrincipal = self::$ciudadesPrincipales[$qUpper];
+            
+            // Ordenar: primero la ciudad principal, luego las demás
+            $sorted = $results->sortBy(function($city) use ($deptoPrincipal) {
+                // La ciudad que contiene el departamento principal va primero
+                if (stripos($city->ciudad_nombre, $deptoPrincipal) !== false) {
+                    return 0;
+                }
+                return 1;
+            });
+            
+            return $sorted->values()->take(15);
+        }
+        
+        return $results->take(15);
     }
 
     public function vendedores(Request $r) {
@@ -95,11 +149,18 @@ class CatalogController extends Controller
     public function empaques(Request $r) {
         $q = $r->input('q', '');
 
-        $result = Packing::where('Nombre', 'like', "%$q%")
-                    ->orWhere('Codigo', 'like', "%$q%")
-                    ->orWhere('Codigo Ministerio', 'like', "%$q%")
+        // 🔧 FIX: Usar nombres de columnas reales de tb_empaque (portugués)
+        $result = Packing::where('nome', 'like', "%$q%")
+                    ->orWhere('codigo_ministerio', 'like', "%$q%")
                     ->limit(15)
-                    ->get(['Codigo', 'Codigo Ministerio', 'Nombre']);
+                    ->get(['id', 'codigo_ministerio', 'nome'])
+                    ->map(function($empaque) {
+                        return [
+                            'Codigo' => $empaque->id, // ID como código principal
+                            'Codigo Ministerio' => $empaque->codigo_ministerio,
+                            'Nombre' => $empaque->nome
+                        ];
+                    });
 
         \Log::info('[EMPAQUES] Búsqueda con q="'.$q.'", resultados: ' . $result->count());
         
@@ -123,6 +184,50 @@ class CatalogController extends Controller
                     ->orWhere('Codigo Ministerio', 'like', "%$q%")
                     ->limit(15)
                     ->get(['Codigo', 'Codigo Ministerio', 'Nombre']);
+    }
+
+    /**
+     * Remitentes/Destinatarios: busca clientes que pueden ser remitentes o destinatarios.
+     * Usa la tabla clients filtrando por nombre, código o documento.
+     */
+    public function terceros(Request $r) {
+        $q = $r->input('q', '');
+
+        return Client::where(function($query) use ($q) {
+                    $query->where('cliente', 'like', "%$q%")
+                          ->orWhere('codigo', 'like', "%$q%")
+                          ->orWhere('documento', 'like', "%$q%");
+                })
+                ->where('estado', 'ACTIVO')
+                ->limit(15)
+                ->get(['id', 'codigo', 'documento', 'cliente', 'direccion', 'telefono', 'contacto']);
+    }
+
+    /**
+     * Tipos de valor remesa (Costos) para autocompletado
+     */
+    public function costos(Request $r)
+    {
+        $q = $r->input('q', '');
+
+        return TipoValorRemesa::where('tipvalrem_nombre', 'like', "%$q%")
+                    ->orWhere('tipvalrem_codigo', 'like', "%$q%")
+                    ->limit(15)
+                    ->get(['tipvalrem_codigo', 'tipvalrem_nombre']);
+    }
+
+    /**
+     * Proveedores para autocompletado
+     */
+    public function proveedores(Request $r)
+    {
+        $q = $r->input('q', '');
+
+        return Proveedor::where('nombre', 'like', "%$q%")
+                    ->orWhere('tercero_documento', 'like', "%$q%")
+                    ->orWhere('tercero_codigo', 'like', "%$q%")
+                    ->limit(15)
+                    ->get(['tercero_codigo', 'nombre', 'tipdoc_nombre', 'tercero_documento']);
     }
 
 }

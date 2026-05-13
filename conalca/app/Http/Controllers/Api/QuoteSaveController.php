@@ -29,7 +29,8 @@ class QuoteSaveController extends Controller
         // ]);
 
         $request->validate([
-            'client_id' => 'required|integer|exists:clients,id',
+            'client_id' => 'nullable|integer|exists:clients,id',
+            'client_name' => 'nullable|string|max:255', // Nombre del cliente para buscar en BD
             'quote_data' => 'required|array|min:1',
             'quote_data.*.id' => 'nullable|integer', // <-- allow existing cotización id
             'quote_data.*.precio_pricing_id' => 'nullable|integer|exists:pricings,id',
@@ -44,6 +45,35 @@ class QuoteSaveController extends Controller
             'type_business' => 'required|string',
             'operation_type' => 'nullable|string'
         ]);
+
+        // ─── Resolver client_id: si no viene, buscar por client_name ───
+        if (!$request->client_id && $request->client_name) {
+            $client = Client::where('cliente', 'LIKE', '%' . trim($request->client_name) . '%')->first();
+
+            if (!$client) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No se encontró un cliente con el nombre '{$request->client_name}'. Verifique el nombre e intente de nuevo.",
+                    'suggestion' => 'Puede enviar client_id directamente si conoce el ID del cliente.',
+                ], 422);
+            }
+
+            // Inyectar el client_id resuelto en el request
+            $request->merge(['client_id' => $client->id]);
+
+            Log::info('🔍 client_id resuelto por nombre', [
+                'client_name_buscado' => $request->client_name,
+                'client_id_encontrado' => $client->id,
+                'cliente_nombre_bd' => $client->cliente,
+            ]);
+        }
+
+        if (!$request->client_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Debe enviar client_id o client_name para identificar al cliente.',
+            ], 422);
+        }
 
         DB::beginTransaction();
         
@@ -359,14 +389,21 @@ class QuoteSaveController extends Controller
                             ->first();
                     }
 
-                    $payload = [
+                    // 🆕 Extraer producto con prioridad: producto_mencionado > producto > tipo_producto
+                    // Esto asegura que productos personalizados (ej: "PRODUCTOS DE ASEO") se guarden correctamente
+                    $producto = $routeData['producto_mencionado'] 
+                        ?? $routeData['producto'] 
+                        ?? $routeData['tipo_producto'] 
+                        ?? '';
+
+$payload = [
                         'pricing_id'            => $pricingId,
                         'group_cotization_id'   => $group->id,
                         'client_id'             => $request->client_id,
                         'ciudad_origen'         => $routeData['ciudad_origen'],
                         'ciudad_destino'        => $routeData['ciudad_destino'],
                         'peso_mercancia'        => $this->extractNumericValue($routeData['peso_mercancia'] ?? ''),
-                        'tipo_producto'         => $routeData['tipo_producto'] ?? '',
+                        'tipo_producto'         => $producto, // 🔥 Usar el producto con prioridad correcta
                         'vehiculo_requerido'    => $routeData['vehiculo_requerido'] ?? 'Camión sencillo',
                         'valor_declarado'       => $this->extractNumericValue($routeData['valor_declarado'] ?? '0'),
                         'valor'                 => $finalValue,
@@ -383,6 +420,7 @@ class QuoteSaveController extends Controller
                         'itesoltra_acompanamientovalor' => $routeData['itesoltra_acompanamientovalor'] ?? 0,
                         'decision_cliente'      => $cotizacion->decision_cliente ?? 'pendiente',
                         'active'                => 1,
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ];
 
                     if ($cotizacion) {
@@ -491,5 +529,38 @@ class QuoteSaveController extends Controller
         }
         
         return (float) $cleaned;
+    }
+
+    /**
+     * Convierte la fecha de cargue al formato correcto para almacenar
+     * Acepta: Y-m-d, d/m/Y, d-m-Y, d-m-Y H:i, d/m/Y H:i
+     */
+    private function parseFechaCargue($value)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        // Si ya está en formato Y-m-d o Y-m-d H:i:s, retornarlo tal cual
+        if (preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/', $value)) {
+            return $value;
+        }
+
+        // Intentar parsing con Carbon
+        try {
+            $carbon = \Carbon\Carbon::parse($value);
+            return $carbon->format('Y-m-d');
+        } catch (\Throwable $e) {
+            Log::warning('parseFechaCargue: Error al parsear fecha', [
+                'valor' => $value,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 }

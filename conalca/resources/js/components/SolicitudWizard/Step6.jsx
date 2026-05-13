@@ -1,239 +1,310 @@
-/*  resources/js/components/SolicitudWizard/Step6.jsx  */
+/*  resources/js/components/SolicitudWizard/Step6.jsx  – Costos */
 import React, { useState, useEffect } from 'react';
 import PropTypes   from 'prop-types';
 import { chatBus } from './ChatBox';
+import AsyncSearchSelect from '../ui/AsyncSelect';
 import {
-  FiUsers,         // título y label
-  FiChevronLeft,   // botón atrás
-  FiCheckCircle    // botón finalizar
+  searchCostos,
+  searchProveedores,
+} from '../../api/solicitud';
+import {
+  FiDollarSign,
+  FiChevronLeft,
+  FiCheckCircle,
+  FiPlus,
+  FiTrash2,
 } from 'react-icons/fi';
 
-// const buildStep6State = (formData = {}, acompanamiento = {}) => ({
-//   vehiculo_acom:
-//     formData.vehiculo_acom ??
-//     acompanamiento.vehiculo_acom ??
-//     acompanamiento.itesoltra_vehiculoacompanamiento ??
-//     1,
-
-//   tipo_vehiculo_acom:
-//     formData.tipo_vehiculo_acom ??
-//     acompanamiento.tipo_vehiculo_acom ??
-//     acompanamiento.tipaco_codigo ??
-//     '',
-
-//   acompanamiento_cuenta_acom:
-//     formData.acompanamiento_cuenta_acom ??
-//     acompanamiento.acompanamiento_cuenta_acom ??
-//     acompanamiento.itesoltra_acompanamientocuentade ??
-//     '',
-
-//   valor_acompanante_acom:
-//     formData.valor_acompanante_acom ??
-//     acompanamiento.valor_acompanante_acom ??
-//     acompanamiento.itesoltra_acompanamientovalor ??
-//     ''
-// });
-
-const buildStep6State = (
-  formData = {},
-  acompanamiento = {},
-  flatData = {}              // NEW
-) => ({
-  vehiculo_acom:
-    formData.vehiculo_acom ??
-    acompanamiento.vehiculo_acom ??
-    acompanamiento.itesoltra_vehiculoacompanamiento ??
-    flatData.vehiculo_acom ??               // NEW
-    1,
-
-  tipo_vehiculo_acom:
-    formData.tipo_vehiculo_acom ??
-    acompanamiento.tipo_vehiculo_acom ??
-    acompanamiento.tipaco_codigo ??
-    flatData.tipo_vehiculo_acom ??          // NEW
-    '',
-
-  acompanamiento_cuenta_acom:
-    formData.acompanamiento_cuenta_acom ??
-    acompanamiento.acompanamiento_cuenta_acom ??
-    acompanamiento.itesoltra_acompanamientocuentade ??
-    flatData.acompanamiento_cuenta_acom ??  // NEW
-    '',
-
-  valor_acompanante_acom:
-    formData.valor_acompanante_acom ??
-    acompanamiento.valor_acompanante_acom ??
-    acompanamiento.itesoltra_acompanamientovalor ??
-    flatData.valor_acompanante_acom ??      // NEW
-    ''
+/* ── Estado inicial de un ítem de costo ── */
+const emptyCosto = () => ({
+  tipvalrem_codigo : '',
+  tipvalrem_nombre : '',
+  valor_unitario   : '',
+  valor_costo_unitario : '',
+  facturable       : '',
+  observacion_costo: '',
+  aplica_flete     : 'NO',
+  proveedor_codigo : '',
+  proveedor_nombre : '',
 });
 
-const DebugInspector = ({ form, formData, data, show }) => {
-  if (!show) return null;
-  return (
-    <div className="mt-6 rounded-xl border border-red-300 bg-gray-900 text-green-200 text-xs p-4 space-y-3">
-      <h3 className="text-red-300 font-semibold text-sm">🪲 Debug: Step6 snapshot</h3>
-      <div>
-        <p className="text-red-200 font-medium">form (local state)</p>
-        <pre className="whitespace-pre-wrap break-words">
-          {JSON.stringify(form, null, 2)}
-        </pre>
-      </div>
-      <div>
-        <p className="text-red-200 font-medium">formData (wizard cache)</p>
-        <pre className="whitespace-pre-wrap break-words">
-          {JSON.stringify(formData, null, 2)}
-        </pre>
-      </div>
-      <div>
-        <p className="text-red-200 font-medium">data (prefill/localData)</p>
-        <pre className="whitespace-pre-wrap break-words">
-          {JSON.stringify(data, null, 2)}
-        </pre>
-      </div>
-    </div>
-  );
-};
-
 export default function Step6({ data = {}, formData = {}, onNext, onPrev, loading }) {
-  /* ------------------------------------------------------------------
-   *  Prefill (cuando la solicitud ya existe)
-   * ----------------------------------------------------------------*/
-  const ac = data.acompanamiento || {};
 
-  const [showDebug, setShowDebug] = useState(false);
-   const [debugLog, setDebugLog] = useState([]);  
-   const [form, setForm] = useState(buildStep6State(formData, ac, data)); 
-  
+  /* ── Lista de costos ya guardados (prefill) ── */
+  const prefillCostos = formData.costos || data.costos || [];
 
+  const [costos, setCostos] = useState(
+    prefillCostos.length > 0 ? prefillCostos : []
+  );
+
+  /* ── Formulario del ítem nuevo ── */
+  const [current, setCurrent] = useState(emptyCosto());
+
+  /* ── Sync when formData/data changes ── */
   useEffect(() => {
-    setForm(buildStep6State(formData, data.acompanamiento || {}, data));   // NEW
+    const c = formData.costos || data.costos || [];
+    if (c.length > 0) setCostos(c);
   }, [formData, data]);
 
-  /* ------------------------------------------------------------------
-   *  Chat → autocompletado
-   * ----------------------------------------------------------------*/
+  /* ── Chat autofill ── */
   useEffect(() => {
-    const fill = (field, value) => {
-      setDebugLog(prev => [...prev, `${field} = ${value}`]);
-      setForm(prev => ({ ...prev, [field]: value }));
+    const fill = async (field, value) => {
+      /* When the AI sends a name/text for costo or proveedor, look up the real code */
+      if (field === 'tipvalrem_codigo' && value && isNaN(Number(value))) {
+        try {
+          const res = await searchCostos(value);
+          const items = res?.data ?? res ?? [];
+          if (items.length > 0) {
+            const match = items[0];
+            setCurrent(prev => ({
+              ...prev,
+              tipvalrem_codigo: match.tipvalrem_codigo,
+              tipvalrem_nombre: match.tipvalrem_nombre,
+            }));
+            return;
+          }
+        } catch { /* ignore */ }
+        /* Fallback: store as-is so the user sees something */
+        setCurrent(prev => ({ ...prev, tipvalrem_nombre: value }));
+        return;
+      }
+      if (field === 'proveedor_codigo' && value && isNaN(Number(value))) {
+        try {
+          const res = await searchProveedores(value);
+          const items = res?.data ?? res ?? [];
+          if (items.length > 0) {
+            const match = items[0];
+            setCurrent(prev => ({
+              ...prev,
+              proveedor_codigo: match.tercero_codigo,
+              proveedor_nombre: `${match.nombre} (${match.tercero_documento})`,
+            }));
+            return;
+          }
+        } catch { /* ignore */ }
+        setCurrent(prev => ({ ...prev, proveedor_nombre: value }));
+        return;
+      }
+      setCurrent(prev => ({ ...prev, [field]: value }));
     };
     chatBus.on('fill-field', fill);
     return () => chatBus.off('fill-field', fill);
   }, []);
 
-  /* ------------------------------------------------------------------
-   *  Handlers
-   * ----------------------------------------------------------------*/
-   const handle = e => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
-  const submit = e => { e.preventDefault(); onNext(form); };
+  /* ── Handlers ── */
+  const handleCurrent = e =>
+    setCurrent(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
-  /* ------------------------------------------------------------------
-   *  UI
-   * ----------------------------------------------------------------*/
+  const addCosto = () => {
+    if (!current.tipvalrem_codigo) return;
+    setCostos(prev => [...prev, { ...current }]);
+    setCurrent(emptyCosto());
+  };
+
+  const removeCosto = idx =>
+    setCostos(prev => prev.filter((_, i) => i !== idx));
+
+  const submit = e => {
+    e.preventDefault();
+    onNext({ costos });
+  };
+
+  /* ── UI ── */
   return (
-    <form onSubmit={submit} className="space-y-10 text-center">
+    <form onSubmit={submit} className="space-y-8 text-center">
       {/* Título */}
       <h2 className="text-2xl font-semibold flex items-center justify-center gap-2 text-gray-800">
-        <FiUsers className="text-orange-500" /> Paso&nbsp;6 – Acompañamiento
+        <FiDollarSign className="text-orange-500" /> Paso&nbsp;6 – Costos
       </h2>
 
-      {/* Nº de vehículos de acompañamiento */}
-      <div>
-        <label
-          htmlFor="vehiculo_acom"
-          className="block text-sm font-semibold mb-2 flex items-center justify-center gap-1 text-gray-800"
-        >
-          <FiUsers className="text-orange-500" />
-          Nº de vehículos
-        </label>
+      {/* ── Formulario nuevo costo ── */}
+      <div className="border border-gray-200 rounded-xl p-5 bg-gray-50 space-y-4">
 
-        <input
-          id="vehiculo_acom"
-          name="vehiculo_acom"
-          type="number"
-          min="0"
-          value={form.vehiculo_acom}
-          onChange={handle}
-          placeholder="Cantidad"
-          className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
-          required
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+
+          {/* Costo (autocompletado) */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Costo</label>
+            <AsyncSearchSelect
+              id="tipvalrem_codigo"
+              load={searchCostos}
+              getOpt={c => ({
+                value : c.tipvalrem_codigo,
+                label : `${c.tipvalrem_codigo} – ${c.tipvalrem_nombre}`,
+              })}
+              value={
+                current.tipvalrem_codigo
+                  ? { value: current.tipvalrem_codigo, label: current.tipvalrem_nombre || String(current.tipvalrem_codigo) }
+                  : null
+              }
+              onChange={opt =>
+                setCurrent(prev => ({
+                  ...prev,
+                  tipvalrem_codigo : opt?.value || '',
+                  tipvalrem_nombre : opt ? opt.label.split(' – ').slice(1).join(' – ') : '',
+                }))
+              }
+              label=""
+            />
+          </div>
+
+          {/* Valor Unitario */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Valor Unitario</label>
+            <input
+              name="valor_unitario"
+              type="number"
+              min="0"
+              step="0.01"
+              value={current.valor_unitario}
+              onChange={handleCurrent}
+              className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+
+          {/* Valor Costo Unitario */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Valor Costo Unitario</label>
+            <input
+              name="valor_costo_unitario"
+              type="number"
+              min="0"
+              step="0.01"
+              value={current.valor_costo_unitario}
+              onChange={handleCurrent}
+              className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+
+          {/* Facturable */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Facturable</label>
+            <select
+              name="facturable"
+              value={current.facturable}
+              onChange={handleCurrent}
+              className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            >
+              <option value="">SELECCIONE UNO</option>
+              <option value="SI">SI</option>
+              <option value="NO">NO</option>
+            </select>
+          </div>
+
+          {/* Observación Costo */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Observación Costo</label>
+            <textarea
+              name="observacion_costo"
+              rows="2"
+              value={current.observacion_costo}
+              onChange={handleCurrent}
+              className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            />
+          </div>
+
+          {/* Aplica Flete */}
+          <div>
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Aplica Flete</label>
+            <select
+              name="aplica_flete"
+              value={current.aplica_flete}
+              onChange={handleCurrent}
+              className="w-full border border-orange-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            >
+              <option value="NO">NO</option>
+              <option value="SI">SI</option>
+            </select>
+          </div>
+
+          {/* Proveedor (autocompletado) */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold mb-1 text-gray-700">Proveedor</label>
+            <AsyncSearchSelect
+              id="proveedor_codigo"
+              load={searchProveedores}
+              getOpt={p => ({
+                value : p.tercero_codigo,
+                label : `${p.tercero_codigo} – ${p.nombre} (${p.tercero_documento})`,
+              })}
+              value={
+                current.proveedor_codigo
+                  ? { value: current.proveedor_codigo, label: current.proveedor_nombre || String(current.proveedor_codigo) }
+                  : null
+              }
+              onChange={opt =>
+                setCurrent(prev => ({
+                  ...prev,
+                  proveedor_codigo : opt?.value || '',
+                  proveedor_nombre : opt ? opt.label.split(' – ').slice(1).join(' – ') : '',
+                }))
+              }
+              label=""
+            />
+          </div>
+        </div>
+
+        {/* Botón Adicionar Costo */}
+        <div className="text-left">
+          <button
+            type="button"
+            onClick={addCosto}
+            disabled={!current.tipvalrem_codigo}
+            className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-5 py-2 rounded disabled:opacity-40"
+          >
+            <FiPlus /> Adicionar Costo
+          </button>
+        </div>
       </div>
 
-      {/* Tipo ACC */}
-      <div>
-        <label
-          htmlFor="tipo_vehiculo_acom"
-          className="block text-sm font-semibold mb-2 text-gray-800"
-        >
-          Tipo ACC
-        </label>
+      {/* ── Tabla de costos adicionados ── */}
+      {costos.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm text-left border border-gray-200 rounded-lg overflow-hidden">
+            <thead className="bg-gray-100 text-gray-600 font-semibold">
+              <tr>
+                <th className="px-3 py-2">Costo</th>
+                <th className="px-3 py-2">Vlr Unitario</th>
+                <th className="px-3 py-2">Vlr Costo Unit.</th>
+                <th className="px-3 py-2">Facturable</th>
+                <th className="px-3 py-2">Aplica Flete</th>
+                <th className="px-3 py-2">Proveedor</th>
+                <th className="px-3 py-2">Observación</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {costos.map((c, i) => (
+                <tr key={i} className="border-t border-gray-100 hover:bg-orange-50">
+                  <td className="px-3 py-2">{c.tipvalrem_nombre || c.tipvalrem_codigo}</td>
+                  <td className="px-3 py-2">{c.valor_unitario}</td>
+                  <td className="px-3 py-2">{c.valor_costo_unitario}</td>
+                  <td className="px-3 py-2">{c.facturable}</td>
+                  <td className="px-3 py-2">{c.aplica_flete}</td>
+                  <td className="px-3 py-2">{c.proveedor_nombre || '–'}</td>
+                  <td className="px-3 py-2 max-w-[150px] truncate">{c.observacion_costo}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => removeCosto(i)}
+                      className="text-red-500 hover:text-red-700"
+                      title="Eliminar"
+                    >
+                      <FiTrash2 />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-        <select
-          id="tipo_vehiculo_acom"
-          name="tipo_vehiculo_acom"
-          value={form.tipo_vehiculo_acom}
-          onChange={handle}
-          className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
-        >
-          <option value="">Seleccionar</option>
-          <option value="MOTORIZADO">MOTORIZADO</option>
-          <option value="VEHICULAR">VEHICULAR</option>
-          <option value="CABINA">CABINA</option>
-        </select>
-      </div>
-
-      {/* ¿Quién lo asume? */}
-      <div>
-        <label
-          htmlFor="acompanamiento_cuenta_acom"
-          className="block text-sm font-semibold mb-2 text-gray-800"
-        >
-          ¿Quién lo asume?
-        </label>
-
-        <select
-          id="acompanamiento_cuenta_acom"
-          name="acompanamiento_cuenta_acom"
-          value={form.acompanamiento_cuenta_acom}
-          onChange={handle}
-          className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
-        >
-          <option value="">Seleccionar</option>
-          <option value="CLIENTE">CLIENTE</option>
-          <option value="EMPRESA">EMPRESA</option>
-        </select>
-      </div>
-
-      {/* Valor COP */}
-      <div>
-        <label
-          htmlFor="valor_acompanante_acom"
-          className="block text-sm font-semibold mb-2 text-gray-800"
-        >
-          Valor&nbsp;COP
-        </label>
-
-        <input
-          id="valor_acompanante_acom"
-          name="valor_acompanante_acom"
-          type="number"
-          min="1"
-          step="0.01"
-          value={form.valor_acompanante_acom}
-          onChange={handle}
-          placeholder="0"
-          className="border border-orange-300 rounded px-4 py-2 w-64 mx-auto focus:outline-none focus:ring-2 focus:ring-orange-500"
-          required
-        />
-      </div>
-
-      {/* Navegación */}
+      {/* ── Navegación ── */}
       <div className="flex justify-between">
         <button
           type="button"
-          onClick={() => onPrev(form)}
+          onClick={() => onPrev({ costos })}
           className="flex items-center gap-2 px-5 py-2 border border-orange-500 text-orange-600 rounded hover:bg-orange-50"
         >
           <FiChevronLeft /> Atrás
@@ -247,60 +318,6 @@ export default function Step6({ data = {}, formData = {}, onNext, onPrev, loadin
           {loading ? 'Guardando…' : <>Finalizar <FiCheckCircle /></>}
         </button>
       </div>
-      {/* ────────── Debug tools ────────── */}
-      {/* <div className="pt-4 border-t border-dashed border-gray-200">
-        <button
-          type="button"
-          onClick={() => setShowDebug(v => !v)}
-          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
-        >
-          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
-        </button>
-
-        <DebugInspector
-          show={showDebug}
-          form={form}
-          formData={formData}
-          data={data}
-        />
-      </div> */}
-      {/* ────────── Debug tools ────────── */}
-      {/* <div className="pt-4 border-t border-dashed border-gray-200">
-        <button
-          type="button"
-          onClick={() => setShowDebug(v => !v)}
-          className="text-xs uppercase tracking-wide text-red-500 border border-red-300 px-3 py-1 rounded-md hover:bg-red-50"
-        >
-          {showDebug ? 'Hide debug snapshot' : 'Show debug snapshot'}
-        </button>
-
-        {showDebug && (
-          <div className="mt-4 text-left text-xs bg-gray-900 text-green-200 rounded-lg p-3 space-y-2">
-            <p className="font-semibold text-red-300">🪲 Step5 debug</p>
-            <div>
-              <p className="text-red-200 font-medium">form (local state)</p>
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify(form, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <p className="text-red-200 font-medium">formData (wizard cache)</p>
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify(formData, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <p className="text-red-200 font-medium">data (prefill/localData)</p>
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify({
-                  flat_modalidad: data.modalidad_internacional,
-                  internacional: data.internacional
-                }, null, 2)}
-              </pre>
-            </div>
-          </div>
-        )}
-      </div> */}
     </form>
   );
 }
@@ -309,5 +326,5 @@ Step6.propTypes = {
   data   : PropTypes.object,
   onNext : PropTypes.func.isRequired,
   onPrev : PropTypes.func.isRequired,
-  loading: PropTypes.bool
+  loading: PropTypes.bool,
 };

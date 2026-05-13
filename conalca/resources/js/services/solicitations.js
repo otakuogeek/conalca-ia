@@ -48,5 +48,7 @@ export const escalateRequest = (id) =>
   axios.post(`${API}/${id}/escalate`, null,
              { headers:{'X-CSRF-TOKEN':getCsrf()} });
 
-
-             
+/* ─── Solicitud automática de ruta sin precio ─── */
+export const requestPricingRoute = ({ routes, group_id }) =>
+  axios.post(`${API}/pricing-route-request`, { routes, group_id },
+             { headers:{'X-CSRF-TOKEN':getCsrf()} });

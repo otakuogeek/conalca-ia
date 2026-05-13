@@ -1,0 +1,567 @@
+================================================================================
+  API DE SEED - CREAR COTIZACIONES DE PRUEBA EN CONALCA AI
+================================================================================
+
+FECHA: 24 de febrero de 2026 (actualizado 24 de marzo de 2026)
+VERSIÓN: 1.2
+
+================================================================================
+  1. INFORMACIÓN DE CONEXIÓN
+================================================================================
+
+URL BASE (Producción):  https://conalcaia.conalca.com.co
+URL BASE (Local):       http://localhost:8000
+
+ENDPOINT PRINCIPAL:     POST /api/test/seed-cotizacion
+CONTENT-TYPE:           application/json
+AUTENTICACIÓN:          No requiere (endpoint público para pruebas)
+
+================================================================================
+  2. ESTRUCTURA DEL JSON - CAMPOS DISPONIBLES
+================================================================================
+
+{
+  "user_id":        (OBLIGATORIO) ID del usuario asignado al grupo.
+                    Tipo: integer
+                    Ejemplo: 13
+                    Usuarios disponibles:
+                      - 13 = Don David Navarro
+                      - 11 = EDGARDO GALAN VELAZQUES
+
+  "client_id":      (OPCIONAL) ID de un cliente ya existente en el sistema.
+                    Tipo: integer
+                    Ejemplo: 1
+                    Si no se envía, se puede usar "client_name" para buscar
+                    por nombre, o crear un cliente nuevo con "client".
+
+  "client_name":    (OPCIONAL) Nombre del cliente para buscar en base de datos.
+                    Si no se conoce el client_id, envíe el nombre y el sistema
+                    buscará automáticamente en la tabla de clientes.
+                    Tipo: string, máx 255
+                    Ejemplo: "ECOPETROL"
+                    NOTA: La búsqueda es por coincidencia parcial (LIKE),
+                    así que "ECOPETROL" encontrará "ECOPETROL S.A."
+                    
+                    Prioridad de resolución del cliente:
+                      1. client_id (si viene, se usa directo)
+                      2. client_name (si no viene client_id, busca por nombre)
+                      3. client (si no encuentra por nombre, crea uno nuevo)
+                      4. Fallback: usa el primer cliente disponible en BD
+
+  "client":         (OPCIONAL) Datos para crear un cliente nuevo.
+                    Solo se usa si NO se envía "client_id" ni "client_name".
+                    Tipo: objeto
+                    Campos:
+                      "nombre":     Razón social de la empresa (string, máx 255)
+                      "documento":  NIT o documento (string, máx 50)
+                      "telefono":   Teléfono de contacto (string, máx 50)
+                      "direccion":  Dirección física (string, máx 255)
+                      "ciudad":     Ciudad (string, máx 100)
+
+  "reference":      (OPCIONAL) Referencia única del grupo.
+                    Tipo: string, máx 255
+                    Default: "TEST-SEED-" + fecha/hora
+                    Ejemplo: "PRUEBA-CARGA-001"
+
+  "operation_type": (OPCIONAL) Tipo de operación logística.
+                    Tipo: string
+                    Valores permitidos: "DISTRIBUCION", "EXPORTACION", "IMPORTACION"
+                    Default: "DISTRIBUCION"
+
+  "cargo_type":     (OPCIONAL) Tipo de carga general.
+                    Tipo: string
+                    Ejemplo: "Carga seca"
+
+  "type":           (OPCIONAL) Tipo de grupo.
+                    Tipo: string
+                    Default: "Cotización"
+
+  "rutas":          (OBLIGATORIO) Array de rutas/cotizaciones. Mínimo 1.
+                    Tipo: array de objetos
+                    Cada ruta tiene los siguientes campos:
+
+    ┌─────────────────────────┬────────────┬──────────────────┬──────────────────────────────┐
+    │ CAMPO                   │ OBLIGAT.   │ DEFAULT          │ DESCRIPCIÓN                  │
+    ├─────────────────────────┼────────────┼──────────────────┼──────────────────────────────┤
+    │ ciudad_origen           │ SÍ         │ -                │ Ciudad de origen             │
+    │ ciudad_destino          │ SÍ         │ -                │ Ciudad de destino            │
+    │ valor                   │ SÍ         │ -                │ Precio cotización (numérico) │
+    │ flete                   │ NO         │ null             │ Flete ofrecido al conductor  │
+    │ tipo_mercancia          │ NO         │ "Carga general"  │ Tipo de mercancía            │
+    │ tipo_producto           │ NO         │ null             │ Producto específico          │
+    │ peso_mercancia          │ NO         │ null             │ Peso en kg (string)          │
+    │ dimensiones_exactas     │ NO         │ null             │ Dimensiones (ej: "12x2.5x3") │
+    │ cantidad                │ NO         │ "1"              │ Cantidad de unidades         │
+    │ cantidad_vh             │ NO         │ "1"              │ Cantidad de vehículos        │
+    │ tipo_embajale           │ NO         │ null             │ Tipo de embalaje             │
+    │ tipo_carroceria         │ NO         │ null             │ Tipo carrocería del vehículo │
+    │ vehiculo_requerido      │ NO         │ "TRACTOCAMION"   │ Clase de vehículo requerido  │
+    │ valor_declarado         │ NO         │ null             │ Valor declarado de mercancía │
+    │ seguro                  │ NO         │ "No"             │ Requiere seguro ("Si"/"No")  │
+    │ temperatura_mercancia   │ NO         │ "No aplica"      │ Temperatura requerida        │
+    │ registro_fotografico    │ NO         │ null             │ Requiere registro fotográfico│
+    │ fecha                   │ NO         │ null             │ Fecha de la ruta (YYYY-MM-DD)│
+    │ fecha_cargue            │ NO         │ null             │ Fecha y hora de cargue       │
+    │                         │            │                  │ Formato: "YYYY-MM-DD HH:MM"  │
+    │                         │            │                  │ Ejemplo: "2026-04-28 08:00"  │
+    │                         │            │                  │ Se guarda en:                │
+    │                         │            │                  │ cotizacion_models.           │
+    │                         │            │                  │   fecha_hora_descargue_cargue│
+    │                         │            │                  │ La IA informa al conductor   │
+    │                         │            │                  │ fecha y hora si lo pregunta  │    │ porcentaje              │ NO         │ 0                │ Porcentaje adicional         │
+    └─────────────────────────┴────────────┴──────────────────┴──────────────────────────────┘
+
+  NOTA IMPORTANTE sobre "valor" vs "flete":
+  ─────────────────────────────────────────
+  • valor:  Precio de la cotización (lo que se cobra al cliente).
+  • flete:  Valor del flete ofrecido al conductor en la llamada.
+            Si se envía "flete", la IA usará ese monto al negociar con el
+            conductor. Si NO se envía, la IA usará "valor" como fallback.
+
+================================================================================
+  3. EJEMPLOS DE USO CON CURL
+================================================================================
+
+--- EJEMPLO 1: Básico (campos mínimos) ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_id": 1,
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000
+      }
+    ]
+  }'
+
+--- EJEMPLO 2: Completo (todos los campos de carga) ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_id": 1,
+    "reference": "PRUEBA-COMPLETA-001",
+    "operation_type": "DISTRIBUCION",
+    "cargo_type": "Carga seca",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000,
+        "fecha_cargue": "2026-05-10 07:00",
+        "tipo_mercancia": "MAIZ",
+        "tipo_producto": "MAIZ",
+        "peso_mercancia": "10000",
+        "dimensiones_exactas": "12x2.5x2.8",
+        "cantidad": "1",
+        "cantidad_vh": "1",
+        "tipo_embajale": "ESTIBAS",
+        "tipo_carroceria": "FURGON",
+        "vehiculo_requerido": "TRACTOCAMION",
+        "valor_declarado": "50000000",
+        "seguro": "Si",
+        "temperatura_mercancia": "No aplica",
+        "registro_fotografico": "Si"
+      }
+    ]
+  }'
+
+--- EJEMPLO 3: Múltiples rutas ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_id": 1,
+    "reference": "PRUEBA-MULTI-RUTAS",
+    "rutas": [
+      {
+        "ciudad_origen": "CARTAGENA",
+        "ciudad_destino": "BOGOTA",
+        "valor": 6766608,
+        "flete": 5500000,
+        "tipo_mercancia": "QUIMICOS",
+        "tipo_producto": "ACIDO SULFURICO",
+        "peso_mercancia": "20000",
+        "vehiculo_requerido": "TRACTOCAMION",
+        "tipo_carroceria": "TANQUE",
+        "seguro": "Si",
+        "valor_declarado": "120000000"
+      },
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "CARTAGENA",
+        "valor": 829000,
+        "tipo_mercancia": "ALIMENTOS",
+        "tipo_producto": "ARROZ",
+        "peso_mercancia": "5000",
+        "vehiculo_requerido": "CAMION SENCILLO",
+        "tipo_carroceria": "FURGON",
+        "seguro": "No"
+      }
+    ]
+  }'
+
+--- EJEMPLO 4: Buscando cliente por NOMBRE (sin conocer el ID) ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_name": "365 OPERADOR",
+    "reference": "PRUEBA-POR-NOMBRE-001",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "CALI",
+        "valor": 4500000,
+        "tipo_mercancia": "TEXTILES",
+        "peso_mercancia": "6000",
+        "vehiculo_requerido": "CAMION SENCILLO"
+      }
+    ]
+  }'
+
+NOTA: El sistema buscará un cliente cuyo nombre contenga "365 OPERADOR".
+      Si lo encuentra, usará su ID automáticamente.
+      Si NO lo encuentra, devolverá error 422 con mensaje descriptivo.
+
+--- EJEMPLO 5: Creando un cliente nuevo ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client": {
+      "nombre": "TRANSPORTES EJEMPLO SAS",
+      "documento": "900123456",
+      "telefono": "3001234567",
+      "direccion": "Calle 100 # 15-20",
+      "ciudad": "BOGOTA"
+    },
+    "reference": "PRUEBA-CLIENTE-NUEVO",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "CALI",
+        "valor": 5500000,
+        "tipo_mercancia": "TEXTILES",
+        "peso_mercancia": "8000",
+        "vehiculo_requerido": "CAMION DOBLETROQUE"
+      }
+    ]
+  }'
+
+--- EJEMPLO 5.5: Con FECHA_CARGUE (Para validación de MCP) ---
+
+IMPORTANTE: La fecha_cargue permite que el MCP valide que la información
+            de cargue está disponible para el conductor.
+
+Formato obligatorio: "YYYY-MM-DD HH:MM" (24 horas)
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-cotizacion \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 13,
+    "client_name": "CONALCA SAS",
+    "reference": "TEST-CON-FECHA-001",
+    "operation_type": "DISTRIBUCION",
+    "rutas": [
+      {
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000,
+        "peso_mercancia": "15000",
+        "cantidad": "20",
+        "cantidad_vh": "1",
+        "tipo_carroceria": "FURGON",
+        "vehiculo_requerido": "TRACTOCAMION",
+        "valor_declarado": "150000000",
+        "tipo_mercancia": "TEXTILES",
+        "tipo_producto": "TELAS IMPORTADAS",
+        "tipo_embajale": "CONTENEDOR",
+        "seguro": "Si",
+        "fecha_cargue": "2026-04-29 14:30"
+      }
+    ]
+  }'
+
+RESPUESTA (con fecha_cargue registrada):
+{
+  "success": true,
+  "message": "Grupo de cotización #1924 creado exitosamente",
+  "data": {
+    "group_id": 1924,
+    "cotizaciones": [
+      {
+        "id": 2572,
+        "grupo": 1924,
+        "ruta": "BOGOTA → MEDELLIN",
+        "valor": 3980000,
+        "flete": 3200000,
+        "fecha_cargue": "2026-04-29 14:30"   ← FECHA_CARGUE CONFIRMADA
+      }
+    ]
+  }
+}
+
+--- EJEMPLO 6: Crear múltiples grupos de una vez ---
+
+curl -X POST https://conalcaia.conalca.com.co/api/test/seed-multiple \
+  -H "Content-Type: application/json" \
+  -d '{
+    "grupos": [
+      {
+        "user_id": 13,
+        "client_id": 1,
+        "reference": "LOTE-001",
+        "rutas": [
+          {
+            "ciudad_origen": "BOGOTA",
+            "ciudad_destino": "BARRANQUILLA",
+            "valor": 7200000,
+            "tipo_mercancia": "ELECTRONICA",
+            "peso_mercancia": "3000",
+            "vehiculo_requerido": "CAMION SENCILLO"
+          }
+        ]
+      },
+      {
+        "user_id": 13,
+        "client_id": 1,
+        "reference": "LOTE-002",
+        "rutas": [
+          {
+            "ciudad_origen": "MEDELLIN",
+            "ciudad_destino": "BUCARAMANGA",
+            "valor": 4100000,
+            "tipo_mercancia": "ALIMENTOS",
+            "peso_mercancia": "15000",
+            "vehiculo_requerido": "TRACTOCAMION"
+          }
+        ]
+      }
+    ]
+  }'
+
+================================================================================
+  4. RESPUESTA DEL API
+================================================================================
+
+Respuesta exitosa (HTTP 201):
+
+{
+  "success": true,
+  "message": "Grupo de cotización #1415 creado exitosamente en estado 'En tránsito'",
+  "data": {
+    "group_id": 1415,
+    "status": "En tránsito",
+    "reference": "PRUEBA-COMPLETA-001",
+    "client": {
+      "id": 1,
+      "nombre": "365 OPERADOR LOGISTICO SAS",
+      "documento": 901590348
+    },
+    "cotizaciones": [
+      {
+        "id": 1976,
+        "group_cotization_id": 1415,
+        "ciudad_origen": "BOGOTA",
+        "ciudad_destino": "MEDELLIN",
+        "valor": "3980000",
+        "flete": "3200000",
+        "vehiculo_requerido": "TRACTOCAMION",
+        "tipo_mercancia": "MAIZ",
+        "peso_mercancia": "10000",
+        "decision_cliente": "aceptada"
+      }
+    ],
+    "valor_total": 3980000
+  },
+  "instructions": {
+    "kanban": "El grupo aparecerá en la columna 'En tránsito' del tablero.",
+    "llamadas": "Clic en el icono camión para abrir detalle y 'Registrar Llamadas'.",
+    "api_calls": {
+      "buscar_conductores": "POST /api/arcangel/buscar-conductores { cotizacion_id: 1976 }",
+      "registrar_llamadas": "POST /api/call-drivers-group { group_cotization_id: 1415 }",
+      "iniciar_elevenlabs": "POST /api/start-elevenlabs-calls/1976"
+    }
+  }
+}
+
+Respuesta con error de validación (HTTP 422):
+
+{
+  "success": false,
+  "message": "Validación fallida",
+  "errors": {
+    "user_id": ["El campo user_id es obligatorio."],
+    "rutas": ["El campo rutas es obligatorio."]
+  }
+}
+
+================================================================================
+  5. ENDPOINTS ADICIONALES
+================================================================================
+
+--- Listar grupos de prueba creados ---
+GET /api/test/seed-groups
+
+Respuesta:
+{
+  "success": true,
+  "count": 3,
+  "data": [ ... lista de grupos con sus cotizaciones ... ]
+}
+
+--- Eliminar un grupo de prueba específico ---
+DELETE /api/test/seed-groups/{id}
+
+Ejemplo:
+curl -X DELETE https://conalcaia.conalca.com.co/api/test/seed-groups/1415
+
+Respuesta:
+{
+  "success": true,
+  "message": "Grupo #1415 eliminado con 1 cotización(es)"
+}
+
+--- Limpiar TODOS los grupos de prueba ---
+DELETE /api/test/seed-cleanup
+
+Ejemplo:
+curl -X DELETE https://conalcaia.conalca.com.co/api/test/seed-cleanup
+
+Respuesta:
+{
+  "success": true,
+  "message": "5 grupo(s) de prueba eliminado(s)"
+}
+
+NOTA: Solo se pueden eliminar grupos con referencia que empiece con "TEST-SEED-".
+Los grupos con referencia personalizada (sin prefijo TEST-SEED-) se eliminan
+únicamente con el endpoint de cleanup general.
+
+================================================================================
+  6. VALORES DE REFERENCIA
+================================================================================
+
+--- Tipos de vehículo comunes ---
+  TRACTOCAMION
+  CAMION SENCILLO
+  CAMION DOBLETROQUE
+  TURBO
+  MINIMULA
+  PATINETA
+
+--- Tipos de carrocería comunes ---
+  FURGON
+  ESTACAS
+  PLANCHON
+  TANQUE
+  CONTENEDOR
+  REFRIGERADO
+  CAMA BAJA
+
+--- Tipos de operación ---
+  DISTRIBUCION
+  EXPORTACION
+  IMPORTACION
+
+--- Ciudades frecuentes ---
+  BOGOTA
+  MEDELLIN
+  CALI
+  BARRANQUILLA
+  CARTAGENA
+  BUCARAMANGA
+  PEREIRA
+  MANIZALES
+  CUCUTA
+  IBAGUE
+  VILLAVICENCIO
+  SANTA MARTA
+  FUNZA
+  MOSQUERA
+  TOCANCIPA
+
+================================================================================
+  7. FLUJO DE USO RECOMENDADO
+================================================================================
+
+  1. Enviar POST /api/test/seed-cotizacion con los datos de la carga.
+  2. Anotar el "group_id" y "cotizacion.id" de la respuesta.
+  3. Ir al tablero Kanban: https://conalcaia.conalca.com.co/cotizacion
+  4. Buscar la tarjeta en la columna "En tránsito".
+  5. Hacer clic en el icono de camión (🚚) para abrir el detalle.
+  6. En la sección CONDUCTORES, hacer clic en "Registrar Llamadas".
+  7. Esto buscará conductores disponibles vía Arcángel.
+  8. Luego se pueden iniciar las llamadas con ElevenLabs.
+
+================================================================================
+  8. EJEMPLO CON POSTMAN
+================================================================================
+
+  Method:  POST
+  URL:     https://conalcaia.conalca.com.co/api/test/seed-cotizacion
+  Headers:
+    Content-Type: application/json
+  Body (raw JSON):
+    {
+      "user_id": 13,
+      "client_id": 1,
+      "reference": "MI-PRUEBA-001",
+      "rutas": [
+        {
+          "ciudad_origen": "BOGOTA",
+          "ciudad_destino": "MEDELLIN",
+          "valor": 3980000,
+          "tipo_mercancia": "MAIZ",
+          "tipo_producto": "MAIZ",
+          "peso_mercancia": "10000",
+          "dimensiones_exactas": "12x2.5x2.8",
+          "cantidad": "1",
+          "cantidad_vh": "1",
+          "tipo_embajale": "ESTIBAS",
+          "tipo_carroceria": "FURGON",
+          "vehiculo_requerido": "TRACTOCAMION",
+          "valor_declarado": "50000000",
+          "seguro": "Si",
+          "temperatura_mercancia": "No aplica",
+          "registro_fotografico": "Si"
+        }
+      ]
+    }
+
+================================================================================
+  9. NOTAS IMPORTANTES
+================================================================================
+
+  - Este endpoint NO requiere autenticación (es para pruebas).
+  - Los grupos se crean directamente en estado "En tránsito" con
+    decisión del cliente "aceptada" para que funcione todo el flujo.
+  - Los grupos creados con referencia automática (TEST-SEED-*) se
+    pueden listar y limpiar fácilmente sin afectar datos reales.
+  - Si se envía "client_id" y "client" al mismo tiempo, se usa
+    "client_id" y se ignora "client".
+  - NUEVO: Se puede enviar "client_name" en lugar de "client_id".
+    El sistema buscará automáticamente el cliente por nombre en la BD.
+    Prioridad: client_id > client_name > client (crear nuevo) > fallback.
+  - El campo "valor" es el precio total de la cotización para esa ruta.
+  - Se pueden enviar hasta 20 grupos en un solo request con /seed-multiple.
+
+  ENDPOINT SAVE-QUOTE-FROM-CHAT:
+  - POST /api/save-quote-from-chat también soporta "client_name".
+  - Si no se envía "client_id", se puede enviar "client_name" y el
+    sistema resolverá el ID automáticamente buscando por nombre.
+  - Si no encuentra coincidencia, retorna error 422 con mensaje claro.
+
+================================================================================

@@ -3,32 +3,32 @@
 @section('title', 'Vehículos')
 
 @section('content')
-<div class="container mx-auto px-4 py-6">
+<div class="container mx-auto px-4 py-6" style="background-color: #f3f4f6 !important; color: #1f2937 !important;">
     {{-- Header --}}
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
         <div class="flex items-center justify-between flex-wrap gap-4">
             <div>
-                <h1 class="text-2xl font-bold text-gray-800 dark:text-white">
+                <h1 class="text-2xl font-bold text-gray-800">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 inline-block mr-2 text-[#FF7C32]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 17h8M8 17a2 2 0 11-4 0 2 2 0 014 0zm8 0a2 2 0 104 0 2 2 0 00-4 0zm-8 0H5a2 2 0 01-2-2V9a2 2 0 012-2h2.5M17 17h2a2 2 0 002-2v-5a2 2 0 00-2-2h-1.5l-2-3H10a2 2 0 00-2 2v5" />
                     </svg>
                     Gestión de Vehículos
                 </h1>
-                <p class="text-gray-600 dark:text-gray-300 mt-1">
+                <p class="text-gray-600 mt-1">
                     Tipos de vehículos registrados en Arcangel y sus relaciones con Silogtran
                 </p>
             </div>
             <div class="flex items-center gap-3">
                 {{-- Switch de Modo Arcángel --}}
-                <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-4 py-2 rounded-lg">
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <div class="flex items-center gap-2 bg-gray-100 px-4 py-2 rounded-lg">
+                    <span class="text-sm font-medium text-gray-700">
                         Modo:
                     </span>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="switchModoArcangel" class="sr-only peer" onchange="cambiarModoArcangel()">
-                        <div class="w-14 h-7 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:start-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-green-600"></div>
+                        <div class="w-14 h-7 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:start-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-600"></div>
                     </label>
-                    <span id="labelModoArcangel" class="text-sm font-semibold text-gray-800 dark:text-white">
+                    <span id="labelModoArcangel" class="text-sm font-semibold text-gray-800">
                         <span class="inline-flex items-center">
                             <svg class="animate-spin w-4 h-4 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -55,8 +55,8 @@
     </div>
 
     {{-- Pestañas --}}
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md mb-6">
-        <div class="border-b border-gray-200 dark:border-gray-700">
+    <div class="bg-white rounded-lg shadow-md mb-6">
+        <div class="border-b border-gray-200">
             <nav class="flex -mb-px">
                 <button onclick="cambiarPestana('tipos')" 
                         id="tab-tipos"
@@ -68,7 +68,7 @@
                 </button>
                 <button onclick="cambiarPestana('buscar')" 
                         id="tab-buscar"
-                        class="tab-btn px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300 focus:outline-none">
+                        class="tab-btn px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 focus:outline-none">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 inline mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -80,9 +80,9 @@
     </div>
 
     {{-- Panel de Progreso (oculto por defecto) --}}
-    <div id="panelProgreso" class="hidden bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+    <div id="panelProgreso" class="hidden bg-white rounded-lg shadow-md p-6 mb-6">
         <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-gray-800 dark:text-white flex items-center">
+            <h3 class="text-lg font-semibold text-gray-800 flex items-center">
                 <svg class="animate-spin w-5 h-5 mr-2 text-[#FF7C32]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -96,17 +96,17 @@
 
         {{-- Barra de progreso --}}
         <div class="mb-4">
-            <div class="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-1">
+            <div class="flex justify-between text-sm text-gray-600 mb-1">
                 <span id="ciudadActual">Preparando...</span>
                 <span id="porcentajeTexto">0%</span>
             </div>
-            <div class="w-full bg-gray-200 rounded-full h-4 dark:bg-gray-700 overflow-hidden">
+            <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
                 <div id="barraProgreso" 
                      class="bg-gradient-to-r from-[#FF7C32] to-orange-500 h-4 rounded-full transition-all duration-300"
                      style="width: 0%">
                 </div>
             </div>
-            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <div class="flex justify-between text-xs text-gray-500 mt-1">
                 <span><span id="ciudadesProcesadas">0</span> de <span id="ciudadesTotal">0</span> ciudades</span>
                 <span id="erroresCount" class="text-red-500 hidden">0 errores</span>
             </div>
@@ -114,28 +114,28 @@
 
         {{-- Estadísticas en tiempo real --}}
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
                 <div id="statCiudades" class="text-2xl font-bold text-[#FF7C32]">0</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">Ciudades</div>
+                <div class="text-xs text-gray-500">Ciudades</div>
             </div>
-            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
                 <div id="statVehiculos" class="text-2xl font-bold text-green-600">0</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">Vehículos</div>
+                <div class="text-xs text-gray-500">Vehículos</div>
             </div>
-            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
                 <div id="statTipos" class="text-2xl font-bold text-blue-600">0</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">Tipos únicos</div>
+                <div class="text-xs text-gray-500">Tipos únicos</div>
             </div>
-            <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-center">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
                 <div id="statErrores" class="text-2xl font-bold text-red-600">0</div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">Errores</div>
+                <div class="text-xs text-gray-500">Errores</div>
             </div>
         </div>
 
         {{-- Log de escaneo --}}
         <div class="mt-4">
             <details class="cursor-pointer">
-                <summary class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+                <summary class="text-sm text-gray-600 hover:text-gray-800">
                     Ver log de escaneo
                 </summary>
                 <div id="logEscaneo" class="mt-2 max-h-40 overflow-y-auto bg-gray-900 text-green-400 rounded-lg p-3 font-mono text-xs">
@@ -167,8 +167,8 @@
     <div id="panel-tipos">
         {{-- Tabla de Tipos de Vehículos con Relaciones --}}
         @if(isset($tiposVehiculos) && count($tiposVehiculos) > 0)
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-4 flex items-center">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2 text-[#FF7C32]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
@@ -181,15 +181,15 @@
                 <input type="text" 
                        id="searchVehiculos" 
                        placeholder="Buscar tipo de vehículo..." 
-                       class="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                       class="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent">
         </div>
 
         {{-- Accordion de vehículos --}}
         <div class="space-y-3" id="listaVehiculos">
             @foreach($tiposVehiculos as $tipo)
-            <div class="vehiculo-card border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden" data-id="{{ $tipo->id }}">
+            <div class="vehiculo-card border border-gray-200 rounded-lg overflow-hidden" data-id="{{ $tipo->id }}">
                 {{-- Header del vehículo --}}
-                <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                <div class="flex items-center justify-between p-4 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
                      onclick="toggleRelaciones({{ $tipo->id }})">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 h-10 w-10 bg-[#FBEBE2] rounded-full flex items-center justify-center">
@@ -198,10 +198,10 @@
                             </svg>
                         </div>
                         <div class="ml-4">
-                            <div class="text-sm font-bold text-gray-900 dark:text-white vehiculo-nombre">
+                            <div class="text-sm font-bold text-gray-900 vehiculo-nombre">
                                 {{ $tipo->nombre }}
                             </div>
-                            <div class="text-xs text-gray-500 dark:text-gray-400">
+                            <div class="text-xs text-gray-500">
                                 <span class="relaciones-count" id="count-{{ $tipo->id }}">{{ count($tipo->relaciones) }}</span> vehículos relacionados
                             </div>
                         </div>
@@ -221,25 +221,25 @@
                 </div>
                 
                 {{-- Panel de relaciones (oculto por defecto) --}}
-                <div id="relaciones-{{ $tipo->id }}" class="hidden border-t border-gray-200 dark:border-gray-700">
-                    <div class="p-4 bg-white dark:bg-gray-800">
+                <div id="relaciones-{{ $tipo->id }}" class="hidden border-t border-gray-200">
+                    <div class="p-4 bg-white">
                         @if(count($tipo->relaciones) > 0)
                         <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                <thead class="bg-gray-50 dark:bg-gray-700">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
                                     <tr>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Vehículo Silogtran</th>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Tabla Pricing</th>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Peso Máximo</th>
-                                        <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Acción</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Vehículo Silogtran</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tabla Pricing</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Peso Máximo</th>
+                                        <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acción</th>
                                     </tr>
                                 </thead>
-                                <tbody id="tbody-{{ $tipo->id }}" class="divide-y divide-gray-200 dark:divide-gray-700">
+                                <tbody id="tbody-{{ $tipo->id }}" class="divide-y divide-gray-200">
                                     @foreach($tipo->relaciones as $rel)
-                                    <tr id="rel-{{ $rel->relacion_id }}" class="hover:bg-gray-50 dark:hover:bg-gray-700">
-                                        <td class="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">{{ $rel->vehiculo_silogtran }}</td>
-                                        <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ $rel->tabla_pricing }}</td>
-                                        <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ number_format($rel->peso_maximo) }} kg</td>
+                                    <tr id="rel-{{ $rel->relacion_id }}" class="hover:bg-gray-50">
+                                        <td class="px-4 py-3 text-sm text-gray-900 font-medium">{{ $rel->vehiculo_silogtran }}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-600">{{ $rel->tabla_pricing }}</td>
+                                        <td class="px-4 py-3 text-sm text-gray-600">{{ number_format($rel->peso_maximo) }} kg</td>
                                         <td class="px-4 py-3 text-center">
                                             <button onclick="eliminarRelacion({{ $rel->relacion_id }}, {{ $tipo->id }})"
                                                     class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-semibold transition-colors">
@@ -255,7 +255,7 @@
                             </table>
                         </div>
                         @else
-                        <div id="empty-{{ $tipo->id }}" class="text-center py-6 text-gray-500 dark:text-gray-400">
+                        <div id="empty-{{ $tipo->id }}" class="text-center py-6 text-gray-500">
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                             </svg>
@@ -269,17 +269,17 @@
         </div>
 
         {{-- Contador de resultados --}}
-        <div class="mt-4 text-sm text-gray-500 dark:text-gray-400">
+        <div class="mt-4 text-sm text-gray-500">
             Mostrando <span id="contadorResultados">{{ count($tiposVehiculos) }}</span> de {{ count($tiposVehiculos) }} tipos de vehículos
         </div>
     </div>
     @else
-    <div class="bg-yellow-50 dark:bg-yellow-900 border-l-4 border-yellow-400 p-4 rounded-lg">
+    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-lg">
         <div class="flex items-center">
             <svg class="w-6 h-6 text-yellow-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
             </svg>
-            <p class="text-yellow-700 dark:text-yellow-200 font-medium">No hay tipos de vehículos registrados. Haz clic en "Sincronizar" para obtenerlos de Arcangel.</p>
+            <p class="text-yellow-700 font-medium">No hay tipos de vehículos registrados. Haz clic en "Sincronizar" para obtenerlos de Arcangel.</p>
         </div>
     </div>
     @endif
@@ -290,25 +290,25 @@
     {{-- PESTAÑA 2: BUSCAR POR CIUDAD --}}
     {{-- ═══════════════════════════════════════════════════════════════ --}}
     <div id="panel-buscar" class="hidden">
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-4 flex items-center">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2 text-[#FF7C32]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
                 Buscar Vehículos Disponibles por Ciudad
             </h2>
-            <p class="text-gray-600 dark:text-gray-400 text-sm mb-6">
+            <p class="text-gray-600 text-sm mb-6">
                 Consulta en tiempo real los vehículos disponibles en cualquier ciudad de Colombia a través de Arcangel. Los resultados no se almacenan.
             </p>
 
             {{-- Selector de ciudad --}}
             <div class="grid md:grid-cols-3 gap-4 mb-6">
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Ciudad</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Ciudad</label>
                     <div class="relative">
                         <select id="selectCiudad" 
-                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white appearance-none">
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent appearance-none">
                             <option value="">-- Seleccione una ciudad --</option>
                         </select>
                         <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
@@ -359,18 +359,18 @@
                 </div>
 
                 {{-- Lista de vehículos por tipo --}}
-                <div id="listaVehiculosCiudad" class="border border-t-0 border-gray-200 dark:border-gray-700 rounded-b-lg">
+                <div id="listaVehiculosCiudad" class="border border-t-0 border-gray-200 rounded-b-lg">
                     {{-- Se llenará dinámicamente --}}
                 </div>
             </div>
 
             {{-- Estado vacío --}}
             <div id="estadoVacioBusqueda" class="text-center py-12">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mx-auto text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
                 </svg>
-                <h3 class="text-lg font-medium text-gray-600 dark:text-gray-400">Selecciona una ciudad</h3>
-                <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
+                <h3 class="text-lg font-medium text-gray-600">Selecciona una ciudad</h3>
+                <p class="text-sm text-gray-500 mt-1">
                     Elige una ciudad del listado para ver los vehículos disponibles en tiempo real
                 </p>
             </div>
@@ -380,7 +380,7 @@
 
 {{-- Modal Agregar Vehículo --}}
 <div id="modalAgregar" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center">
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden">
         {{-- Header del modal --}}
         <div class="bg-[#FF7C32] px-6 py-4">
             <div class="flex items-center justify-between">
@@ -410,19 +410,19 @@
                 <input type="text" 
                        id="searchPricing" 
                        placeholder="Buscar vehículo Silogtran..." 
-                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#FF7C32] focus:border-transparent">
             </div>
             
             {{-- Lista de vehículos disponibles --}}
             <div class="space-y-2" id="listaPricing">
                 @if(isset($vehiculosPricing))
                 @foreach($vehiculosPricing as $vp)
-                <div class="pricing-item flex items-center justify-between p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                <div class="pricing-item flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                      data-id="{{ $vp->id }}"
                      data-nombre="{{ strtolower($vp->vehiculo_silogtran) }} {{ strtolower($vp->tabla_pricing) }}">
                     <div>
-                        <div class="font-medium text-gray-900 dark:text-white">{{ $vp->vehiculo_silogtran }}</div>
-                        <div class="text-sm text-gray-500 dark:text-gray-400">
+                        <div class="font-medium text-gray-900">{{ $vp->vehiculo_silogtran }}</div>
+                        <div class="text-sm text-gray-500">
                             {{ $vp->tabla_pricing }} - {{ number_format($vp->peso_maximo) }} kg
                         </div>
                     </div>
@@ -437,7 +437,7 @@
         </div>
         
         {{-- Footer del modal --}}
-        <div class="bg-gray-50 dark:bg-gray-700 px-6 py-3 flex justify-end">
+        <div class="bg-gray-50 px-6 py-3 flex justify-end">
             <button onclick="cerrarModal()" 
                     class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
                 Cerrar
@@ -546,16 +546,16 @@
                     const panelRelaciones = document.getElementById('relaciones-' + vehiculoArcangelId);
                     panelRelaciones.querySelector('.p-4').innerHTML = `
                         <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                <thead class="bg-gray-50 dark:bg-gray-700">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
                                     <tr>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Vehículo Silogtran</th>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Tabla Pricing</th>
-                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Peso Máximo</th>
-                                        <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Acción</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Vehículo Silogtran</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tabla Pricing</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Peso Máximo</th>
+                                        <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Acción</th>
                                     </tr>
                                 </thead>
-                                <tbody id="tbody-${vehiculoArcangelId}" class="divide-y divide-gray-200 dark:divide-gray-700">
+                                <tbody id="tbody-${vehiculoArcangelId}" class="divide-y divide-gray-200">
                                 </tbody>
                             </table>
                         </div>
@@ -567,11 +567,11 @@
                 
                 const newRow = document.createElement('tr');
                 newRow.id = 'rel-' + data.relacion.id;
-                newRow.className = 'hover:bg-gray-50 dark:hover:bg-gray-700';
+                newRow.className = 'hover:bg-gray-50';
                 newRow.innerHTML = `
-                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">${data.relacion.vehiculo_silogtran}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">${data.relacion.tabla_pricing}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">${new Intl.NumberFormat().format(data.relacion.peso_maximo)} kg</td>
+                    <td class="px-4 py-3 text-sm text-gray-900 font-medium">${data.relacion.vehiculo_silogtran}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${data.relacion.tabla_pricing}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${new Intl.NumberFormat().format(data.relacion.peso_maximo)} kg</td>
                     <td class="px-4 py-3 text-center">
                         <button onclick="eliminarRelacion(${data.relacion.id}, ${vehiculoArcangelId})"
                                 class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs font-semibold transition-colors">
@@ -632,7 +632,7 @@
                 if (newCount === 0) {
                     const panelRelaciones = document.getElementById('relaciones-' + vehiculoArcangelId);
                     panelRelaciones.querySelector('.p-4').innerHTML = `
-                        <div id="empty-${vehiculoArcangelId}" class="text-center py-6 text-gray-500 dark:text-gray-400">
+                        <div id="empty-${vehiculoArcangelId}" class="text-center py-6 text-gray-500">
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                             </svg>
@@ -973,7 +973,7 @@
         
         if (data.vehiculosPorTipo.length === 0) {
             lista.innerHTML = `
-                <div class="p-8 text-center text-gray-500 dark:text-gray-400">
+                <div class="p-8 text-center text-gray-500">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -984,8 +984,8 @@
         }
         
         lista.innerHTML = data.vehiculosPorTipo.map((tipo, index) => `
-            <div class="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
-                <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+            <div class="border-b border-gray-200 last:border-b-0">
+                <div class="flex items-center justify-between p-4 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
                      onclick="toggleVehiculosTipo(${index})">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 h-10 w-10 bg-[#FBEBE2] rounded-full flex items-center justify-center">
@@ -994,8 +994,8 @@
                             </svg>
                         </div>
                         <div class="ml-4">
-                            <div class="text-sm font-bold text-gray-900 dark:text-white">${tipo.tipo}</div>
-                            <div class="text-xs text-gray-500 dark:text-gray-400">
+                            <div class="text-sm font-bold text-gray-900">${tipo.tipo}</div>
+                            <div class="text-xs text-gray-500">
                                 ${tipo.cantidad} vehículo${tipo.cantidad !== 1 ? 's' : ''} disponible${tipo.cantidad !== 1 ? 's' : ''}
                             </div>
                         </div>
@@ -1009,26 +1009,36 @@
                         </svg>
                     </div>
                 </div>
-                <div id="vehiculos-tipo-${index}" class="hidden bg-white dark:bg-gray-800 overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                        <thead class="bg-gray-50 dark:bg-gray-700">
+                <div id="vehiculos-tipo-${index}" class="hidden bg-white overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
                             <tr>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Placa</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Conductor</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Teléfono</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Empresa</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Estado</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Placa</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Conductor</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Teléfono</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Empresa</th>
+                                <th class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Score</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <tbody class="divide-y divide-gray-200">
                             ${tipo.vehiculos.map(v => `
-                                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
-                                    <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">${v.placa}</td>
-                                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">${v.conductor}</td>
-                                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                                <tr class="hover:bg-gray-50">
+                                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${v.placa}</td>
+                                    <td class="px-4 py-3 text-sm text-gray-600">${v.conductor}</td>
+                                    <td class="px-4 py-3 text-sm text-gray-600">
                                         <a href="tel:${v.telefono}" class="text-blue-600 hover:underline">${v.telefono}</a>
                                     </td>
-                                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">${v.empresa}</td>
+                                    <td class="px-4 py-3 text-sm text-gray-600">${v.empresa}</td>
+                                    <td class="px-4 py-3 text-center">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                                            v.score >= 9 ? 'bg-green-100 text-green-800' :
+                                            v.score >= 7 ? 'bg-yellow-100 text-yellow-800' :
+                                            'bg-red-100 text-red-800'
+                                        }">
+                                            ⭐ ${Number(v.score).toFixed(1)}
+                                        </span>
+                                    </td>
                                     <td class="px-4 py-3">
                                         <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">
                                             ${v.disponibilidad}

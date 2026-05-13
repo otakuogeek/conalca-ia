@@ -11,6 +11,7 @@ class ConversationMessage extends Model
 
     protected $fillable = [
         'session_id',
+        'group_cotization_id', // 🆕 Agregar para permitir asignación masiva
         'role',
         'content',
         'metadata',

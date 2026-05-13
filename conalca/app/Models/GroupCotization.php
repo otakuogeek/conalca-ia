@@ -22,6 +22,7 @@ class GroupCotization extends Model
         'kit_derrames',
         'pictogramas',
         'cargo_type',
+        'load_type',
         'openai_thread_id',
         'created_from_chat',
     ];
@@ -36,7 +37,7 @@ class GroupCotization extends Model
     ];
 
     public function cotizaciones() {
-        return $this->hasMany(CotizacionModel::class, 'group_cotization_id')->with('producto');
+        return $this->hasMany(CotizacionModel::class, 'group_cotization_id');
     }
 
     /**
@@ -55,6 +56,14 @@ class GroupCotization extends Model
     public function client()
     {
         return $this->belongsTo(Client::class);
+    }
+
+    /**
+     * 🆕 Relación con mensajes de conversación del grupo
+     */
+    public function messages()
+    {
+        return $this->hasMany(ConversationMessage::class, 'group_cotization_id');
     }
 
     public function tieneAceptada()

@@ -33,14 +33,6 @@ if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php'))
 
 require __DIR__.'/../vendor/autoload.php';
 
-// Logging temprano para diagnosticar 500/502 en rutas específicas
-try {
-    $uri = $_SERVER['REQUEST_URI'] ?? 'unknown';
-    error_log('[INDEX_EARLY] Iniciando index.php URI=' . $uri . ' TIME=' . date('c'));
-} catch (Throwable $e) {
-    error_log('[INDEX_EARLY_ERROR] '.$e->getMessage());
-}
-
 /*
 |--------------------------------------------------------------------------
 | Run The Application

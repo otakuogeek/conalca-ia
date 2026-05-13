@@ -33,6 +33,8 @@ use App\Http\Controllers\Api\SolicitationController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\PercentageSettingController;
+use App\Http\Controllers\TaraSettingController;
+use App\Http\Controllers\SystemMetricsController;
 use App\Http\Controllers\Api\GoalController;
 use App\Http\Controllers\Api\CotizationNoteController;
 use App\Http\Controllers\Api\SacCotizationController;
@@ -346,6 +348,7 @@ Route::group(['middleware' => 'auth'], function () {
 
     Route::get('/dashboard', [App\Http\Controllers\DashboardController::class, 'show'])->name('dashboard.show');
     Route::get('/dashboard/chart-data', [App\Http\Controllers\DashboardController::class, 'getChartData'])->name('dashboard.chart-data');
+    Route::get('/server/metrics', [SystemMetricsController::class, 'show'])->name('server.metrics');
 
     // Start AI Calls
 
@@ -435,9 +438,74 @@ Route::group(['middleware' => 'auth'], function () {
         return $controller->getAnalysisDataApi();
     })->name('analysis.data');
 
+    Route::get('analysis/calls', function () {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->show();
+    })->name('analysis.calls');
+
+    Route::get('analysis/calls/export', function () {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->export(request());
+    })->name('analysis.calls.export');
+
+    Route::get('analysis/calls/transcript/{llamadaId}', function ($llamadaId) {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->getTranscript(request(), $llamadaId);
+    })->name('analysis.calls.transcript');
+
+    Route::get('analysis/calls/group/{groupId}', function ($groupId) {
+        $controller = new App\Http\Controllers\CallAnalyticsController();
+        return $controller->getGroupCalls($groupId);
+    })->name('analysis.calls.group');
+
+    // Auditoría de Llamadas
+    Route::get('auditoria-llamadas', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->index(request());
+    })->name('auditoria.llamadas');
+
+    Route::get('auditoria-llamadas/api', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->apiData(request());
+    })->name('auditoria.llamadas.api');
+
+    Route::get('auditoria-llamadas/batch/{groupId}', function ($groupId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->batchDetail(request(), $groupId);
+    })->name('auditoria.llamadas.batch');
+
+    Route::get('auditoria-llamadas/transcript/{conversationId}', function ($conversationId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->getTranscript($conversationId);
+    })->name('auditoria.llamadas.transcript');
+
+    Route::get('auditoria-llamadas/audio/{conversationId}', function ($conversationId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->getAudio($conversationId);
+    })->name('auditoria.llamadas.audio');
+
+    Route::get('auditoria-llamadas/queue-status', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->queueStatus();
+    })->name('auditoria.llamadas.queue-status');
+
+    Route::get('auditoria-llamadas/timeline/{llamadaId}', function ($llamadaId) {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->callTimeline($llamadaId);
+    })->name('auditoria.llamadas.timeline');
+
+    Route::get('auditoria-llamadas/export-csv', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->exportCsv(request());
+    })->name('auditoria.llamadas.export-csv');
+
+    Route::get('auditoria-llamadas/search', function () {
+        $controller = new App\Http\Controllers\AuditoriaLlamadasController();
+        return $controller->searchConductor(request());
+    })->name('auditoria.llamadas.search');
+
     Route::get('pricing', function () {
-        $pricings = Pricing::all();
-        return view('pricing.show', compact('pricings'));
+        return view('pricing.show');
     })->name('pricing.show');
 
     Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar.show');
@@ -506,8 +574,7 @@ Route::group(['middleware' => 'auth'], function () {
 
     // Nueva ruta específica para React con nombre más claro
     Route::get('/cotizacion', function () {
-        $quotes = CotizacionModel::get();
-        return view('quotes.react-show', compact('quotes'));
+        return view('quotes.react-show');
     })->name('quotes.react-test');
 
     // Ruta original con Livewire (disponible como backup)
@@ -535,7 +602,7 @@ Route::group(['middleware' => 'auth'], function () {
         return view('llamadas.index', compact('groupCotizationId', 'cotizacionId'));
     })->name('llamadas.index');
 
-    Route::get('/logout', [LoginController::class, 'logout'])->name('auth.logout');
+    Route::match(['get', 'post'], '/logout', [LoginController::class, 'logout'])->name('auth.logout');
 
     // Account management routes
     Route::get('/account', [App\Http\Controllers\AccountController::class, 'show'])->name('account.show');
@@ -693,6 +760,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             /* ────── CRUD de Solicitudes ────── */
             Route::get ('/'      , [SolicitationController::class, 'index']);
             Route::post('/'      , [SolicitationController::class, 'store']);
+            Route::post('/pricing-route-request', [SolicitationController::class, 'requestPricingRoute']);
             Route::get ('/{id}'  , [SolicitationController::class, 'show']);
             Route::put ('/{id}'  , [SolicitationController::class, 'update']);
 
@@ -719,6 +787,7 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::get('/cities', [CityController::class, 'index']);
     Route::get('/packings', [PackingController::class, 'index']);
     Route::get('/products', [ProductController::class, 'index']);
+    Route::post('/mcp/search-products', [ProductController::class, 'search']);
 
     Route::post('/pricings-solutions',  [PricingController::class,'store']);
     Route::put ('/pricings-solutions/{id}', [PricingController::class,'update']);
@@ -739,6 +808,42 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
             ->name('percentage-settings.index');
         Route::put('/percentage-settings/{percentageSetting}', [PercentageSettingController::class, 'update'])
             ->name('percentage-settings.update');
+    });
+
+    // Tara Settings
+    Route::middleware(['auth', 'role:SUPER ADMIN|JEFE COMERCIAL|SAC'])
+    ->group(function () {
+        Route::get('/tara-settings', [TaraSettingController::class, 'index'])
+            ->name('tara-settings.index');
+        Route::put('/tara-settings/{taraSetting}', [TaraSettingController::class, 'update'])
+            ->name('tara-settings.update');
+    });
+
+    // Esquema de Seguridad
+    Route::prefix('security-schema')->group(function () {
+        Route::get('/', [\App\Http\Controllers\SecuritySchemaController::class, 'index'])
+            ->name('security-schema.index');
+        Route::get('/data', [\App\Http\Controllers\SecuritySchemaController::class, 'getData']);
+        Route::get('/for-pricing', [\App\Http\Controllers\SecuritySchemaController::class, 'getSchemaForPricing']);
+
+        // Overrides de rangos para comerciales (cualquier usuario autenticado)
+        Route::post('/user-override', [\App\Http\Controllers\SecuritySchemaController::class, 'storeUserOverride']);
+        Route::delete('/user-override/{baseRangeId}', [\App\Http\Controllers\SecuritySchemaController::class, 'deleteUserOverride']);
+
+        // Solo SUPER ADMIN puede crear/editar/eliminar
+        Route::middleware(['role:SUPER ADMIN'])->group(function () {
+            Route::get('/search-products', [\App\Http\Controllers\SecuritySchemaController::class, 'searchProducts']);
+            Route::post('/products', [\App\Http\Controllers\SecuritySchemaController::class, 'storeProduct']);
+            Route::delete('/products/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'destroyProduct']);
+            Route::post('/price-ranges', [\App\Http\Controllers\SecuritySchemaController::class, 'storePriceRange']);
+            Route::put('/price-ranges/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'updatePriceRange']);
+            Route::delete('/price-ranges/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'destroyPriceRange']);
+            // Asignación de clientes
+            Route::get('/search-clients', [\App\Http\Controllers\SecuritySchemaController::class, 'searchClients']);
+            Route::get('/assigned-clients', [\App\Http\Controllers\SecuritySchemaController::class, 'getAssignedClients']);
+            Route::post('/assign-client', [\App\Http\Controllers\SecuritySchemaController::class, 'assignClient']);
+            Route::delete('/unassign-client/{id}', [\App\Http\Controllers\SecuritySchemaController::class, 'unassignClient']);
+        });
     });
 
     // GOALS
@@ -782,6 +887,11 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
     Route::get('calls/{cotizacionId}', [CallStatusController::class, 'show']);
     Route::post('calls/{cotizacionId}/select-driver', [CallStatusController::class, 'selectDriver']);
     
+    // Vista de detalles del conductor
+    Route::get('conductor-details/{driverId}', function ($driverId) {
+        return view('conductor-details', ['driverId' => $driverId]);
+    })->name('conductor.details');
+    
     Route::prefix('/solicitud')->group(function () {
         // ①  Guardado parcial (ya existe)
         Route::post('/progreso', [SolicitudTransporteController::class,'guardarParcial'])
@@ -814,6 +924,9 @@ Route::delete('pendings/{id}', [PendingController::class, 'destroy']);
         Route::get('/empaques',          'empaques');
         Route::get('/vehiculos/clases',  'clasesVehiculo');
         Route::get('/vehiculos/carrocerias','carrocerias');
+        Route::get('/terceros',          'terceros');
+        Route::get('/costos',            'costos');
+        Route::get('/proveedores',       'proveedores');
     });
 
     // Módulo de Conductores (Solo SUPER ADMIN y SAC)

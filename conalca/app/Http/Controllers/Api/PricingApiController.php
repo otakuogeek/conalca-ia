@@ -10,9 +10,24 @@ use Illuminate\Support\Facades\DB;
 class PricingApiController extends Controller
 {
     /* ============ LISTAR ============ */
-    public function index()
+    public function index(Request $request)
     {
-        return Pricing::all();
+        $perPage = min((int) $request->input('per_page', 100), 500);
+
+        // Filtros opcionales
+        $query = Pricing::query();
+
+        if ($request->filled('origin')) {
+            $query->where('origin', 'LIKE', '%' . $request->input('origin') . '%');
+        }
+        if ($request->filled('destination')) {
+            $query->where('destination', 'LIKE', '%' . $request->input('destination') . '%');
+        }
+        if ($request->filled('vehicle_type')) {
+            $query->where('vehicle_type', 'LIKE', '%' . $request->input('vehicle_type') . '%');
+        }
+
+        return $query->paginate($perPage);
     }
 
     /* ============ CREAR (uno) ============ */
@@ -25,27 +40,22 @@ class PricingApiController extends Controller
     }
 
     /* ============ CREAR (varios)  ============ */
-    public function bulkStore(Request $request)           //  ← ← NUEVO
+    public function bulkStore(Request $request)
     {
+        // Validación a nivel de request (como bulkUpdate) — retorna 422 JSON automáticamente
         $request->validate([
-            'items'   => 'required|array|min:1',
-            'items.*' => 'required|array',
+            'items'                  => 'required|array|min:1',
+            'items.*.origin'         => 'required|string|max:255',
+            'items.*.destination'    => 'required|string|max:255',
+            'items.*.vehicle_type'   => 'required|string|max:255',
+            'items.*.weight'         => 'required|numeric',
+            'items.*.price'          => 'required|numeric',
         ]);
 
         $created = [];
 
         DB::transaction(function () use ($request, &$created) {
-            foreach ($request->input('items') as $index => $row) {
-
-                // Validamos cada “item” de forma individual
-                $validator = validator($row, $this->rules());
-                if ($validator->fails()) {
-                    abort(response()->json([
-                        'message' => "Error en el item #{$index}",
-                        'errors'  => $validator->errors()
-                    ], 422));
-                }
-
+            foreach ($request->input('items') as $row) {
                 $created[] = Pricing::create($row);
             }
         });
@@ -53,7 +63,7 @@ class PricingApiController extends Controller
         return response()->json([
             'message'  => 'Registros creados correctamente',
             'total'    => count($created),
-            'pricings' => $created
+            'pricings' => $created,
         ], 201);
     }
 

@@ -800,8 +800,9 @@
                                                 </div>
                                             </div>
 
-                                            <!-- Información de Rutas Mejorada -->
-                                            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                                            <!-- Información de Rutas - OCULTO (se usa modal React) -->
+                                            @if(false)
+                                            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden" wire:poll.3s>
                                                 <div class="bg-gray-100 px-6 py-4 border-b border-gray-200">
                                                     <h4 class="text-base font-600 text-gray-600 product-sans">Detalles de la Cotización</h4>
                                                 </div>
@@ -840,9 +841,14 @@
                                                                     <span class="text-sm font-600 text-gray-900 product-sans">{{ $route['planos'] ?? '-' }}</span>
                                                                 </div>
                                                                 @endif
-                                                                <div class="flex justify-between items-center py-1">
-                                                                    <span class="text-sm font-500 text-gray-600 product-sans">Tipo producto:</span>
-                                                                    <span class="text-sm font-600 text-gray-900 product-sans">{{ $route['tipo_producto'] ?? '-' }}</span>
+                                                                <div class="flex justify-between items-center py-1 {{ empty($route['tipo_producto']) ? 'bg-red-50 px-2 rounded' : '' }}">
+                                                                    <span class="text-sm font-500 {{ empty($route['tipo_producto']) ? 'text-red-600' : 'text-gray-600' }} product-sans">
+                                                                        Tipo producto:
+                                                                        <span class="text-red-500 ml-1">*</span>
+                                                                    </span>
+                                                                    <span class="text-sm font-600 {{ empty($route['tipo_producto']) ? 'text-red-500 italic' : 'text-gray-900' }} product-sans">
+                                                                        {{ $route['tipo_producto'] ?? 'Esperando...' }}
+                                                                    </span>
                                                                 </div>
                                                                 @if ($type_business == 'refri')
                                                                 <div class="flex justify-between items-center py-1">
@@ -867,7 +873,7 @@
                                                     @endforeach
                                                 </div>
                                             </div>
-                                        </div>
+                                            @endif
 
                                         <!-- Columna Derecha - Chat y Acciones -->
                                         <div class="bg-white flex flex-col">
@@ -980,17 +986,48 @@
                                             <!-- Botón de Crear Cotización -->
                                             @isset($quote_data)
                                                 @if(count($quote_data) > 0)
+                                                    @php
+                                                        // Validar que todas las rutas tengan tipo_producto
+                                                        $allRoutesHaveProduct = true;
+                                                        foreach ($quote_data as $route) {
+                                                            if (empty($route['tipo_producto'])) {
+                                                                $allRoutesHaveProduct = false;
+                                                                break;
+                                                            }
+                                                        }
+                                                    @endphp
+                                                    
                                                     <div class="border-t border-gray-200 p-6 bg-gray-50 animate-fade-in">
-                                                        <button wire:click="saveCotizacion()"
-                                                            class="w-full py-4 px-6 bg-orange-400 hover:bg-orange-500 text-white font-600 rounded-xl shadow-elegant hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1 hover:scale-105 product-sans group">
-                                                            <div class="flex items-center justify-center space-x-2">
-                                                                <svg class="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                                                </svg>
-                                                                <span class="text-base">Crear Cotización</span>
-                                                                <div class="w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                        @if($allRoutesHaveProduct)
+                                                            <button wire:click="saveCotizacion()"
+                                                                class="w-full py-4 px-6 bg-orange-400 hover:bg-orange-500 text-white font-600 rounded-xl shadow-elegant hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1 hover:scale-105 product-sans group">
+                                                                <div class="flex items-center justify-center space-x-2">
+                                                                    <svg class="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                                    </svg>
+                                                                    <span class="text-base">Crear Cotización</span>
+                                                                    <div class="w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                                                </div>
+                                                            </button>
+                                                        @else
+                                                            <div class="bg-red-50 border-2 border-red-200 rounded-xl p-4 mb-3">
+                                                                <div class="flex items-center space-x-2">
+                                                                    <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                                                    </svg>
+                                                                    <span class="text-sm font-500 text-red-700 product-sans">Por favor, proporciona el <strong>tipo de producto</strong> para continuar</span>
+                                                                </div>
                                                             </div>
-                                                        </button>
+                                                            <button disabled
+                                                                class="w-full py-4 px-6 bg-gray-300 text-gray-500 font-600 rounded-xl cursor-not-allowed product-sans opacity-50">
+                                                                <div class="flex items-center justify-center space-x-2">
+                                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                                                                    </svg>
+                                                                    <span class="text-base">Crear Cotización (Campos incompletos)</span>
+                                                                </div>
+                                                            </button>
+                                                        @endif
                                                     </div>
                                                 @endif
                                             @endisset

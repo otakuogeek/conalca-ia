@@ -4,12 +4,77 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\QuoteAssistantService;
+use App\Services\MCPAssistantService;
+use App\Services\TextPreprocessorService;
+use App\Models\ConversationMessage;
+use App\Models\GroupCotization;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class ChatController extends Controller
 {
+    /**
+     * 🆕 Obtener el servicio de asistente configurado
+     * Puede ser 'mcp' (MCPAssistantService) o 'openai' (QuoteAssistantService)
+     */
+    private function getAssistantService()
+    {
+        return env('ASSISTANT_SERVICE', 'mcp');
+    }
+    
+    /**
+     * 🆕 Normalizar peso desde formato español/latinoamericano
+     * Convierte "12.400" (12400) o "7,5" (7.5) a número correcto
+     * @param mixed $rawWeight El peso en formato string o número
+     * @return int El peso normalizado en kg
+     */
+    private function normalizeWeight($rawWeight)
+    {
+        if (empty($rawWeight)) {
+            return 0;
+        }
+        
+        // Si ya es número, devolverlo directamente
+        if (is_numeric($rawWeight) && !is_string($rawWeight)) {
+            return (int)$rawWeight;
+        }
+        
+        $raw = trim((string)$rawWeight);
+        
+        // Caso 1: Formato de miles español con punto (12.400 = 12400)
+        // Patrón: X.XXX o X.XXX.XXX (1-3 dígitos, luego grupos de 3 dígitos separados por punto)
+        if (preg_match('/^\d{1,3}(?:\.\d{3})+$/', $raw)) {
+            $peso = (int)str_replace('.', '', $raw);
+            Log::info('📊 normalizeWeight: formato miles español', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 2: Formato decimal con coma (7,5 = 7.5 kg)
+        if (preg_match('/^\d+,\d{1,2}$/', $raw)) {
+            $peso = (int)round((float)str_replace(',', '.', $raw));
+            Log::info('📊 normalizeWeight: decimal con coma', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 3: Formato decimal con punto (7.5 = 7.5 kg) - solo 1-2 decimales
+        if (preg_match('/^\d+\.\d{1,2}$/', $raw)) {
+            $peso = (int)round((float)$raw);
+            Log::info('📊 normalizeWeight: decimal con punto', ['raw' => $raw, 'result' => $peso]);
+            return $peso;
+        }
+        
+        // Caso 4: Número entero simple
+        if (preg_match('/^\d+$/', $raw)) {
+            return (int)$raw;
+        }
+        
+        // Caso 5: Fallback - limpiar puntos y comas
+        $peso = (int)str_replace(['.', ','], '', $raw);
+        Log::info('📊 normalizeWeight: fallback limpieza total', ['raw' => $raw, 'result' => $peso]);
+        return $peso;
+    }
+    
     public function chat(Request $request)
     {
         $request->validate([
@@ -144,15 +209,33 @@ class ChatController extends Controller
             'message' => 'required|string|min:1',
             'thread_id' => 'nullable|string',
             'client_id' => 'required|integer',
+            'group_id' => 'nullable|integer', // 🆕 Validar group_id
             'type_business' => 'required|string'
         ]);
 
         try {
+            // 🆕 PREPROCESAR MENSAJE: Separar palabras pegadas y normalizar texto
+            $originalMessage = $request->message;
+            $processedMessage = TextPreprocessorService::preprocess($originalMessage);
+            
+            if ($originalMessage !== $processedMessage) {
+                Log::info('🔧 Mensaje preprocesado para quoteChat', [
+                    'original' => substr($originalMessage, 0, 150),
+                    'processed' => substr($processedMessage, 0, 150)
+                ]);
+                // Reemplazar el mensaje en el request
+                $request->merge(['message' => $processedMessage]);
+            }
+            
+            // 🆕 Determinar qué servicio usar
+            $assistantServiceType = $this->getAssistantService();
+            
             Log::info('Quote chat request iniciado', [
                 'client_id' => $request->client_id,
                 'thread_id' => $request->thread_id,
                 'type_business' => $request->type_business,
-                'message_length' => strlen($request->message)
+                'message_length' => strlen($request->message),
+                'assistant_service' => $assistantServiceType
             ]);
 
             // Obtener o crear el thread de OpenAI
@@ -164,34 +247,41 @@ class ChatController extends Controller
                 ], 404);
             }
 
-            // Obtener o crear thread
+            // 🆕 USAR SERVICIO SEGÚN CONFIGURACIÓN
+            if ($assistantServiceType === 'openai') {
+                // Usar QuoteAssistantService (Assistant API de OpenAI)
+                return $this->quoteChatWithOpenAIAssistant($request, $client);
+            }
+
+            // Por defecto usar MCP Assistant
+            // Obtener o crear thread usando MCP Assistant
             $threadId = $request->thread_id;
             
             try {
                 if (!$threadId) {
-                    $threadId = QuoteAssistantService::getThread($client);
+                    $threadId = MCPAssistantService::getThread($client);
                 }
                 
                 if (!$threadId) {
                     throw new \Exception('No se pudo crear/obtener el thread de conversación');
                 }
-            } catch (\Exception $openaiError) {
-                Log::warning('OpenAI no disponible para chat quote', [
-                    'error' => $openaiError->getMessage(),
+            } catch (\Exception $mcpError) {
+                Log::warning('MCP Assistant no disponible para chat quote', [
+                    'error' => $mcpError->getMessage(),
                     'client_id' => $client->id
                 ]);
                 
                 return response()->json([
                     'success' => false,
                     'error' => 'Servicio de chat temporalmente no disponible. Intenta nuevamente en unos momentos.',
-                    'error_type' => 'openai_unavailable'
+                    'error_type' => 'mcp_unavailable'
                 ], 503);
             }
 
             // Verificar si hay un run activo antes de crear el mensaje
             if ($request->thread_id && $client->openai_current_run) {
                 try {
-                    $runStatus = QuoteAssistantService::checkRunStatus($threadId, $client->openai_current_run);
+                    $runStatus = MCPAssistantService::checkRunStatus($threadId, $client->openai_current_run);
                     
                     // Si checkRunStatus retorna null, el run aún está activo
                     if ($runStatus === null || in_array($runStatus, ['queued', 'in_progress', 'requires_action'])) {
@@ -254,7 +344,7 @@ class ChatController extends Controller
             // Crear el mensaje del usuario
             // Agregar instrucción para ignorar validaciones de estado del cliente
             $enhancedMessage = $request->message . "\n\nNOTA IMPORTANTE: Ignora cualquier validación de estado del cliente (activo/inactivo). Todos los clientes están autorizados para crear cotizaciones independientemente de su estado.";
-            $userMessage = QuoteAssistantService::createMessage($threadId, $enhancedMessage);
+            $userMessage = MCPAssistantService::createMessage($threadId, $enhancedMessage, $request->group_id); // 🆕 Pasar group_id
             
             // Caso especial: el thread ya no existe en OpenAI
             if ($userMessage === 'THREAD_NOT_FOUND') {
@@ -263,16 +353,13 @@ class ChatController extends Controller
                     'client_id' => $client->id
                 ]);
                 
-                // Limpiar thread del cliente y cancelar runs si existía
-                if ($client->openai_thread_id) {
-                    QuoteAssistantService::cancelActiveRuns($client->openai_thread_id);
-                }
+                // Limpiar thread del cliente
                 $client->openai_thread_id = null;
                 $client->openai_current_run = null;
                 $client->save();
                 
                 // Crear nuevo thread
-                $newThreadId = QuoteAssistantService::getThread($client);
+                $newThreadId = MCPAssistantService::getThread($client);
                 if (!$newThreadId) {
                     return response()->json([
                         'success' => false,
@@ -293,7 +380,7 @@ class ChatController extends Controller
                 sleep(2);
                 
                 // Intentar crear mensaje en el nuevo thread
-                $userMessage = QuoteAssistantService::createMessage($newThreadId, $request->message);
+                $userMessage = MCPAssistantService::createMessage($newThreadId, $request->message);
                 $threadId = $newThreadId;
                 
                 // Si aún falla después del reintento, devolver error
@@ -343,10 +430,66 @@ class ChatController extends Controller
             }
 
             // Ejecutar el asistente
-            $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
+            // 🆕 Pasar índice de ruta seleccionada para edición individual
+            $selectedRouteIndex = $request->input('selected_route_index');
+            $existingRoutesCount = $request->input('existing_routes_count', 0);
+            
+            Log::info('🎯 ChatController: Parámetros de ruta seleccionada', [
+                'selected_route_index_raw' => $request->input('selected_route_index'),
+                'selected_route_index_type' => gettype($selectedRouteIndex),
+                'selected_route_index_value' => $selectedRouteIndex,
+                'is_null' => $selectedRouteIndex === null,
+                'is_zero' => $selectedRouteIndex === 0
+            ]);
+            
+            $run = MCPAssistantService::runAssistant(
+                $threadId, 
+                $request->type_business, 
+                $request->group_id,
+                $selectedRouteIndex,
+                $existingRoutesCount
+            );
+            
+            // Caso especial: el thread ya no existe en OpenAI
+            if ($run === 'THREAD_NOT_FOUND') {
+                Log::warning('🔄 Thread no encontrado al ejecutar asistente, recreando...', [
+                    'old_thread_id' => $threadId,
+                    'client_id' => $client->id
+                ]);
+                
+                // Limpiar thread del cliente
+                $client->openai_thread_id = null;
+                $client->openai_current_run = null;
+                $client->save();
+                
+                // Crear nuevo thread
+                $newThreadId = MCPAssistantService::getThread($client);
+                if (!$newThreadId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo recrear el thread de conversación',
+                        'data' => [
+                            'messages' => []
+                        ]
+                    ], 500);
+                }
+                
+                return response()->json([
+                    'success' => false,
+                    'error' => 'thread_recreated',
+                    'message' => 'Se ha creado una nueva conversación. Por favor, envía tu mensaje nuevamente.',
+                    'data' => [
+                        'thread_id' => $newThreadId,
+                        'should_retry' => true,
+                        'retry_after' => 2,
+                        'messages' => []
+                    ]
+                ], 409); // Conflict - requiere reintento con nuevo thread
+            }
+            
             if (!$run || !isset($run['id'])) {
-                // Si OpenAI falla, implementar fallback
-                Log::warning('OpenAI assistant falló, implementando fallback', [
+                // Si MCP falla, implementar fallback
+                Log::warning('MCP assistant falló, implementando fallback', [
                     'client_id' => $request->client_id,
                     'thread_id' => $threadId
                 ]);
@@ -372,19 +515,232 @@ class ChatController extends Controller
             Log::info('Cliente actualizado con run activo:', [
                 'client_id' => $client->id,
                 'run_id' => $run['id'],
-                'thread_id' => $threadId
+                'thread_id' => $threadId,
+                'has_extracted_data' => isset($run['extracted_data'])
             ]);
 
-            // Obtener todos los mensajes actualizados
-            $messages = QuoteAssistantService::getMessages($threadId);
+            // Obtener todos los mensajes actualizados - FILTRAR POR GROUP_ID si existe
+            $messages = MCPAssistantService::getMessages($threadId, $request->group_id);
+
+            // 🆕 Si usamos MCP síncrono, el run ya está completado - NO enviar run_id para evitar polling innecesario
+            // El polling solo es necesario para runs asíncronos de OpenAI
+            $isCompleted = !empty($messages) && count($messages) > 0;
+            
+            // 🆕 Obtener extracted_data - PRIMERO del grupo específico, luego del run
+            $extractedData = $run['extracted_data'] ?? null;
+            
+            // 🔧 CRÍTICO: Si extracted_data es STRING JSON, decodificar
+            if (is_string($extractedData)) {
+                $extractedData = json_decode($extractedData, true);
+            }
+            
+            // Intentar obtener del GRUPO específico (nueva lógica - evita mezcla entre cotizaciones)
+            if ($request->group_id) {
+                $group = \App\Models\GroupCotization::find($request->group_id);
+                if ($group && $group->extracted_data) {
+                    $groupExtractedData = json_decode($group->extracted_data, true);
+                    if (!empty($groupExtractedData)) {
+                        // 🔧 FIX: NO usar array_merge con rutas numéricas - solo usar datos del grupo
+                        // El grupo ya tiene los datos más actualizados guardados por processToolCalls
+                        $extractedData = $groupExtractedData;
+                        Log::info('📦 extracted_data obtenido del GRUPO (sin merge)', [
+                            'group_id' => $request->group_id,
+                            'fields' => array_keys($extractedData)
+                        ]);
+                    }
+                }
+            }
+            
+            // 🔧 SEGURIDAD: Convertir a array si es necesario (puede ser objeto o null)
+            if (is_object($extractedData)) {
+                $extractedData = (array) $extractedData;
+            } elseif (!is_array($extractedData)) {
+                $extractedData = [];
+            }
+            
+            // 🚨 PRESERVAR flag requiere_aclaracion_ciudades ANTES de separar rutas/planos
+            $requiereAclaracionCiudades = false;
+            if (!empty($extractedData['requiere_aclaracion_ciudades'])) {
+                $requiereAclaracionCiudades = true;
+            }
+            // También verificar en el retorno directo del run (puede estar ahí y no en el grupo)
+            if (!empty($run['extracted_data']) && is_array($run['extracted_data']) && !empty($run['extracted_data']['requiere_aclaracion_ciudades'])) {
+                $requiereAclaracionCiudades = true;
+            }
+            
+            // 🆕 CRÍTICO: Si es multi-ruta con claves numéricas (0, 1, 2...), 
+            // convertir a array indexado para que JSON lo envíe como [...]  no como {"0": ..., "1": ...}
+            // 🔧 FIX: Separar rutas (numéricas) de campos planos (strings) - solo enviar rutas
+            if (!empty($extractedData)) {
+                $routes = [];
+                $flatFields = [];
+                
+                foreach ($extractedData as $key => $value) {
+                    if (is_numeric($key) && is_array($value)) {
+                        // Es una ruta
+                        $routes[$key] = $value;
+                    } else {
+                        // Es campo plano (origen, destino, etc. globales)
+                        $flatFields[$key] = $value;
+                    }
+                }
+                
+                // Si hay rutas, solo enviar las rutas
+                if (!empty($routes)) {
+                    $extractedData = array_values($routes); // Reindexar como [0, 1, 2...]
+                    Log::info('🔄 Multi-ruta: enviando solo rutas al frontend', [
+                        'routes_count' => count($extractedData),
+                        'removed_flat_fields' => array_keys($flatFields)
+                    ]);
+                }
+                // Si no hay rutas pero hay campos planos, enviar campos planos (ruta única legacy)
+                elseif (!empty($flatFields)) {
+                    $extractedData = $flatFields;
+                    Log::info('📦 Ruta única: enviando campos planos', [
+                        'fields' => array_keys($flatFields)
+                    ]);
+                }
+            }
+            
+            // 💵 FILTRO FINAL: Si el mensaje del usuario menciona USD/dólares, eliminar valor_declarado
+            // de extracted_data antes de enviar al frontend
+            $userMsg = $request->message ?? '';
+            $esValorEnUSD = \App\Services\MCPAssistantService::detectValorEnUSD($userMsg);
+            
+            if ($esValorEnUSD && !empty($extractedData)) {
+                Log::info('💵 ChatController: USD detectado en mensaje, limpiando valor de extracted_data');
+                
+                // Si es array de rutas (multi-ruta o array indexado)
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        unset($ruta['valor']);
+                        unset($ruta['valor_declarado']);
+                        unset($ruta['valorMercancia']);
+                        unset($ruta['valor_mercancia']);
+                        $ruta['valor_en_usd'] = true;
+                    }
+                    unset($ruta);
+                } else {
+                    // Ruta única
+                    unset($extractedData['valor']);
+                    unset($extractedData['valor_declarado']);
+                    unset($extractedData['valorMercancia']);
+                    unset($extractedData['valor_mercancia']);
+                    $extractedData['valor_en_usd'] = true;
+                }
+            }
+            // También limpiar si las rutas ya tienen valor_en_usd (de procesamientos anteriores)
+            elseif (!empty($extractedData)) {
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        if (!empty($ruta['valor_en_usd'])) {
+                            unset($ruta['valor']);
+                            unset($ruta['valor_declarado']);
+                            unset($ruta['valorMercancia']);
+                            unset($ruta['valor_mercancia']);
+                        }
+                    }
+                    unset($ruta);
+                } elseif (!empty($extractedData['valor_en_usd'])) {
+                    unset($extractedData['valor']);
+                    unset($extractedData['valor_declarado']);
+                    unset($extractedData['valorMercancia']);
+                    unset($extractedData['valor_mercancia']);
+                }
+            }
+            
+            // 🚨 FILTRO CRÍTICO: Si requiere aclaración de ciudades, NO enviar ciudad_origen ni ciudad_destino
+            // Usar flag preservado ANTES de la separación rutas/planos
+            if ($requiereAclaracionCiudades && !empty($extractedData)) {
+                Log::warning('🚨 REQUIERE ACLARACIÓN DE CIUDADES - Limpiando campos origen/destino', [
+                    'antes' => is_array($extractedData) ? array_keys($extractedData) : 'non-array',
+                    'es_multi_ruta' => isset($extractedData[0]) && is_array($extractedData[0])
+                ]);
+                
+                // Si es multi-ruta (array de rutas), limpiar DENTRO de cada ruta
+                if (isset($extractedData[0]) && is_array($extractedData[0])) {
+                    foreach ($extractedData as &$ruta) {
+                        unset($ruta['ciudad_origen']);
+                        unset($ruta['ciudad_destino']);
+                        unset($ruta['origen']);
+                        unset($ruta['destino']);
+                    }
+                    unset($ruta);
+                } else {
+                    // Ruta única: limpiar campos de nivel superior
+                    unset($extractedData['ciudad_origen']);
+                    unset($extractedData['ciudad_destino']);
+                    unset($extractedData['origen']);
+                    unset($extractedData['destino']);
+                }
+                
+                // Limpiar flags de diagnóstico (solo internos)
+                unset($extractedData['origen_texto_detectado']);
+                unset($extractedData['destino_texto_detectado']);
+                unset($extractedData['direccion_encontrada']);
+                unset($extractedData['mensaje_asistente']);
+                unset($extractedData['requiere_aclaracion_ciudades']);
+                unset($extractedData['direccion_detectada']);
+                
+                Log::info('✅ Campos origen/destino limpiados para frontend', [
+                    'despues' => is_array($extractedData) ? array_keys($extractedData) : 'cleaned'
+                ]);
+            }
+
+            Log::info('Respuesta final del chat', [
+                'is_completed' => $isCompleted,
+                'messages_count' => count($messages),
+                'will_send_run_id' => !$isCompleted,
+                'has_extracted_data' => !empty($extractedData),
+                'extracted_data_keys' => !empty($extractedData) ? array_keys($extractedData) : [],
+                'is_multi_route' => (is_array($extractedData) && isset($extractedData[0]) && is_array($extractedData[0])) || 
+                                   (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true),
+                'group_id' => $request->group_id,
+                'valor_en_usd' => $esValorEnUSD
+            ]);
+
+            // 🆕 Obtener productos pendientes de selección (si existen)
+            // SOLO enviar si el usuario está buscando productos, NO si edita otros campos
+            $productosPendientes = null;
+            if ($threadId) {
+                // Buscar en la metadata de la sesión usando session_id (que almacena el thread_id)
+                $session = \App\Models\ConversationSession::where('session_id', $threadId)->first();
+                if ($session && $session->metadata) {
+                    $metadata = json_decode($session->metadata, true);
+                    
+                    // 🆕 Verificar si el usuario está pidiendo cambio de producto
+                    $mensajeLower = strtolower($request->message ?? '');
+                    $pideCambioProducto = preg_match('/(?:producto|cambiar\s+producto|opci[oó]n\s*\d|selecciono?\s+\d)/ui', $mensajeLower);
+                    
+                    if (isset($metadata['productos_pendientes'])) {
+                        // Solo enviar productos pendientes si el usuario está interactuando con productos
+                        if ($pideCambioProducto) {
+                            $productosPendientes = $metadata['productos_pendientes'];
+                            Log::info('📦 Productos pendientes enviados (usuario pidió producto)', [
+                                'count' => count($productosPendientes)
+                            ]);
+                        } else {
+                            // Limpiar productos pendientes si el usuario está editando otro campo
+                            unset($metadata['productos_pendientes']);
+                            unset($metadata['producto_search_term']);
+                            $session->metadata = json_encode($metadata);
+                            $session->save();
+                            Log::info('🧹 Productos pendientes limpiados (usuario editando otro campo)');
+                        }
+                    }
+                }
+            }
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'thread_id' => $threadId,
-                    'run_id' => $run['id'],
+                    'run_id' => $isCompleted ? null : $run['id'],
+                    'completed' => $isCompleted,
                     'user_message' => $userMessage,
-                    'messages' => $messages
+                    'messages' => $messages,
+                    'extracted_data' => $extractedData,
+                    'productos_pendientes' => $productosPendientes // 🆕 Productos para mostrar como opciones
                 ]
             ]);
 
@@ -405,19 +761,23 @@ class ChatController extends Controller
         }
     }
 
-    public function getMessages($threadId)
+    public function getMessages(Request $request, $threadId)
     {
         try {
+            $groupId = $request->query('group_id');
+            
             Log::info('Get messages request', [
-                'thread_id' => $threadId
+                'thread_id' => $threadId,
+                'group_id' => $groupId
             ]);
 
-            $messages = QuoteAssistantService::getMessages($threadId);
+            $messages = MCPAssistantService::getMessages($threadId, $groupId);
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'thread_id' => $threadId,
+                    'group_id' => $groupId,
                     'messages' => $messages
                 ]
             ]);
@@ -443,7 +803,7 @@ class ChatController extends Controller
                 'run_id' => $runId
             ]);
 
-            $runData = QuoteAssistantService::checkRunStatus($threadId, $runId);
+            $runData = MCPAssistantService::checkRunStatus($threadId, $runId);
             
             // Función helper para limpiar el run activo del cliente
             $clearClientActiveRun = function() use ($runId) {
@@ -462,12 +822,18 @@ class ChatController extends Controller
             if ($runData && is_array($runData)) {
                 // Si hay datos extraídos del tool call
                 $clearClientActiveRun();
+                
+                // Separar quote_data de extracted_data si vienen en el runData
+                $extractedData = $runData['extracted_data'] ?? null;
+                $quoteData = $runData['quote_data'] ?? $runData;
+                
                 return response()->json([
                     'success' => true,
                     'data' => [
                         'thread_id' => $threadId,
                         'run_id' => $runId,
-                        'quote_data' => $runData,
+                        'quote_data' => $quoteData,
+                        'extracted_data' => $extractedData,  // NUEVO: incluir datos extraídos
                         'status' => 'completed_with_data'
                     ]
                 ]);
@@ -563,6 +929,345 @@ class ChatController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Error interno del servidor'
+            ], 500);
+        }
+    }
+
+    /**
+     * Limpiar mensajes de un grupo específico para empezar chat limpio
+     */
+    public function clearGroupMessages(Request $request)
+    {
+        try {
+            $groupId = $request->group_id;
+            
+            if (!$groupId) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'group_id es requerido'
+                ], 400);
+            }
+
+            $deleted = ConversationMessage::where('group_cotization_id', $groupId)->delete();
+            
+            Log::info('Mensajes del grupo eliminados', [
+                'group_id' => $groupId,
+                'messages_deleted' => $deleted
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Se eliminaron {$deleted} mensajes del grupo {$groupId}",
+                'deleted_count' => $deleted
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error limpiando mensajes del grupo', [
+                'error' => $e->getMessage(),
+                'group_id' => $request->group_id ?? 'unknown'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Error al limpiar mensajes'
+            ], 500);
+        }
+    }
+    
+    /**
+     * Actualizar extracted_data de un grupo (para cambios de tara en tiempo real)
+     */
+    public function updateExtractedData(Request $request)
+    {
+        try {
+            $groupId = $request->group_id;
+            $extractedData = $request->extracted_data;
+            
+            if (!$groupId || !$extractedData) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'group_id y extracted_data son requeridos'
+                ], 400);
+            }
+
+            $group = GroupCotization::findOrFail($groupId);
+            
+            // Verificar permisos
+            if ($group->user_id !== Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No tienes permisos para modificar este grupo'
+                ], 403);
+            }
+
+            // � NORMALIZAR nombres de campos antes de guardar
+            // 🚛 Si viene con formato multi-ruta mixto (con campos globales extras), extraer solo las rutas
+            $rutasParaNormalizar = $extractedData;
+            if (isset($extractedData['rutas']) && is_array($extractedData['rutas'])) {
+                // Tiene formato {rutas: [...], peso_kg: 40000, ...}
+                $rutasParaNormalizar = $extractedData['rutas'];
+                Log::info('🔧 Limpiando campos globales extras en multi-ruta', [
+                    'campos_extras' => array_keys(array_diff_key($extractedData, ['rutas' => 1, 'multi_ruta' => 1, 'total_rutas' => 1]))
+                ]);
+            }
+            
+            $normalizedData = [];
+            foreach ($rutasParaNormalizar as $ruta) {
+                // Saltar si no es un array (podría ser un campo global extra)
+                if (!is_array($ruta)) {
+                    continue;
+                }
+                
+                // 🆕 FIX: Normalizar peso usando helper para manejar formato miles español (12.400 = 12400)
+                $pesoRaw = $ruta['peso_kg'] ?? $ruta['peso'] ?? $ruta['pesoMercancia'] ?? null;
+                $pesoNormalizado = $pesoRaw !== null ? $this->normalizeWeight($pesoRaw) : null;
+                
+                // 🔧 FIX: Obtener empaque y combinarlo con tamaño de contenedor si aplica
+                $empaque = $ruta['empaque'] ?? null;
+                $contenedor = $ruta['contenedor'] ?? null;
+                
+                // Si el empaque es CONTENEDOR genérico, verificar si hay tamaño en el campo contenedor
+                if ($empaque && $contenedor) {
+                    $empaqueUpper = mb_strtoupper($empaque);
+                    $contenedorLower = mb_strtolower($contenedor);
+                    
+                    if ($empaqueUpper === 'CONTENEDOR' || (strpos($empaqueUpper, 'CONTENEDOR') !== false && !preg_match('/\d+/', $empaqueUpper))) {
+                        // Buscar tamaño en el campo contenedor: "contenedor de 20 pies", "20'", "40 pies"
+                        if (preg_match('/(\d+)\s*(?:pies|\'|")?/i', $contenedorLower, $matches)) {
+                            $tamaño = $matches[1];
+                            if ($tamaño == '20') {
+                                $empaque = 'CONTENEDOR 20';
+                                Log::info('📦 Empaque actualizado con tamaño de contenedor (ChatController)', [
+                                    'empaque_original' => $empaqueUpper,
+                                    'contenedor' => $contenedor,
+                                    'empaque_final' => $empaque
+                                ]);
+                            } elseif ($tamaño == '40') {
+                                $empaque = 'CONTENEDOR 40';
+                                Log::info('📦 Empaque actualizado con tamaño de contenedor (ChatController)', [
+                                    'empaque_original' => $empaqueUpper,
+                                    'contenedor' => $contenedor,
+                                    'empaque_final' => $empaque
+                                ]);
+                            }
+                        }
+                    }
+                }
+                
+                // También verificar si el empaque tiene tamaño embebido
+                if ($empaque && preg_match('/CONTENEDOR.*?(\d+)/i', $empaque, $matches)) {
+                    $tamaño = $matches[1];
+                    if ($tamaño == '20') {
+                        $empaque = 'CONTENEDOR 20';
+                    } elseif ($tamaño == '40') {
+                        $empaque = 'CONTENEDOR 40';
+                    }
+                }
+                
+                // 🔧 FIX: Detectar formato "1x40'HC", "2x20GP" en el campo contenedor
+                // Si el contenedor tiene formato NxTAMAÑO'TIPO, extraer el tamaño para el empaque
+                if ($contenedor) {
+                    $contenedorUpper = mb_strtoupper($contenedor);
+                    // Patrón: "1X40'HC", "2X20GP", "1X40 HC", etc.
+                    if (preg_match('/(\d+)\s*[Xx]\s*(20|40|45)\s*[\'"]?\s*(HQ|HC|GP|RF|OT|FR)?/i', $contenedorUpper, $matches)) {
+                        $tamaño = $matches[2];
+                        if ($tamaño == '20') {
+                            $empaque = 'CONTENEDOR 20';
+                        } elseif ($tamaño == '40' || $tamaño == '45') {
+                            $empaque = 'CONTENEDOR 40';
+                        }
+                        Log::info('📦 Empaque detectado de formato contenedor NxTAMAÑO (ChatController)', [
+                            'contenedor' => $contenedor,
+                            'empaque_final' => $empaque
+                        ]);
+                    }
+                }
+                
+                $normalized = [
+                    'origen' => $ruta['origen'] ?? null,
+                    'destino' => $ruta['destino'] ?? null,
+                    // Normalizar peso: peso_kg, peso, pesoMercancia
+                    'peso_kg' => $pesoNormalizado,
+                    'cantidad' => $ruta['cantidad'] ?? $ruta['cantidadMercancia'] ?? null,
+                    // Normalizar valor: valor_declarado, valor, valorMercancia
+                    'valor_declarado' => $ruta['valor_declarado'] ?? $ruta['valor'] ?? $ruta['valorMercancia'] ?? null,
+                    'vehiculo' => $ruta['vehiculo'] ?? $ruta['claseVehiculo'] ?? null,
+                    'empaque' => $empaque,
+                    'empaque_id' => $ruta['empaque_id'] ?? null,
+                    'producto' => $ruta['producto'] ?? $ruta['tipo_producto'] ?? null,
+                    'contenedor' => $contenedor,
+                    'incluye_tara' => $ruta['incluye_tara'] ?? false
+                ];
+                // Remover nulls
+                $normalizedData[] = array_filter($normalized, fn($v) => $v !== null);
+            }
+
+            // 🚛 Si son múltiples rutas, guardar en formato multi-ruta
+            if (count($normalizedData) > 1) {
+                $multiRutaData = [
+                    'multi_ruta' => true,
+                    'total_rutas' => count($normalizedData),
+                    'rutas' => $normalizedData
+                ];
+                $group->extracted_data = json_encode($multiRutaData);
+                Log::info('🚛 Guardando extracted_data en formato multi-ruta NORMALIZADO', [
+                    'group_id' => $groupId,
+                    'total_rutas' => count($normalizedData)
+                ]);
+            } else {
+                // Ruta única
+                $group->extracted_data = json_encode($normalizedData);
+                Log::info('📍 Guardando extracted_data en formato ruta única NORMALIZADO', [
+                    'group_id' => $groupId
+                ]);
+            }
+            $group->save();
+            
+            // 🆕 También actualizar peso_mercancia en cotizacion_models si existe
+            $cotizaciones = $group->cotizaciones()->get();
+            foreach ($cotizaciones as $index => $cotizacion) {
+                if (isset($normalizedData[$index]['peso_kg'])) {
+                    $cotizacion->peso_mercancia = $normalizedData[$index]['peso_kg'];
+                    $cotizacion->save();
+                    Log::info('Peso actualizado en cotizacion', [
+                        'cotizacion_id' => $cotizacion->id,
+                        'peso_nuevo' => $normalizedData[$index]['peso_kg']
+                    ]);
+                }
+            }
+            
+            Log::info('✅ extracted_data actualizado correctamente', [
+                'group_id' => $groupId,
+                'routes_count' => count($normalizedData)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'extracted_data actualizado correctamente'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error actualizando extracted_data', [
+                'error' => $e->getMessage(),
+                'group_id' => $request->group_id ?? 'unknown'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Error al actualizar extracted_data'
+            ], 500);
+        }
+    }
+    
+    /**
+     * 🆕 CHAT USANDO ASSISTANT API DE OPENAI
+     * Usa el asistente asst_MnJ08tJG6NKOjbqFLvsYMqEp con herramientas configuradas
+     */
+    private function quoteChatWithOpenAIAssistant(Request $request, $client)
+    {
+        try {
+            Log::info('🤖 Usando OpenAI Assistant Service', [
+                'client_id' => $client->id,
+                'type_business' => $request->type_business
+            ]);
+            
+            // Obtener o crear thread - VALIDAR formato correcto (debe empezar con 'thread_')
+            $threadId = $request->thread_id;
+            
+            // 🆕 Si el thread_id no tiene formato válido de OpenAI, ignorarlo y crear uno nuevo
+            if ($threadId && !str_starts_with($threadId, 'thread_')) {
+                Log::warning('⚠️ Thread ID inválido para OpenAI Assistant, creando nuevo', [
+                    'invalid_thread_id' => $threadId
+                ]);
+                $threadId = null;
+                // Limpiar thread del cliente también
+                $client->openai_thread_id = null;
+                $client->save();
+            }
+            
+            if (!$threadId) {
+                $threadId = QuoteAssistantService::getThread($client);
+            }
+            
+            if (!$threadId) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo crear el thread de conversación'
+                ], 500);
+            }
+            
+            // Crear mensaje del usuario
+            $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
+            
+            if ($userMessage === 'THREAD_NOT_FOUND') {
+                // Recrear thread
+                $client->openai_thread_id = null;
+                $client->save();
+                $threadId = QuoteAssistantService::getThread($client);
+                
+                if (!$threadId) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'No se pudo recrear el thread'
+                    ], 500);
+                }
+                
+                $userMessage = QuoteAssistantService::createMessage($threadId, $request->message);
+            }
+            
+            if (!$userMessage) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo crear el mensaje'
+                ], 500);
+            }
+            
+            // Ejecutar el asistente
+            $run = QuoteAssistantService::runAssistant($threadId, $request->type_business);
+            
+            if (!$run || !isset($run['id'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'No se pudo ejecutar el asistente'
+                ], 500);
+            }
+            
+            // Guardar run_id
+            $client->openai_current_run = $run['id'];
+            $client->save();
+            
+            // Esperar respuesta (con timeout)
+            $extractedData = QuoteAssistantService::waitForRunAndExtractData($threadId, $run['id'], 60);
+            
+            Log::info('📊 Datos extraídos del Assistant', [
+                'has_data' => !empty($extractedData),
+                'data_preview' => is_array($extractedData) ? array_keys($extractedData[0] ?? []) : 'not_array'
+            ]);
+            
+            // Obtener mensajes actualizados
+            $messages = QuoteAssistantService::getMessages($threadId);
+            
+            // Formatear respuesta
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'thread_id' => $threadId,
+                    'run_id' => $run['id'],
+                    'messages' => $messages,
+                    'extracted_data' => $extractedData,
+                    'assistant_service' => 'openai'
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('❌ Error en quoteChatWithOpenAIAssistant', [
+                'error' => $e->getMessage(),
+                'client_id' => $client->id
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Error procesando mensaje: ' . $e->getMessage()
             ], 500);
         }
     }

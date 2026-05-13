@@ -32,14 +32,21 @@ const STEP1_FIELDS = [
   'vendedor', 'vendedor_label', 'cliente_codigo', 'cliente_nombre',
   'tipo_operacion', 'centro_costo_despacho', 'operation_flow'
 ];
-const STEP2 = ['origen','destino','cantidad_mercancia','peso','valor_mercancia',
-  'producto','empaque','cantidad_vehiculos','clase_vehiculo','carroceria',
+const STEP2 = ['origen','origen_label','destino','destino_label',
+  'cantidad_mercancia','peso','valor_mercancia',
+  'producto','producto_label','empaque','empaque_label',
+  'cantidad_vehiculos','clase_vehiculo','clase_vehiculo_label',
+  'carroceria','carroceria_label',
   'minimo_modelo','tipo_flete','flete_conductor','flete_ministerio','tipo_tarifa',
   'tarifa_cliente','cargue_cuenta_de','descargue_cuenta_de','seguro_cuenta_de',
-  'descripcion_mercancia','kit_seguridad','tipo_remesa_rndc'];
+  'descripcion_mercancia','kit_seguridad','tipo_remesa_rndc',
+  'lugar_recogida_contenedor','lugar_recogida_contenedor_label','tipo_carga','sub_cliente'];
 
-const STEP3 = ['fecha_cargue','hora_cargue','remitente','destinatario','contacto',
-  'promesa_servicio','documento_transporte','observacion_cargue'];
+const STEP3 = ['fecha_cargue','hora_cargue','remitente','remitente_label',
+  'destinatario','destinario','destinario_label',
+  'contacto','promesa_servicio','documento_transporte','observacion_cargue',
+  'tiempo_cargue_pactado','tiempo_descargue_pactado',
+  'fecha_cita_descargue','hora_cita_descargue'];
 
 const STEP4 = ['contenedor'];
 const STEP5 = ['modalidad_internacional'];

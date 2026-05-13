@@ -14,6 +14,9 @@ class QuoteAssistantService
 
     private static $private_token = null;
     private static $token = null; // Añadir esta propiedad
+    
+    // 🆕 URL del servidor MCP para ejecutar herramientas
+    private static $mcp_base_url = null;
 
     private static $assistant_id_dta_otm = 'asst_s94P42GEEEnXEp2rufhJM0sx';
 
@@ -26,13 +29,14 @@ class QuoteAssistantService
     private static $assistant_id_ce_cg_mp = 'asst_NRyScHbWS5rBZlW3LZ7BjpBx';
 
 
-    private static $assistant_id = 'asst_MnJ08tJG6NKOjbqFLvsYMqEp';
+    private static $assistant_id = 'asst_OfFhkHs7XCVtvFHgefkRBU2p';
 
     private static function initToken()
     {
         if (!self::$private_token) {
             self::$private_token = config('services.openai.api_key');
             self::$token = self::$private_token; // Asignar también a $token
+            self::$mcp_base_url = config('services.mcp.base_url') ?: env('MCP_BASE_URL', 'https://conalcaia.conalca.com.co/mcp/');
             
             if (!self::$private_token) {
                 Log::error('OpenAI API key no configurado en services.openai.api_key');
@@ -41,7 +45,8 @@ class QuoteAssistantService
             
             Log::info('Initializing OpenAI token', [
                 'token_length' => strlen(self::$private_token),
-                'token_prefix' => substr(self::$private_token, 0, 10)
+                'token_prefix' => substr(self::$private_token, 0, 10),
+                'mcp_url' => self::$mcp_base_url
             ]);
         }
     }
@@ -694,14 +699,79 @@ class QuoteAssistantService
                     $tool_calls = $message['required_action']['submit_tool_outputs']['tool_calls'];
                     $tool_outputs = [];
                     $all_data = [];
+                    $extractedData = []; // 🆕 Datos extraídos de herramientas
+                    
                     foreach ($tool_calls as $tool_call) {
                         $call_id = $tool_call['id'];
+                        $function_name = $tool_call['function']['name'] ?? 'unknown';
                         $arguments = json_decode($tool_call['function']['arguments'], true);
+                        
+                        // LOG DETALLADO para debug
+                        Log::info('Tool call procesado:', [
+                            'call_id' => $call_id,
+                            'function_name' => $function_name,
+                            'arguments_raw' => $tool_call['function']['arguments'],
+                            'arguments_decoded' => $arguments,
+                            'tiene_tipo_producto' => isset($arguments['tipo_producto']) ? 'SI' : 'NO',
+                            'tiene_producto' => isset($arguments['producto']) ? 'SI' : 'NO',
+                            'keys_disponibles' => is_array($arguments) ? array_keys($arguments) : []
+                        ]);
+                        
+                        // 🆕 EJECUTAR HERRAMIENTAS REALES VÍA MCP
+                        $toolResult = self::executeTool($function_name, $arguments);
+                        
+                        // 🆕 Procesar resultado de search_products
+                        if ($function_name === 'search_products') {
+                            $searchTerm = $arguments['search_term'] ?? $arguments['nombre'] ?? '';
+                            if (isset($toolResult['productos']) && count($toolResult['productos']) > 0) {
+                                $productos = $toolResult['productos'];
+                                if (count($productos) === 1) {
+                                    $extractedData['producto'] = $productos[0]['nombre'];
+                                    $extractedData['producto_codigo'] = $productos[0]['codigo'] ?? null;
+                                    Log::info('✅ Producto encontrado en BD:', ['producto' => $productos[0]['nombre']]);
+                                } else {
+                                    // Múltiples opciones, usar el término de búsqueda
+                                    $extractedData['producto'] = strtoupper($searchTerm);
+                                    Log::info('📋 Múltiples productos, usando término:', ['producto' => $searchTerm]);
+                                }
+                            } else {
+                                // 🆕 Producto NO encontrado - guardarlo como PERSONALIZADO
+                                $extractedData['producto'] = strtoupper($searchTerm);
+                                $extractedData['producto_codigo'] = 'PERSONALIZADO';
+                                Log::info('⚠️ Producto no en BD, marcado como PERSONALIZADO:', ['producto' => $searchTerm]);
+                            }
+                        }
+                        
+                        // 🆕 Procesar resultado de get_empaques
+                        if ($function_name === 'get_empaques') {
+                            if (isset($toolResult['empaques']) && count($toolResult['empaques']) > 0) {
+                                $empaque = $toolResult['empaques'][0];
+                                $extractedData['empaque'] = $empaque['nome'] ?? $empaque['nombre'] ?? null;
+                                $extractedData['empaque_id'] = $empaque['id'] ?? null;
+                                Log::info('✅ Empaque encontrado:', ['empaque' => $extractedData['empaque']]);
+                            }
+                        }
+                        
+                        // NORMALIZAR: Si viene 'producto' en lugar de 'tipo_producto', copiarlo
+                        if (isset($arguments['producto']) && !isset($arguments['tipo_producto'])) {
+                            $arguments['tipo_producto'] = $arguments['producto'];
+                            Log::info('Campo producto normalizado a tipo_producto:', ['valor' => $arguments['producto']]);
+                        }
+                        
+                        // NORMALIZAR: Si viene 'product' en lugar de 'tipo_producto', copiarlo
+                        if (isset($arguments['product']) && !isset($arguments['tipo_producto'])) {
+                            $arguments['tipo_producto'] = $arguments['product'];
+                            Log::info('Campo product normalizado a tipo_producto:', ['valor' => $arguments['product']]);
+                        }
+                        
+                        // Combinar argumentos con datos extraídos
+                        $mergedData = array_merge($arguments, $extractedData);
+                        
                         $tool_outputs[] = [
                             'tool_call_id' => $call_id,
-                            'output' => json_encode($arguments) // Convertir array a string JSON
+                            'output' => json_encode($toolResult) // 🆕 Enviar resultado real de la herramienta
                         ];
-                        $all_data[] = $arguments;
+                        $all_data[] = $mergedData;
                     }
                     
                     $submitRequest = Http::timeout(10)
@@ -782,6 +852,71 @@ class QuoteAssistantService
             return null;
         }
     }
+    
+    /**
+     * 🆕 ESPERAR RUN Y EXTRAER DATOS
+     * Hace polling hasta que el run termine y retorna los datos extraídos
+     */
+    public static function waitForRunAndExtractData($thread_id, $run_id, $timeoutSeconds = 60)
+    {
+        $startTime = time();
+        $pollInterval = 2; // segundos entre cada verificación
+        $extractedData = [];
+        
+        Log::info('⏳ Iniciando polling de run', [
+            'thread_id' => $thread_id,
+            'run_id' => $run_id,
+            'timeout' => $timeoutSeconds
+        ]);
+        
+        while ((time() - $startTime) < $timeoutSeconds) {
+            $result = self::checkRunStatus($thread_id, $run_id);
+            
+            Log::info('🔄 Resultado de checkRunStatus', [
+                'result_type' => gettype($result),
+                'is_array' => is_array($result),
+                'result' => is_array($result) ? 'array with ' . count($result) . ' items' : $result
+            ]);
+            
+            // Si el resultado es un array, son los datos extraídos
+            if (is_array($result) && count($result) > 0) {
+                Log::info('✅ Datos extraídos del run', [
+                    'count' => count($result)
+                ]);
+                return $result;
+            }
+            
+            // Si el status es completed o finished, intentar extraer de mensajes
+            if ($result === 'completed' || $result === 'finished' || $result === 'finished_with_indication') {
+                Log::info('🏁 Run completado, intentando extraer datos de mensajes');
+                $messages = self::getMessages($thread_id);
+                $extractedFromText = self::extractQuoteDataFromText($messages);
+                
+                if (!empty($extractedFromText)) {
+                    return $extractedFromText;
+                }
+                
+                // No hay datos pero el run terminó
+                return [];
+            }
+            
+            // Si falló, retornar vacío
+            if ($result === 'failed' || $result === 'cancelled' || $result === 'expired') {
+                Log::warning('⚠️ Run terminó con error', ['status' => $result]);
+                return [];
+            }
+            
+            // Esperar antes del siguiente poll
+            sleep($pollInterval);
+        }
+        
+        Log::warning('⏰ Timeout esperando run', [
+            'thread_id' => $thread_id,
+            'run_id' => $run_id
+        ]);
+        
+        return [];
+    }
 
     /**
      * Procesa mensajes directamente con OpenAI usando function calling
@@ -819,10 +954,10 @@ CAMPOS DISPONIBLES:
 1. ciudad_origen: Ciudad de origen del envío
 2. ciudad_destino: Ciudad de destino del envío  
 3. peso_mercancia: Peso en kilogramos
-4. cantidad: Cantidad de unidades/bultos
+4. cantidad: Cantidad de unidades/bultos (IMPORTANTE: si el usuario dice "18 pallets", la cantidad es 18; si dice "210 cajas", la cantidad es 210. NUNCA poner 1 cuando el usuario especifica un número de unidades)
 5. tipo_embajale: Tipo de embalaje (caja, pallet, etc.)
 6. tipo_producto: Tipo de producto/mercancía
-7. vehiculo_requerido: Tipo de vehículo necesario
+7. vehiculo_requerido: Tipo de vehículo necesario. ⚠️ REGLA CONTENEDORES: Si se mencionan CONTENEDORES (de 20, de 40, 20\', 40\', 1x20, 2x40, etc.), vehiculo_requerido es SIEMPRE "TRACTOCAMION". Los contenedores SOLO se transportan en tractocamión, NUNCA turbo, sencillo ni camioneta. Si NO hay contenedores y NO se menciona vehículo, dejar vacío.
 8. valor_declarado: Valor declarado de la mercancía
 
 RESPUESTAS INTELIGENTES:
@@ -898,9 +1033,10 @@ USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques informac
                     'functions' => $functions,
                     'function_call' => 'auto',
                     'max_tokens' => 800,
-                    'temperature' => 0.1, // Más determinista para respuestas propositivas
-                    'presence_penalty' => 0.1,
-                    'frequency_penalty' => 0.1
+                    'temperature' => 0, // Determinista para extracción precisa de datos
+                    'seed' => 42, // Seed fijo para mayor consistencia entre llamadas
+                    'presence_penalty' => 0,
+                    'frequency_penalty' => 0
                 ]);
 
             if ($response->successful()) {
@@ -934,6 +1070,73 @@ USA la función "extract_quote_data" INMEDIATAMENTE cuando identifiques informac
             }
             
             throw $e;
+        }
+    }
+    
+    /**
+     * 🆕 EJECUTAR HERRAMIENTA VÍA SERVIDOR MCP
+     * Llama al servidor MCP para ejecutar herramientas como search_products, get_empaques, etc.
+     */
+    private static function executeTool($toolName, $arguments)
+    {
+        self::initToken();
+        
+        try {
+            Log::info('🔧 Ejecutando herramienta vía MCP', [
+                'tool' => $toolName,
+                'arguments' => $arguments,
+                'mcp_url' => self::$mcp_base_url
+            ]);
+
+            // JSON-RPC 2.0 format según protocolo MCP
+            $payload = [
+                'jsonrpc' => '2.0',
+                'id' => uniqid(),
+                'method' => 'tools/call',
+                'params' => [
+                    'name' => $toolName,
+                    'arguments' => $arguments ?? []
+                ]
+            ];
+
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                ])
+                ->post(self::$mcp_base_url, $payload);
+
+            if (!$response->successful()) {
+                Log::warning('⚠️ Error llamando herramienta MCP', [
+                    'tool' => $toolName,
+                    'status' => $response->status(),
+                    'body' => $response->body()
+                ]);
+                return ['error' => 'Error al llamar herramienta MCP', 'status' => $response->status()];
+            }
+
+            $data = $response->json();
+            
+            Log::info('✅ Respuesta MCP recibida', [
+                'tool' => $toolName,
+                'has_result' => isset($data['result']),
+                'response_keys' => array_keys($data)
+            ]);
+
+            // Respuesta JSON-RPC 2.0: extraer el texto del content
+            if (isset($data['result']['content'][0]['text'])) {
+                $textResult = $data['result']['content'][0]['text'];
+                $decoded = json_decode($textResult, true);
+                return $decoded ?? ['raw' => $textResult];
+            }
+            
+            return $data['result'] ?? $data;
+
+        } catch (\Exception $e) {
+            Log::error('❌ Excepción ejecutando herramienta MCP', [
+                'tool' => $toolName,
+                'error' => $e->getMessage()
+            ]);
+            return ['error' => $e->getMessage()];
         }
     }
 }

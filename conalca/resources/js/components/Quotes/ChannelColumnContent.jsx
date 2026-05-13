@@ -162,9 +162,12 @@ export default function ChannelColumnContent({ groups = [], onTransitoGroupClick
                     )}
 
                     {/* Botón "Continuar cotización" para grupos incompletos */}
-                    {(group.status?.toLowerCase() === "pre-solicitud" && group.cotizaciones.length === 0) && (
+                    {(
+                      group.status?.toLowerCase() === "borrador" ||
+                      (group.status?.toLowerCase() === "pre-solicitud" && group.cotizaciones.length === 0)
+                    ) && (
                       <button
-                        title="Continuar cotización incompleta"
+                        title="Continuar cotización"
                         onClick={() => handleContinueQuote(group)}
                         className="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-xl p-2.5 hover:scale-110 transition-all duration-200 shadow-lg hover:shadow-xl btn-hover-lift"
                       >

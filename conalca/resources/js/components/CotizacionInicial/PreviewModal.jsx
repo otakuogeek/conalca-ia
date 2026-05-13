@@ -1,9 +1,36 @@
 // resources/js/components/CotizacionInicial/PreviewModal.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Modal from './ui/Modal';
 import { saveQuoteFromChat, sendQuoteEmail } from '../../services/cotizationsService';
+import { getSecurityProtocol } from './utils/securityProtocol';
 
+
+// Póliza excedente thresholds (same as PricingModal)
+const POLIZA_THRESHOLD_OPTIONAL = 1_000_000_000;
+const POLIZA_THRESHOLD_MANDATORY = 1_500_000_000;
+const IVA_RATE = 0.19;
+
+const parseValorDeclarado = (route) => {
+  const raw = route.valor_declarado ?? route.valorMercancia ?? route.valor_mercancia ?? 0;
+  const cleaned = String(raw).replace(/\./g, '').replace(/,/g, '');
+  return Number(cleaned) || 0;
+};
+
+const calculatePolizaExcedente = (route) => {
+  const valorDeclarado = parseValorDeclarado(route);
+  const isMandatory = valorDeclarado > POLIZA_THRESHOLD_MANDATORY;
+  const isOptional = valorDeclarado > POLIZA_THRESHOLD_OPTIONAL && valorDeclarado <= POLIZA_THRESHOLD_MANDATORY;
+  const showPoliza = isMandatory || isOptional;
+  if (!showPoliza) return { show: false, enabled: false, excedente: 0, tarifaValue: 0, iva: 0, total: 0 };
+  const enabled = isMandatory || Boolean(route.poliza_excedente_enabled);
+  const excedente = valorDeclarado - POLIZA_THRESHOLD_OPTIONAL;
+  const tarifaRate = Number(route.tarifa_poliza) || 0;
+  const tarifaValue = excedente * (tarifaRate / 100);
+  const iva = tarifaValue * IVA_RATE;
+  const total = enabled ? tarifaValue + iva : 0;
+  return { show: showPoliza, mandatory: isMandatory, enabled, excedente, tarifaRate, tarifaValue, iva, total };
+};
 
 const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings }) => {
   const [emailData, setEmailData] = useState({
@@ -21,6 +48,20 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
   });
 
   const [saving, setSaving] = useState(false);
+
+  // 🆕 Tara settings from database (configurable via admin)
+  const [taraSettings, setTaraSettings] = useState({ tara_contenedor_20: 2300, tara_contenedor_40: 3400 });
+
+  useEffect(() => {
+    fetch('/api/catalog/tara-settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data.tara_contenedor_20 && data.tara_contenedor_40) {
+          setTaraSettings(data);
+        }
+      })
+      .catch(() => { /* keep defaults */ });
+  }, []);
 
   const handleInputChange = (field, value) => {
     setEmailData(prev => ({
@@ -75,8 +116,59 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     return parameters;
   };
 
+  // 🆕 Helper para detectar si el embalaje es un contenedor
+  const isContainerPacking = (embalaje) => {
+    if (!embalaje) return false;
+    const normalized = String(embalaje).toUpperCase();
+    return normalized.includes('CONTENEDOR') || 
+           normalized.includes('CONTAINER') ||
+           /\d+X(20|40|45)/i.test(normalized) || // Formato 1X20, 4X40, etc.
+           /^(20|40|45)\s*['"]?\s*(HC|GP|OT|RF|FR)?$/i.test(normalized); // Formato 40 HC, 20', etc.
+  };
+  // 🆕 Helper para obtener el tipo de contenedor (20, 40 o 45 pies)
+  const getContainerSize = (embalaje) => {
+    if (!embalaje) return null;
+    const normalized = String(embalaje).toUpperCase();
+    if (normalized.includes('20') || /\d+X20/i.test(normalized)) return 20;
+    if (normalized.includes('45') || /\d+X45/i.test(normalized)) return 45;
+    if (normalized.includes('40') || /\d+X40/i.test(normalized)) return 40;
+    return null;
+  };
+
+  // 🆕 Helper para obtener la tara según tipo de contenedor (valores de BD)
+  const getContainerTara = (embalaje) => {
+    const size = getContainerSize(embalaje);
+    switch (size) {
+      case 20: return taraSettings.tara_contenedor_20; // kg (configurable)
+      case 40: return taraSettings.tara_contenedor_40; // kg (configurable)
+      case 45: return taraSettings.tara_contenedor_40; // kg (mismo que 40)
+      default: return 0;
+    }
+  };
+
+  // 🆕 Helper para detectar si es operación de exportación
+  const isExportOperation = () => {
+    const opType = (clientData.operationType || '').toLowerCase();
+    return opType.includes('export') || opType === 'exportacion' || opType === 'exportación';
+  };
+
+  // 🆕 Helper para verificar si hay contenedores en la cotización
+  const hasContainersInQuote = () => {
+    return quoteData.some(route => {
+      const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+      return isContainerPacking(embalaje);
+    });
+  };
+  // Redondear valor hacia arriba al múltiplo de 5.000 más cercano
+  const roundToNearest5K = (value) => Math.ceil(value / 5000) * 5000;
+
   const buildRouteFinancials = (route, index) => {
     const pricing = selectedPricings[index];
+    const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+    const isContainer = isContainerPacking(embalaje);
+    const containerSize = getContainerSize(embalaje);
+    const containerTara = getContainerTara(embalaje);
+    
     if (!pricing) {
       return {
         pricing: null,
@@ -86,6 +178,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         acompanamiento: Number(route.itesoltra_acompanamientovalor) || 0,
         valueWithMargin: 0,
         finalValue: 0,
+        valuePerUnit: 0,
+        totalValueInternal: 0,
+        isContainer,
+        containerQuantity: 1,
+        containerSize,
+        containerTara,
       };
     }
 
@@ -100,7 +198,44 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     });
 
     const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-    const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+
+    // Póliza excedente
+    const poliza = calculatePolizaExcedente(route);
+    const polizaTotal = poliza.total;
+
+    // Security protocol costs
+    const securityTotal = (Number(route.seguridad_gps) || 0)
+      + (Number(route.seguridad_candado) || 0)
+      + (Number(route.seguridad_acompanante) || 0)
+      + (Number(route.seguridad_motorizado) || 0);
+
+    const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal + securityTotal;
+    const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
+    
+    // 🆕 Cantidad de contenedores (solo para sistema interno)
+    const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
+    
+    // 🔥 IMPORTANTE: 
+    // - valuePerUnit: valor por UNIDAD redondeado (lo que ve el cliente)
+    // - totalValueInternal: valor total multiplicado por cantidad (para sistema interno)
+    // - finalValue: ahora es el valor POR UNIDAD (lo que se muestra al cliente)
+    const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
+
+    console.log(`🚛 Ruta ${index + 1} - Cálculo financiero:`, {
+      embalaje,
+      isContainer,
+      containerSize,
+      containerTara,
+      cantidad: route.cantidad,
+      containerQuantity,
+      basePrice,
+      valueWithMargin,
+      polizaTotal,
+      valuePerUnit,
+      totalValueInternal,
+      '📋 AL CLIENTE': valuePerUnit,
+      '💾 SISTEMA INTERNO': totalValueInternal
+    });
 
     return {
       pricing,
@@ -109,23 +244,46 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       parametersTotal,
       acompanamiento,
       valueWithMargin,
-      finalValue,
+      poliza,
+      polizaTotal,
+      securityTotal,
+      finalValue: valuePerUnit, // 🔥 Al cliente se muestra valor POR UNIDAD
+      valuePerUnit, // Valor unitario (por contenedor)
+      totalValueInternal, // 🆕 Valor total para sistema interno
+      isContainer,
+      containerQuantity,
+      containerSize,
+      containerTara,
     };
   };
 
+  // 🔥 Total para mostrar AL CLIENTE (suma de valores por unidad)
   const calculateRouteTotal = (route, index) => {
-    const { finalValue } = buildRouteFinancials(route, index);
-    return finalValue;
+    const { valuePerUnit } = buildRouteFinancials(route, index);
+    return valuePerUnit;
   };
 
+  // 🔥 Total para CLIENTE (suma de valores unitarios)
   const calculateTotal = () => {
     const total = quoteData.reduce((total, route, index) => {
       const routeTotal = calculateRouteTotal(route, index);
-      console.log(`Ruta ${index + 1} - Contribución al total:`, routeTotal);
+      console.log(`Ruta ${index + 1} - Valor unitario para cliente:`, routeTotal);
       return total + routeTotal;
     }, 0);
     
-    console.log('Total final calculado:', total);
+    console.log('Total final para cliente (suma unitarios):', total);
+    return total;
+  };
+
+  // 🆕 Total para SISTEMA INTERNO (incluye multiplicación por cantidad de contenedores)
+  const calculateTotalInternal = () => {
+    const total = quoteData.reduce((total, route, index) => {
+      const { totalValueInternal } = buildRouteFinancials(route, index);
+      console.log(`Ruta ${index + 1} - Valor total interno:`, totalValueInternal);
+      return total + totalValueInternal;
+    }, 0);
+    
+    console.log('Total final para sistema interno:', total);
     return total;
   };
 
@@ -142,7 +300,29 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
       });
 
       const valueWithMargin = basePrice + (basePrice * porcentaje / 100);
-      const finalValue = valueWithMargin + acompanamiento + parametersTotal;
+
+      // Póliza excedente
+      const poliza = calculatePolizaExcedente(route);
+      const polizaTotal = poliza.total;
+
+      // Seguridad
+      const securityTotal = (Number(route.seguridad_gps) || 0)
+        + (Number(route.seguridad_candado) || 0)
+        + (Number(route.seguridad_acompanante) || 0)
+        + (Number(route.seguridad_motorizado) || 0);
+
+      const valuePerUnitRaw = valueWithMargin + acompanamiento + parametersTotal + polizaTotal + securityTotal;
+      const valuePerUnit = roundToNearest5K(valuePerUnitRaw);
+      
+      // 🆕 Detectar si es contenedor y calcular valores
+      const embalaje = route.tipo_embajale || route.empaque || route.tipo_embalaje || '';
+      const isContainer = isContainerPacking(embalaje);
+      const containerQuantity = isContainer ? (Number(route.cantidad) || 1) : 1;
+      const containerSize = getContainerSize(embalaje);
+      const containerTara = getContainerTara(embalaje);
+      
+      // 🔥 totalValueInternal: para sistema interno (cantidad * valor unitario redondeado)
+      const totalValueInternal = isContainer ? valuePerUnit * containerQuantity : valuePerUnit;
 
       return {
         id: route.id || null, // <-- send existing cotización id to update
@@ -156,9 +336,27 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         precio_base: basePrice,
         valor_parametros: parametersTotal,
         valor_acompanamiento: acompanamiento,
-        finalValue,
-        valor: finalValue,
-        valor_final: finalValue,
+        // Póliza excedente
+        poliza_excedente_enabled: route.poliza_excedente_enabled || false,
+        tarifa_poliza: route.tarifa_poliza || 0,
+        poliza_excedente_total: poliza.total || 0,
+        // Seguridad
+        seguridad_gps: Number(route.seguridad_gps) || 0,
+        seguridad_candado: Number(route.seguridad_candado) || 0,
+        seguridad_acompanante: Number(route.seguridad_acompanante) || 0,
+        seguridad_motorizado: Number(route.seguridad_motorizado) || 0,
+        seguridad_total: (Number(route.seguridad_gps) || 0) + (Number(route.seguridad_candado) || 0) + (Number(route.seguridad_acompanante) || 0) + (Number(route.seguridad_motorizado) || 0),
+        // 🔥 Sistema interno recibe el TOTAL (cantidad * valor unitario)
+        finalValue: totalValueInternal,
+        valor: totalValueInternal,
+        valor_final: totalValueInternal,
+        // 🆕 Valor por unidad/contenedor (lo que ve el cliente)
+        valor_unitario: valuePerUnit,
+        valor_cliente: valuePerUnit, // 🆕 Explícito para el cliente
+        es_contenedor: isContainer,
+        cantidad_contenedores: containerQuantity,
+        tamano_contenedor: containerSize, // 🆕 20, 40 o 45 pies
+        tara_contenedor: containerTara, // 🆕 Tara según tipo (2300kg o 3400kg)
         precio_pricing_id: pricing?.id ?? null, // <-- pricing id for upsert
         cantidad: String(route.cantidad || '1'),
         tipo_embajale: String(route.tipo_embajale || 'Bultos'),
@@ -224,9 +422,12 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
         throw new Error('No se pudo obtener el group_id de la respuesta del servidor');
       }
 
+      // Support multiple emails (comma/semicolon separated)
+      const emailList = parseEmails(emailData.clientEmail);
+
       await sendQuoteEmail({
         group_id: groupId,
-        client_email: emailData.clientEmail,
+        client_email: emailList,
         email_data: {
           title: emailData.titleEmail,
           text: emailData.promptResponse,
@@ -238,6 +439,8 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
           asesor_name: emailData.advisorName,
           asesor_phone: emailData.advisorPhone,
           asesor_email: emailData.advisorEmail,
+          cargo_type: clientData.cargoType || null,
+          operation_type: clientData.operationType || null,
           routes: quotesToSave,
           total_price: calculateTotal(),
         },
@@ -279,8 +482,22 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
     }
   };
 
+  const isValidSingleEmail = (email) => {
+    const trimmed = email.trim();
+    return trimmed && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  };
+
   const isValidEmail = (email) => {
-    return email && email.includes('@') && email.includes('.');
+    if (!email) return false;
+    // Support comma or semicolon separated emails
+    const emails = email.split(/[,;]/).map(e => e.trim()).filter(e => e.length > 0);
+    if (emails.length === 0) return false;
+    return emails.every(e => isValidSingleEmail(e));
+  };
+
+  const parseEmails = (email) => {
+    if (!email) return [];
+    return email.split(/[,;]/).map(e => e.trim()).filter(e => e.length > 0);
   };
 
   return (
@@ -415,6 +632,121 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                 </p>
               </div>
 
+              {/* Detalle de la Cotización por Ruta */}
+              <div className="my-4">
+                <h3 className="text-xs font-semibold text-gray-800 mb-2 flex items-center">
+                  <svg className="w-3 h-3 mr-1 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                    <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                  </svg>
+                  Detalle de la Cotización
+                </h3>
+
+                {quoteData.map((route, index) => {
+                  const { finalValue, poliza } = buildRouteFinancials(route, index);
+                  const protocol = getSecurityProtocol(route, clientData, parseValorDeclarado);
+                  const cargoLabels = {
+                    general: 'General', refrigerado: 'Refrigerada',
+                    dangerous: 'Peligrosa', sobredimensionada: 'Sobredimensionada',
+                  };
+                  const cargoLabel = cargoLabels[(clientData.cargoType || 'general').toLowerCase()] || (clientData.cargoType || 'General');
+
+                  return (
+                    <div key={index} className="mb-3 border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                      <div className="bg-orange-500 text-white px-3 py-1.5 text-[11px] font-semibold">
+                        Ruta #{index + 1}: {route.ciudad_origen || '-'} → {route.ciudad_destino || '-'}
+                      </div>
+                      <table className="w-full text-[10px] border-collapse">
+                        <tbody>
+                          <tr>
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold w-2/5">Origen</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{route.ciudad_origen || '-'}</td>
+                          </tr>
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Destino</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{route.ciudad_destino || '-'}</td>
+                          </tr>
+                          <tr>
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Tipo Carga</td>
+                            <td className="px-2 py-1 border-b border-gray-100">{cargoLabel}</td>
+                          </tr>
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Peso</td>
+                            <td className="px-2 py-1 border-b border-gray-100">
+                              {route.peso_mercancia ? `${Number(route.peso_mercancia).toLocaleString()} kg` : '-'}
+                            </td>
+                          </tr>
+                          {route.valor_declarado && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Valor Mercancía</td>
+                              <td className="px-2 py-1 border-b border-gray-100">
+                                ${Number(route.valor_declarado).toLocaleString()}
+                              </td>
+                            </tr>
+                          )}
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Vehículo</td>
+                            <td className="px-2 py-1 border-b border-gray-100">
+                              {route.vehiculo_filtrado || route.vehiculo_requerido || '-'}
+                            </td>
+                          </tr>
+                          {route.tipo_producto && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Producto</td>
+                              <td className="px-2 py-1 border-b border-gray-100 capitalize">{route.tipo_producto}</td>
+                            </tr>
+                          )}
+                          {protocol.valorDeclarado > 0 && (
+                            <tr>
+                              <td className="px-2 py-1 border-b border-gray-100 text-gray-500 font-semibold">Protocolo Seguridad</td>
+                              <td className="px-2 py-1 border-b border-gray-100">
+                                <span className="font-semibold text-[9px]" style={{ color: protocol.color === 'red' ? '#dc2626' : protocol.color === 'orange' ? '#ea580c' : protocol.color === 'purple' ? '#7c3aed' : '#16a34a' }}>
+                                  {protocol.label}
+                                </span>
+                                <span className="text-[9px] text-gray-500 ml-1">
+                                  — Nac: {protocol.nacional.join(', ')} | Urb: {protocol.urbano.join(', ')}
+                                </span>
+                              </td>
+                            </tr>
+                          )}
+                          <tr className="bg-orange-50">
+                            <td className="px-2 py-1.5 text-orange-700 font-bold">Valor del Servicio</td>
+                            <td className="px-2 py-1.5 text-orange-700 font-bold text-sm">
+                              ${Number(finalValue).toLocaleString()}
+                            </td>
+                          </tr>
+                          {poliza.show && poliza.enabled && poliza.total > 0 && (
+                            <>
+                              <tr className="bg-red-50">
+                                <td className="px-2 py-1 border-b border-red-100 text-red-600 font-semibold" colSpan="2">
+                                  Póliza Valor Declarado Excedido {poliza.mandatory ? '(Obligatorio)' : '(Opcional)'}
+                                </td>
+                              </tr>
+                              <tr className="bg-red-50/50">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">Excedente</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.excedente).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50/30">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">Tarifa ({poliza.tarifaRate}%)</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.tarifaValue).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50/30">
+                                <td className="px-2 py-1 border-b border-red-100 text-gray-500 font-semibold">IVA (19%)</td>
+                                <td className="px-2 py-1 border-b border-red-100">${Number(poliza.iva).toLocaleString()}</td>
+                              </tr>
+                              <tr className="bg-red-50">
+                                <td className="px-2 py-1 border-b border-red-100 text-red-700 font-bold">Total Póliza</td>
+                                <td className="px-2 py-1 border-b border-red-100 text-red-700 font-bold">${Number(poliza.total).toLocaleString()}</td>
+                              </tr>
+                            </>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+
               {/* Tabla de Rutas */}
               <div className="my-4">
                 <div className="overflow-x-auto">
@@ -426,7 +758,9 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                         <th className="border border-gray-200 px-2 py-2 text-center">Destino</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Vehículo</th>
                         <th className="border border-gray-200 px-2 py-2 text-center">Parámetros</th>
-                        <th className="border border-gray-200 px-2 py-2 text-center">Valor</th>
+                        <th className="border border-gray-200 px-2 py-2 text-center">
+                          {hasContainersInQuote() ? 'Valor x Unidad' : 'Valor'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -437,7 +771,16 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           parametersTotal,
                           acompanamiento,
                           valueWithMargin,
+                          poliza,
+                          polizaTotal,
+                          securityTotal,
                           finalValue,
+                          valuePerUnit,
+                          totalValueInternal,
+                          isContainer,
+                          containerQuantity,
+                          containerSize,
+                          containerTara,
                         } = buildRouteFinancials(route, index);
 
                         const automaticParameters = getAutomaticParameters(clientData);
@@ -449,13 +792,33 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                           return list;
                         }, []);
 
+                        const isReturn = route.isReturnRoute || route.is_return_route;
+
                         return (
-                          <tr key={index} className="bg-orange-50 hover:bg-orange-100 transition-colors duration-150">
-                            <td className="border border-gray-200 px-2 py-2 text-center font-medium">{index + 1}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_origen || '-'}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
-                            <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_requerido || '-'}</td>
+                          <tr key={index} className={`hover:bg-orange-100 transition-colors duration-150 ${isReturn ? 'bg-blue-50' : 'bg-orange-50'}`}>
+                            <td className="border border-gray-200 px-2 py-2 text-center font-medium">
+                              {isReturn ? (
+                                <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">↩ DEV</span>
+                              ) : (
+                                index + 1
+                              )}
+                            </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
+                              {isReturn && (
+                                <div className="text-[10px] font-semibold text-blue-600 mb-0.5">DEVOLUCIÓN</div>
+                              )}
+                              {route.ciudad_origen || '-'}
+                            </td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">{route.ciudad_destino || '-'}</td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">{route.vehiculo_filtrado || route.vehiculo_requerido || '-'}</td>
+                            <td className="border border-gray-200 px-2 py-2 text-center">
+                              {/* 🆕 Mostrar cantidad de contenedores si aplica */}
+                              {isContainer && containerQuantity > 1 && (
+                                <div className="text-purple-600 text-[10px] font-medium mb-1">
+                                  Candado Satelital<br />
+                                  ${Number(route.candado_satelital || 10500).toLocaleString()}
+                                </div>
+                              )}
                               {activeParameters.length > 0 ? (
                                 <div className="space-y-1">
                                   {activeParameters.map((param, paramIndex) => (
@@ -483,15 +846,44 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                             </td>
                             <td className="border border-gray-200 px-2 py-2 text-center">
                               <div className="space-y-1">
+                                {/* 🔥 Mostrar siempre el valor POR UNIDAD al cliente */}
                                 <div className="font-bold text-green-700">
-                                  ${Number(finalValue).toLocaleString()}
+                                  ${Number(valuePerUnit).toLocaleString()}
                                 </div>
+                                {/* 🆕 Si es contenedor, indicar claramente que es por unidad */}
+                                {isContainer && (
+                                  <div className="text-[10px] text-purple-600 font-medium">
+                                    por contenedor {containerSize ? `${containerSize}'` : ''}
+                                  </div>
+                                )}
+                                {/* Informar cantidad solicitada si es > 1 */}
+                                {isContainer && containerQuantity > 1 && (
+                                  <div className="text-[10px] text-gray-500 italic">
+                                    (Ud. solicitó {containerQuantity} unidades)
+                                  </div>
+                                )}
+                                {/* Mostrar tara si es contenedor */}
+                                {isContainer && containerTara > 0 && (
+                                  <div className="text-[10px] text-blue-500">
+                                    Tara: {containerTara.toLocaleString()} kg
+                                  </div>
+                                )}
                                 <div className="text-[10px] text-gray-500">
-                                  Base (${basePrice.toLocaleString()}) + {porcentaje}% = ${valueWithMargin.toLocaleString()}
+                                  Base (${basePrice.toLocaleString()}) + {porcentaje}%
                                 </div>
                                 {(parametersTotal + acompanamiento) > 0 && (
                                   <div className="text-[10px] text-gray-500">
                                     Parámetros/Acomp.: ${(parametersTotal + acompanamiento).toLocaleString()}
+                                  </div>
+                                )}
+                                {poliza.show && poliza.enabled && polizaTotal > 0 && (
+                                  <div className="text-[10px] text-red-600 font-medium mt-0.5">
+                                    Póliza excedente: ${Number(polizaTotal).toLocaleString()}
+                                  </div>
+                                )}
+                                {securityTotal > 0 && (
+                                  <div className="text-[10px] text-indigo-600 font-medium mt-0.5">
+                                    Seguridad: ${Number(securityTotal).toLocaleString()}
                                   </div>
                                 )}
                               </div>
@@ -545,11 +937,51 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                   }
                   return null;
                 })()}
+
+                {/* 🆕 Notas aclaratorias para CONTENEDORES */}
+                {hasContainersInQuote() && (
+                  <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <h4 className="text-xs font-semibold text-purple-800 mb-2 flex items-center">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"></path>
+                      </svg>
+                      Información importante sobre contenedores
+                    </h4>
+                    <div className="text-xs text-purple-700 space-y-1">
+                      <div>• <strong>Cotización por unidad:</strong> Los valores mostrados corresponden al costo <strong>por cada contenedor</strong>.</div>
+                      <div>• <strong>Tara de contenedores:</strong></div>
+                      <div className="ml-4">- Contenedor 20': <strong>2,300 kg</strong></div>
+                      <div className="ml-4">- Contenedor 40'/45': <strong>3,400 kg</strong></div>
+                      <div>• <strong>Pesos diferentes:</strong> Si los contenedores tienen pesos distintos, cada uno se cotiza como ruta separada.</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 🆕 Notas aclaratorias para EXPORTACIÓN */}
+                {isExportOperation() && hasContainersInQuote() && (
+                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="text-xs font-semibold text-amber-800 mb-2 flex items-center">
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
+                      </svg>
+                      Nota importante - Operación de Exportación
+                    </h4>
+                    <div className="text-xs text-amber-700 space-y-1">
+                      <div>• <strong>Lugar de retiro:</strong> Esta tarifa aplica <strong>únicamente</strong> si el contenedor se retira en patios de <strong>Bogotá, Medellín o Cali</strong>.</div>
+                      <div>• <strong>Retiro en Tocancipá:</strong> Si el retiro se realiza en Tocancipá u otras ubicaciones, se aplicará un <strong>costo adicional de transporte</strong>.</div>
+                      <div>• <strong>Llenado del contenedor:</strong> Es importante especificar el lugar exacto de llenado para aplicar correctamente las tarifas.</div>
+                      <div className="mt-2 p-2 bg-amber-100 rounded text-amber-800 font-medium">
+                        ⚠️ Por favor confirme el lugar de retiro y llenado del contenedor para validar la tarifa.
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="mt-3 flex justify-end">
                   <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                     <span className="text-sm font-bold text-green-700">
-                      Total: ${Number(calculateTotal()).toLocaleString()}
+                      {hasContainersInQuote() ? 'Total (suma de valores unitarios): ' : 'Total: '}
+                      ${Number(calculateTotal()).toLocaleString()}
                     </span>
                   </div>
                 </div>
@@ -685,16 +1117,19 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                     Email de destino <span className="text-red-500">*</span>
                   </label>
                   <input 
-                    type="email" 
+                    type="text" 
                     value={emailData.clientEmail}
                     onChange={(e) => handleInputChange('clientEmail', e.target.value)}
                     className={`input-field w-full text-xs ${
                       !emailData.clientEmail ? 'border-red-300 bg-red-50' :
                       isValidEmail(emailData.clientEmail) ? 'border-green-300 bg-green-50' : 'border-orange-300 bg-orange-50'
                     }`}
-                    placeholder="correo@ejemplo.com"
+                    placeholder="correo1@ejemplo.com, correo2@ejemplo.com"
                     required
                   />
+                  <p className="text-gray-400 text-xs mt-1">
+                    Puede ingresar varios correos separados por coma (,) o punto y coma (;)
+                  </p>
                   {!emailData.clientEmail && (
                     <p className="text-red-500 text-xs mt-1 flex items-center">
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
@@ -708,7 +1143,7 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"></path>
                       </svg>
-                      El formato del correo electrónico no es válido
+                      Uno o más correos no tienen formato válido
                     </p>
                   )}
                   {isValidEmail(emailData.clientEmail) && (
@@ -716,7 +1151,10 @@ const PreviewModal = ({ onClose, onNext, quoteData, clientData, selectedPricings
                       <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
                       </svg>
-                      La cotización se enviará a: <strong>{emailData.clientEmail}</strong>
+                      La cotización se enviará a: <strong>{parseEmails(emailData.clientEmail).join(', ')}</strong>
+                      {parseEmails(emailData.clientEmail).length > 1 && (
+                        <span className="ml-1 text-green-500">({parseEmails(emailData.clientEmail).length} destinatarios)</span>
+                      )}
                     </p>
                   )}
                 </div>

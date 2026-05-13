@@ -164,11 +164,48 @@ class LlamadaConductor extends Model
     }
 
     /**
+     * Verificar si el conductor ya fue contactado y tiene una respuesta (positiva o negativa).
+     * Si ya respondió, no se debe volver a llamar para la misma cotización.
+     */
+    public function hasBeenContacted(): bool
+    {
+        // Tiene respuesta registrada en respuesta_llamada
+        if (!empty($this->respuesta_llamada)) {
+            return true;
+        }
+
+        // Tiene una DriverCallResponse asociada
+        if ($this->driver_call_response_id) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Obtener IDs de conductores que ya fueron contactados y respondieron para una cotización.
+     */
+    public static function conductoresYaContactados(int $cotizacionId): array
+    {
+        return static::where('cotizacion_id', $cotizacionId)
+            ->where(function ($q) {
+                $q->where(function ($sub) {
+                    $sub->whereNotNull('respuesta_llamada')
+                        ->where('respuesta_llamada', '!=', '');
+                })->orWhereNotNull('driver_call_response_id');
+            })
+            ->pluck('id')
+            ->toArray();
+    }
+
+    /**
      * Crear o actualizar conductor desde datos de Arcángel
      */
     public static function createFromArcangel(array $vehiculo, string $ciudad, $cotizacionId = null, $groupId = null, array $cotizacion = []): self
     {
-        $identificador = self::generarIdentificador($cotizacionId ?? 0, $vehiculo['telefono'] ?? '');
+        $telefonoNormalizado = preg_replace('/\D+/', '', (string) ($vehiculo['telefono'] ?? ''));
+        $placaNormalizada = strtoupper(trim((string) ($vehiculo['placa'] ?? '')));
+        $identificador = self::generarIdentificador($cotizacionId ?? 0, $telefonoNormalizado ?: ($vehiculo['telefono'] ?? ''));
         
         // Procesar peso_carga
         $pesoCarga = null;
@@ -204,17 +241,28 @@ class LlamadaConductor extends Model
             ]
         );
         
-        return self::updateOrCreate(
-            [
-                'identificador_unico' => $identificador,
-            ],
-            [
+        $matchAttributes = [
+            'cotizacion_id' => $cotizacionId,
+            'telefono' => $telefonoNormalizado ?: ($vehiculo['telefono'] ?? null),
+        ];
+
+        if ($placaNormalizada !== '') {
+            $matchAttributes['placa'] = $placaNormalizada;
+        }
+
+        $conductor = self::firstOrNew($matchAttributes);
+
+        if (!$conductor->identificador_unico) {
+            $conductor->identificador_unico = $identificador;
+        }
+
+        $conductor->fill([
                 'cotizacion_id' => $cotizacionId,
                 'group_cotization_id' => $groupId,
                 'nombre_conductor' => $vehiculo['conductor'] ?? 'N/A',
-                'telefono' => $vehiculo['telefono'] ?? null,
-                'placa' => $vehiculo['placa'] ?? null,
-                'tipo_vehiculo' => $vehiculo['tipo_vehiculo'] ?? $vehiculo['clase'] ?? null,
+                'telefono' => $telefonoNormalizado ?: ($vehiculo['telefono'] ?? null),
+                'placa' => $placaNormalizada !== '' ? $placaNormalizada : ($vehiculo['placa'] ?? null),
+                'tipo_vehiculo' => $vehiculo['clase'] ?? $vehiculo['tipo_vehiculo'] ?? null,
                 'vehiculo_silogtran' => $cotizacion['vehiculo_requerido'] ?? null,
                 'peso_maximo' => $vehiculo['peso_maximo'] ?? null,
                 'clase_vehiculo' => $vehiculo['clase'] ?? null,
@@ -232,8 +280,11 @@ class LlamadaConductor extends Model
                 'estado_llamada' => 'pendiente',
                 'ultima_actualizacion' => now(),
                 'datos_adicionales' => $datosAdicionales,
-            ]
-        );
+        ]);
+
+        $conductor->save();
+
+        return $conductor;
     }
 
     /**

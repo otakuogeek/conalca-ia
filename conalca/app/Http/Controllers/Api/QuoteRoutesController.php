@@ -28,9 +28,10 @@ class QuoteRoutesController extends Controller
         $request->validate([
             'group_id' => 'required|integer|exists:group_cotizations,id',
             'routes' => 'required|array|min:1',
-            'routes.*.ciudad_origen' => 'required|string',
-            'routes.*.ciudad_destino' => 'required|string',
+            'routes.*.ciudad_origen' => 'nullable|string',
+            'routes.*.ciudad_destino' => 'nullable|string',
             'routes.*.id'             => 'nullable|integer',
+            'routes.*.fecha_cargue'   => 'nullable|date',
         ]);
 
         try {
@@ -44,19 +45,45 @@ class QuoteRoutesController extends Controller
                 ], 403);
             }
 
-            Log::info('Guardando rutas del chat', [
+            Log::info('🔍 Guardando rutas del chat - DATOS COMPLETOS', [
                 'group_id' => $request->group_id,
-                'routes_count' => count($request->routes)
+                'routes_count' => count($request->routes),
+                'todas_las_rutas' => $request->routes // 🔥 Ver TODAS las rutas que llegan
             ]);
+
+            // ⚠️ PREVENIR DUPLICACIÓN: Obtener IDs existentes y eliminar los que no vienen en la petición
+            $existingIds = $group->cotizaciones()->pluck('id')->toArray();
+            $incomingIds = collect($request->routes)->pluck('id')->filter()->toArray();
+            $idsToDelete = array_diff($existingIds, $incomingIds);
+            
+            if (!empty($idsToDelete)) {
+                Log::info('Eliminando rutas que ya no existen en el frontend', [
+                    'ids_to_delete' => $idsToDelete
+                ]);
+                CotizacionModel::whereIn('id', $idsToDelete)
+                    ->where('group_cotization_id', $group->id)
+                    ->delete();
+            }
 
             $savedRoutes = [];
 
             foreach ($request->routes as $index => $routeData) {
-                Log::info('Procesando ruta', [
+                // 🆕 Normalizar ciudades para corregir departamentos incorrectos
+                $ciudadOrigen = $this->normalizeCityName($routeData['ciudad_origen'] ?? '');
+                $ciudadDestino = $this->normalizeCityName($routeData['ciudad_destino'] ?? '');
+
+                // 🔍 DEBUG: Log completo para diagnosticar problema de peso
+                Log::info('🔍 Procesando ruta - DETALLE COMPLETO', [
                     'index'   => $index,
                     'id'      => $routeData['id'] ?? null,
-                    'origen'  => $routeData['ciudad_origen'] ?? 'no definido',
-                    'destino' => $routeData['ciudad_destino'] ?? 'no definido'
+                    'origen_original' => $routeData['ciudad_origen'] ?? 'no definido',
+                    'origen_normalizado' => $ciudadOrigen,
+                    'destino_original' => $routeData['ciudad_destino'] ?? 'no definido',
+                    'destino_normalizado' => $ciudadDestino,
+                    'peso_mercancia_recibido' => $routeData['peso_mercancia'] ?? 'NO ENVIADO',
+                    'peso_mercancia_parseado' => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
+                    'vehiculo_recibido' => $routeData['vehiculo_requerido'] ?? 'NO ENVIADO',
+                    'producto_recibido' => $routeData['producto'] ?? $routeData['tipo_producto'] ?? 'NO ENVIADO'
                 ]);
 
                 $cotization = null;
@@ -67,21 +94,31 @@ class QuoteRoutesController extends Controller
                         ->first();
                 }
 
+                // 🆕 Extraer producto con prioridad: producto_mencionado > producto > tipo_producto
+                $producto = mb_substr(
+                    $routeData['producto_mencionado'] 
+                        ?? $routeData['producto'] 
+                        ?? $routeData['tipo_producto'] 
+                        ?? 'Mercancía general',
+                    0, 191
+                );
+
                 if ($cotization) {
                     // UPDATE existing
                     $cotization->update([
-                        'ciudad_origen'    => $routeData['ciudad_origen'],
-                        'ciudad_destino'   => $routeData['ciudad_destino'],
+                        'ciudad_origen'    => $ciudadOrigen,
+                        'ciudad_destino'   => $ciudadDestino,
                         'peso_mercancia'   => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'         => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'    => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'    => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'tipo_producto'    => $producto,
                         'vehiculo_requerido' => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'vehiculo_filtrado' => $routeData['vehiculo_filtrado'] ?? $routeData['vehiculo_requerido'] ?? null,
                         'valor_declarado'  => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'       => $routeData['pricing_id'] ?? null,
                         'porcentaje'       => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
                         'valor_cliente'    => $this->parseMoneyField($routeData['valor_cliente'] ?? '0'),
-                        // add any extra fields you need to persist (candado_satelital, etc.)
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ]);
                 } else {
                     // CREATE new
@@ -89,13 +126,14 @@ class QuoteRoutesController extends Controller
                         'group_cotization_id' => $group->id,
                         'user_id'             => Auth::id(),
                         'client_id'           => $group->client_id,
-                        'ciudad_origen'       => $routeData['ciudad_origen'],
-                        'ciudad_destino'      => $routeData['ciudad_destino'],
+                        'ciudad_origen'       => $ciudadOrigen,
+                        'ciudad_destino'      => $ciudadDestino,
                         'peso_mercancia'      => $this->parseNumericField($routeData['peso_mercancia'] ?? '0'),
                         'cantidad'            => $this->parseNumericField($routeData['cantidad'] ?? '1'),
                         'tipo_embajale'       => $routeData['tipo_embajale'] ?? 'Caja',
-                        'tipo_producto'       => $routeData['tipo_producto'] ?? 'Mercancía general',
+                        'tipo_producto'       => $producto,
                         'vehiculo_requerido'  => $routeData['vehiculo_requerido'] ?? 'Sencillo',
+                        'vehiculo_filtrado'   => $routeData['vehiculo_filtrado'] ?? $routeData['vehiculo_requerido'] ?? null,
                         'valor_declarado'     => $this->parseMoneyField($routeData['valor_declarado'] ?? '0'),
                         'pricing_id'          => $routeData['pricing_id'] ?? null,
                         'porcentaje'          => $this->parseNumericField($routeData['porcentaje'] ?? '0'),
@@ -104,6 +142,7 @@ class QuoteRoutesController extends Controller
                         'active'              => 1,
                         'created_at'          => now(),
                         'updated_at'          => now(),
+                        'fecha_hora_descargue_cargue' => $this->parseFechaCargue($routeData['fecha_cargue'] ?? null),
                     ]);
                 }
 
@@ -167,28 +206,140 @@ class QuoteRoutesController extends Controller
                 ], 403);
             }
 
-            $routes = $group->cotizaciones()->get()->map(function ($cotization) {
+            // 🆕 Obtener extracted_data del grupo para incluir producto_mencionado y otros campos IA
+            $extractedData = [];
+            if ($group->extracted_data) {
+                $extractedData = is_string($group->extracted_data) 
+                    ? json_decode($group->extracted_data, true) 
+                    : $group->extracted_data;
+                
+                // Asegurar que es un array indexado si tiene índice 0
+                if (is_array($extractedData) && isset($extractedData[0])) {
+                    $extractedData = array_values($extractedData);
+                }
+            }
+
+            $cotizaciones = $group->cotizaciones()->get();
+            
+            // 🔧 FIX #558: Si NO hay cotizaciones guardadas, construir rutas desde extracted_data
+            if ($cotizaciones->isEmpty() && !empty($extractedData)) {
+                Log::info('🔧 getQuoteRoutes: No hay cotizaciones, construyendo desde extracted_data', [
+                    'group_id' => $groupId,
+                    'extracted_data' => $extractedData
+                ]);
+                
+                // 🚛 DETECTAR MULTI-RUTA PRIMERO
+                $routesArray = [];
+                if (isset($extractedData['multi_ruta']) && $extractedData['multi_ruta'] === true && isset($extractedData['rutas'])) {
+                    // Es multi-ruta, usar el array 'rutas'
+                    $routesArray = $extractedData['rutas'];
+                    Log::info('🚛 Multi-ruta detectada en extracted_data', ['total' => count($routesArray)]);
+                } elseif (isset($extractedData[0])) {
+                    // Es un array indexado de rutas
+                    $routesArray = $extractedData;
+                } else {
+                    // Es un objeto único (ruta única)
+                    $routesArray = [$extractedData];
+                }
+                
+                $routes = collect($routesArray)->map(function ($extracted, $index) {
+                    return [
+                        'id' => null,
+                        'ruta_numero' => $index + 1,
+                        'ciudad_origen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? null,
+                        'ciudadOrigen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? null,
+                        'ciudad_destino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? null,
+                        'ciudadDestino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? null,
+                        'peso_mercancia' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'pesoMercancia' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'peso_kg' => $extracted['peso_kg'] ?? $extracted['peso'] ?? null,
+                        'incluye_tara' => $extracted['incluye_tara'] ?? true,
+                        'cantidad' => $extracted['cantidad'] ?? 1,
+                        'cantidadMercancia' => $extracted['cantidad'] ?? 1,
+                        'tipo_embajale' => $extracted['empaque'] ?? 'Caja',
+                        'empaque' => $extracted['empaque'] ?? 'Caja',
+                        'empaque_id' => $extracted['empaque_id'] ?? null,
+                        'producto' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? $extracted['tipo_producto'] ?? null,
+                        'producto_mencionado' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? null,
+                        'tipo_producto' => $extracted['tipo_producto'] ?? $extracted['producto'] ?? null,
+                        'producto_codigo' => $extracted['producto_codigo'] ?? null,
+                        'producto_nombre' => $extracted['producto_nombre'] ?? null,
+                        'vehiculo_requerido' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        'vehiculo' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        'claseVehiculo' => $extracted['claseVehiculo'] ?? $extracted['vehiculo'] ?? 'Sencillo',
+                        // 💵 Si valor_en_usd, no enviar valor_declarado
+                        'valor_declarado' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $extracted['valor'] ?? null),
+                        'valorMercancia' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $extracted['valor'] ?? null),
+                        'valor_en_usd' => !empty($extracted['valor_en_usd']),
+                        'active' => 1,
+                        'decision_cliente' => 'pendiente',
+                        'incluye_tara' => $extracted['incluye_tara'] ?? false,
+                        'fecha_cargue' => $extracted['fecha_cargue'] ?? $extracted['fecha_inicio'] ?? null,
+                    ];
+                });
+            } else {
+                // Hay cotizaciones guardadas, usar lógica normal
+                $routes = $cotizaciones->map(function ($cotization, $index) use ($extractedData) {
+                // 🔧 FIX #558: Buscar datos extraídos correspondientes a esta ruta
+                // Si extracted_data es un objeto único (no tiene índice 0), usarlo directamente para la primera ruta
+                $extracted = [];
+                if (!empty($extractedData)) {
+                    if (isset($extractedData[$index])) {
+                        // Es un array de rutas
+                        $extracted = $extractedData[$index];
+                    } elseif ($index === 0 && !isset($extractedData[0])) {
+                        // Es un objeto único (ruta simple), usar todo para la primera ruta
+                        $extracted = $extractedData;
+                    }
+                }
+                
                 return [
                     'id' => $cotization->id,
-                    'ciudad_origen' => $cotization->ciudad_origen,
-                    'ciudad_destino' => $cotization->ciudad_destino,
-                    'peso_mercancia' => $cotization->peso_mercancia,
-                    'cantidad' => $cotization->cantidad,
-                    'tipo_producto' => $cotization->tipo_producto,
-                    'vehiculo_requerido' => $cotization->vehiculo_requerido,
-                    'valor_declarado' => $cotization->valor_declarado,
+                    'ruta_numero' => $index + 1,
+                    // 🔧 FIX: Priorizar origen/destino de extracted_data (fuente de verdad) sobre tabla cotizacion_models
+                    'ciudad_origen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? $cotization->ciudad_origen,
+                    'ciudadOrigen' => $extracted['ciudad_origen'] ?? $extracted['origen'] ?? $cotization->ciudad_origen,
+                    'ciudad_destino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? $cotization->ciudad_destino,
+                    'ciudadDestino' => $extracted['ciudad_destino'] ?? $extracted['destino'] ?? $cotization->ciudad_destino,
+                    // 🔧 FIX: Priorizar peso_kg de extracted_data (fuente de verdad) sobre peso_mercancia de BD
+                    'peso_mercancia' => $extracted['peso_kg'] ?? $cotization->peso_mercancia,
+                    'pesoMercancia' => $extracted['peso_kg'] ?? $cotization->peso_mercancia,
+                    'peso_kg' => $extracted['peso_kg'] ?? $cotization->peso_mercancia,
+                    'incluye_tara' => $extracted['incluye_tara'] ?? true,
+                    // 🔧 FIX: Priorizar cantidad de extracted_data
+                    'cantidad' => $extracted['cantidad'] ?? $cotization->cantidad,
+                    'cantidadMercancia' => $extracted['cantidad'] ?? $cotization->cantidad,
+                    'tipo_embajale' => $cotization->tipo_embajale,
+                    'empaque' => $extracted['empaque'] ?? $cotization->tipo_embajale,
+                    'empaque_id' => $extracted['empaque_id'] ?? null,
+                    // 🔥 CRÍTICO: Priorizar producto_mencionado del extracted_data sobre tipo_producto de BD
+                    'producto' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? $cotization->tipo_producto,
+                    'producto_mencionado' => $extracted['producto_mencionado'] ?? $extracted['producto'] ?? null,
+                    'tipo_producto' => $extracted['tipo_producto'] ?? $cotization->tipo_producto,
+                    'producto_codigo' => $extracted['producto_codigo'] ?? null,
+                    'producto_nombre' => $extracted['producto_nombre'] ?? null,
+                    // 🔧 FIX: Priorizar vehículo de extracted_data
+                    'vehiculo_requerido' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? $cotization->vehiculo_requerido,
+                    'vehiculo' => $extracted['vehiculo_requerido'] ?? $extracted['vehiculo'] ?? $cotization->vehiculo_requerido,
+                    'claseVehiculo' => $extracted['claseVehiculo'] ?? $extracted['vehiculo'] ?? $cotization->vehiculo_requerido,
+                    // 🔧 FIX: Priorizar valor_declarado de extracted_data
+                    // 💵 Si valor_en_usd, no enviar valor_declarado
+                    'valor_declarado' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $cotization->valor_declarado),
+                    'valorMercancia' => (!empty($extracted['valor_en_usd'])) ? null : ($extracted['valor_declarado'] ?? $cotization->valor_declarado),
+                    'valor_en_usd' => !empty($extracted['valor_en_usd']),
                     'active' => $cotization->active,
                     'decision_cliente' => $cotization->decision_cliente,
+                    'incluye_tara' => $extracted['incluye_tara'] ?? false,
+                    'fecha_cargue' => $extracted['fecha_cargue'] ?? $extracted['fecha_inicio'] ?? $cotization->fecha_hora_descargue_cargue,
                 ];
             });
+            } // Fin del else (cotizaciones existentes)
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'group_id' => $group->id,
-                    'routes_count' => $routes->count(),
-                    'routes' => $routes
-                ]
+                'group_id' => $group->id,
+                'routes_count' => $routes->count(),
+                'routes' => $routes
             ]);
 
         } catch (\Exception $e) {
@@ -218,9 +369,9 @@ class QuoteRoutesController extends Controller
         return $numeric ? (float) $numeric : 0;
     }
 
-    /**
-     * Convierte campos monetarios removiendo separadores
-     */
+/**
+      * Convierte campos monetarios removiendo separadores
+      */
     private function parseMoneyField($value)
     {
         if (is_numeric($value)) {
@@ -230,5 +381,112 @@ class QuoteRoutesController extends Controller
         // Remover caracteres no numéricos excepto punto decimal
         $numeric = preg_replace('/[^0-9.]/', '', $value);
         return $numeric ? (float) $numeric : 0;
+    }
+
+    /**
+     * Convierte la fecha de cargue al formato correcto para almacenar
+     * Acepta: Y-m-d, d/m/Y, d-m-Y, d-m-Y H:i, d/m/Y H:i
+     */
+    private function parseFechaCargue($value)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        // Si ya está en formato Y-m-d o Y-m-d H:i:s, retornarlo tal cual
+        if (preg_match('/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/', $value)) {
+            return $value;
+        }
+
+        // Intentar parsing con Carbon
+        try {
+            $carbon = \Carbon\Carbon::parse($value);
+            return $carbon->format('Y-m-d');
+        } catch (\Throwable $e) {
+            Log::warning('parseFechaCargue: Error al parsear fecha', [
+                'valor' => $value,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * 🆕 Normaliza el nombre de una ciudad corrigiendo departamentos incorrectos
+     * Ejemplo: "SANTA MARTA - NARIÑO" → "SANTA MARTA"
+     * El sistema luego encontrará el departamento correcto (MAGDALENA)
+     */
+    private function normalizeCityName($cityName)
+    {
+        if (empty($cityName)) {
+            return $cityName;
+        }
+
+        // Mapa de ciudades principales con sus departamentos correctos
+        $ciudadesPrincipales = [
+            'CARTAGENA' => 'BOLIVAR',
+            'ARMENIA' => 'QUINDIO',
+            'CALI' => 'VALLE DEL CAUCA',
+            'MEDELLIN' => 'ANTIOQUIA',
+            'BOGOTA' => 'CUNDINAMARCA',
+            'BARRANQUILLA' => 'ATLANTICO',
+            'BUCARAMANGA' => 'SANTANDER',
+            'PEREIRA' => 'RISARALDA',
+            'MANIZALES' => 'CALDAS',
+            'IBAGUE' => 'TOLIMA',
+            'CUCUTA' => 'NORTE DE SANTANDER',
+            'SANTA MARTA' => 'MAGDALENA',
+            'VILLAVICENCIO' => 'META',
+            'PASTO' => 'NARINO',
+            'NEIVA' => 'HUILA',
+            'MONTERIA' => 'CORDOBA',
+            'VALLEDUPAR' => 'CESAR',
+            'TUNJA' => 'BOYACA',
+            'POPAYAN' => 'CAUCA',
+            'SINCELEJO' => 'SUCRE',
+            'RIOHACHA' => 'LA GUAJIRA',
+            'QUIBDO' => 'CHOCO',
+            'FLORENCIA' => 'CAQUETA',
+            'YOPAL' => 'CASANARE',
+            'BUENAVENTURA' => 'VALLE DEL CAUCA',
+        ];
+
+        // Normalizar: quitar tildes y convertir a mayúsculas
+        $normalized = mb_strtoupper($cityName, 'UTF-8');
+        $normalized = strtr($normalized, [
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'á' => 'A', 'é' => 'E', 'í' => 'I', 'ó' => 'O', 'ú' => 'U',
+            'Ñ' => 'N', 'ñ' => 'N'
+        ]);
+
+        // Extraer solo el nombre de la ciudad (sin departamento)
+        $partes = explode(' - ', $normalized);
+        $nombreCiudad = trim($partes[0]);
+        $departamentoActual = isset($partes[1]) ? trim($partes[1]) : null;
+
+        // Si la ciudad tiene un departamento principal definido
+        if (isset($ciudadesPrincipales[$nombreCiudad])) {
+            $departamentoCorrecto = $ciudadesPrincipales[$nombreCiudad];
+            
+            // Si el departamento actual es diferente al correcto, corregirlo
+            if ($departamentoActual && $departamentoActual !== $departamentoCorrecto) {
+                Log::warning('🔧 Corrigiendo departamento incorrecto', [
+                    'ciudad' => $nombreCiudad,
+                    'departamento_incorrecto' => $departamentoActual,
+                    'departamento_correcto' => $departamentoCorrecto
+                ]);
+            }
+            
+            // Retornar solo el nombre de la ciudad (el sistema encontrará el departamento correcto)
+            return $nombreCiudad;
+        }
+
+        // Si no es una ciudad principal conocida, retornar el valor original
+        return $cityName;
     }
 }

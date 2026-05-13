@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\Redirect; 
 use OpenAI;
 use App\Helpers\CityHelper;
+use App\Services\MCPAssistantService;
 
 class QuoteIndex extends Component
 {
@@ -205,14 +206,44 @@ class QuoteIndex extends Component
             $this->client_branch_office = $client->branch_office;     // Sucursal (si aplica)
             $this->client_sales_representative = $client->vendedor_nombre; // Representante de ventas
             
-            // CRÍTICO: Inicializar thread de OpenAI para el chat
+            // CRÍTICO: Inicializar thread de MCP para el chat
             $this->client = $client;
-            $this->openai_thread = QuoteAssistantService::getThread($client);
+            $this->openai_thread = MCPAssistantService::getThread($client);
+            
+            // NUEVO: Guardar thread_id en el cliente si no existe
+            if ($this->openai_thread && !$client->openai_thread_id) {
+                $client->openai_thread_id = $this->openai_thread;
+                $client->save();
+                Log::info('Thread ID guardado en cliente', [
+                    'client_id' => $client->id,
+                    'thread_id' => $this->openai_thread
+                ]);
+            }
+            
+            // Obtener run_id desde el cliente o la sesión
             $this->openai_current_run = $client->openai_current_run;
+            
+            // Si no hay run en el cliente, intentar obtenerlo de la última sesión activa
+            if (!$this->openai_current_run) {
+                $session = ConversationSession::where('client_id', $client->id)
+                    ->where('status', 'active')
+                    ->latest()
+                    ->first();
+                    
+                if ($session && $session->metadata) {
+                    $metadata = json_decode($session->metadata, true);
+                    if (isset($metadata['current_run_id'])) {
+                        $this->openai_current_run = $metadata['current_run_id'];
+                        Log::info('Run ID recuperado de sesión', [
+                            'run_id' => $this->openai_current_run
+                        ]);
+                    }
+                }
+            }
             
             // Cargar mensajes existentes del thread
             if ($this->openai_thread) {
-                $this->messages = QuoteAssistantService::getMessages($this->openai_thread);
+                $this->messages = MCPAssistantService::getMessages($this->openai_thread);
             }
         } 
 
@@ -1241,7 +1272,7 @@ class QuoteIndex extends Component
             $this->client      = $cliente;
             $this->client_name = $cliente->cliente;
 
-            $this->openai_thread      = QuoteAssistantService::getThread($cliente);
+            $this->openai_thread      = MCPAssistantService::getThread($cliente);
             $this->openai_current_run = $cliente->openai_current_run;
             $this->step = 1;
             return;
@@ -1294,17 +1325,90 @@ class QuoteIndex extends Component
     {
         if ($this->openai_thread && $this->step == 1) {
 
-            $this->messages = QuoteAssistantService::getMessages($this->openai_thread);
+            // Verificar que tengamos thread_id antes de continuar
+            if (!$this->openai_thread) {
+                Log::warning('syncChat: No hay thread_id disponible');
+                return;
+            }
+            
+            $this->messages = MCPAssistantService::getMessages($this->openai_thread);
 
             if ($this->openai_current_run) {
-                $quote_data = QuoteAssistantService::checkRunStatus($this->openai_thread,
+                $runStatus = MCPAssistantService::checkRunStatus($this->openai_thread,
                                                                     $this->openai_current_run);
 
                 // -- aún esperando la respuesta
-                if (is_null($quote_data)) { return; }
+                if (is_null($runStatus)) { 
+                    Log::info('syncChat: Run aún en progreso', [
+                        'run_id' => $this->openai_current_run
+                    ]);
+                    return; 
+                }
+
+                // MCP devuelve un objeto con 'status' y 'extracted_data'
+                $quote_data = null;
+                
+                if (is_array($runStatus)) {
+                    // Priorizar extracted_data si existe
+                    if (isset($runStatus['extracted_data']) && !empty($runStatus['extracted_data'])) {
+                        $quote_data = $runStatus['extracted_data'];
+                        Log::info('syncChat - Usando extracted_data de MCP', [
+                            'count' => count($quote_data)
+                        ]);
+                    } elseif (isset($runStatus['quote_data']) && !empty($runStatus['quote_data'])) {
+                        $quote_data = $runStatus['quote_data'];
+                        Log::info('syncChat - Usando quote_data de MCP', [
+                            'count' => count($quote_data)
+                        ]);
+                    }
+                }
 
                 /* ==========  NUEVO BLOQUE ========== */
                 if (is_array($quote_data) && !empty($quote_data)) {
+
+                    // NORMALIZAR datos: copiar campos con nombres alternativos
+                    foreach ($quote_data as $index => $ruta) {
+                        // Si viene 'producto' pero no 'tipo_producto', normalizar
+                        if (isset($ruta['producto']) && !isset($ruta['tipo_producto'])) {
+                            $quote_data[$index]['tipo_producto'] = $ruta['producto'];
+                            Log::info("Normalizado campo 'producto' a 'tipo_producto'", [
+                                'index' => $index,
+                                'valor' => $ruta['producto']
+                            ]);
+                        }
+                        
+                        // Si viene 'product' pero no 'tipo_producto', normalizar
+                        if (isset($ruta['product']) && !isset($ruta['tipo_producto'])) {
+                            $quote_data[$index]['tipo_producto'] = $ruta['product'];
+                            Log::info("Normalizado campo 'product' a 'tipo_producto'", [
+                                'index' => $index,
+                                'valor' => $ruta['product']
+                            ]);
+                        }
+                        
+                        // Si viene 'valor_mercancia' pero no 'valor_declarado', normalizar
+                        if (isset($ruta['valor_mercancia']) && !isset($ruta['valor_declarado'])) {
+                            $quote_data[$index]['valor_declarado'] = $ruta['valor_mercancia'];
+                            Log::info("Normalizado campo 'valor_mercancia' a 'valor_declarado'", [
+                                'index' => $index,
+                                'valor' => $ruta['valor_mercancia']
+                            ]);
+                        }
+                    }
+
+                    // LOG PARA DEPURACIÓN: Ver qué datos están llegando
+                    Log::info('syncChat - Datos de cotización recibidos', [
+                        'run_id' => $this->openai_current_run,
+                        'thread_id' => $this->openai_thread,
+                        'client_id' => $this->client_id,
+                        'rutas_count' => count($quote_data)
+                    ]);
+                    
+                    Log::info('syncChat - Detalle de rutas:', [
+                        'quote_data' => $quote_data,
+                        'tiene_tipo_producto' => isset($quote_data[0]['tipo_producto']) ? 'SI' : 'NO',
+                        'valor_tipo_producto' => $quote_data[0]['tipo_producto'] ?? 'NO EXISTE'
+                    ]);
 
                     $this->quote_data = $quote_data;
                     $this->vehicleSuggestions = [];      // limpiamos
@@ -1343,7 +1447,7 @@ class QuoteIndex extends Component
         // Limpiar INMEDIATAMENTE después de obtener el contenido
         $this->input_message = '';
 
-        $new_message = QuoteAssistantService::createMessage($this->openai_thread, $messageContent);
+        $new_message = MCPAssistantService::createMessage($this->openai_thread, $messageContent);
         
         \Log::info('Resultado de createMessage', [
             'new_message' => $new_message,
@@ -1353,13 +1457,38 @@ class QuoteIndex extends Component
         if ($new_message) {
             $this->messages[] = $new_message;
 
-            $run = QuoteAssistantService::runAssistant($this->openai_thread, $this->type_business);
+            $run = MCPAssistantService::runAssistant($this->openai_thread, $this->type_business);
             if (isset($run['id'])) {
                 $this->openai_current_run = $run['id'];
+                
+                // MEJORADO: Guardar tanto thread como run en el cliente
+                $this->client->openai_thread_id = $this->openai_thread;
                 $this->client->openai_current_run = $this->openai_current_run;
                 $this->client->save();
+                
+                // NUEVO: También actualizar la sesión con el run_id
+                $session = ConversationSession::where('session_id', $this->openai_thread)
+                    ->where('client_id', $this->client->id)
+                    ->first();
+                    
+                if ($session) {
+                    $metadata = json_decode($session->metadata, true) ?? [];
+                    $metadata['current_run_id'] = $this->openai_current_run;
+                    $metadata['last_run_at'] = now()->toIso8601String();
+                    $session->metadata = json_encode($metadata);
+                    $session->save();
+                }
+                
+                Log::info('Thread y Run guardados', [
+                    'client_id' => $this->client->id,
+                    'thread_id' => $this->openai_thread,
+                    'run_id' => $this->openai_current_run
+                ]);
             } else {
-                Log::info("No run created", [$run]);
+                Log::error("No se pudo crear run", [
+                    'run_response' => $run,
+                    'thread_id' => $this->openai_thread
+                ]);
             }
         }
 
@@ -1456,6 +1585,19 @@ class QuoteIndex extends Component
 
         Log::info('Iniciando saveCotizacion');
         Log::debug('quote_data recibido:', $this->quote_data);
+
+        // Validar que todas las rutas tengan tipo_producto
+        foreach ($this->quote_data as $idx => $data) {
+            if (!is_array($data)) {
+                continue;
+            }
+            
+            if (empty($data['tipo_producto'])) {
+                Log::warning("Ruta $idx no tiene tipo_producto, deteniendo flujo", ['data' => $data]);
+                session()->flash('error', 'Por favor proporciona el tipo de producto para todas las rutas antes de crear la cotización.');
+                return;
+            }
+        }
 
         foreach ($this->quote_data as $idx => $data) {
             Log::info("Iteración $idx de quote_data");

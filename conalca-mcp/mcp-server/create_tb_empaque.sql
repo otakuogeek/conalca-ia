@@ -1,0 +1,23 @@
+-- Crear tabla tb_empaque
+CREATE TABLE IF NOT EXISTS `tb_empaque` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `codigo_ministerio` INT NOT NULL,
+  `nome` VARCHAR(100) NOT NULL,
+  `usuario` VARCHAR(50) NOT NULL DEFAULT 'SYSTEM',
+  `data_criacao` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `data_modificacao` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Insertar datos iniciales
+INSERT INTO `tb_empaque` (`id`, `codigo_ministerio`, `nome`, `usuario`, `data_criacao`, `data_modificacao`) VALUES
+(1, 1, 'CAJA', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(2, 2, 'ESTIBA', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(3, 3, 'PALLET', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(4, 4, 'BULTO', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(5, 5, 'SACO', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(6, 6, 'CANASTA', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(7, 7, 'TANQUE', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(8, 8, 'TAMBOR', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(9, 9, 'UNIDAD', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45'),
+(10, 10, 'GRANEL', 'SYSTEM', '2025-11-08 16:02:45', '2025-11-08 16:02:45');

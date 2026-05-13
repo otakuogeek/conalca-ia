@@ -13,6 +13,8 @@ class ConversationSession extends Model
         'call_sid',
         'cotizacion_id',
         'driver_id',
+        'client_id',
+        'session_id',
         'status',
         'turn_count',
         'final_decision',
@@ -40,6 +42,11 @@ class ConversationSession extends Model
     public function driver()
     {
         return $this->belongsTo(\App\Models\VehicleOwnerHolderDriver::class, 'driver_id');
+    }
+
+    public function client()
+    {
+        return $this->belongsTo(Client::class, 'client_id');
     }
 
     public function getDurationAttribute()

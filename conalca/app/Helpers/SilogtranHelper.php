@@ -84,31 +84,31 @@ class SilogtranHelper
     }
 
     /**
-     * Normaliza código de ciudad (debe ser código DIVIPOLA completo de 8 dígitos)
+     * Normaliza código de ciudad (debe ser código DIVIPOLA completo de 8 dígitos).
+     * Retorna STRING con leading zeros para que Silogtran lo reciba correctamente
+     * (ej. Medellín = "05001000", Barranquilla = "08001000").
      */
     public static function normalizeCityCode($value)
     {
-        // Si ya es numérico y tiene 8 dígitos, devolver como está
-        if (is_numeric($value) && strlen($value) == 8) {
-            return (int) $value;
-        }
+        $code = null;
 
-        // Si tiene 5 dígitos (código corto), agregar 000 al final
-        if (is_numeric($value) && strlen($value) == 5) {
-            return (int) ($value . '000');
-        }
-
-        // Si es texto que contiene números, extraer
-        if (preg_match('/(\d{5,8})/', $value, $matches)) {
+        if (is_numeric($value)) {
+            $code = (string) intval($value);
+        } elseif (preg_match('/(\d{5,8})/', $value, $matches)) {
             $code = $matches[1];
+        }
+
+        if ($code !== null) {
+            // Si tiene 5 dígitos (código corto municipio), agregar 000 al final
             if (strlen($code) == 5) {
-                return (int) ($code . '000');
+                $code = $code . '000';
             }
-            return (int) $code;
+            // Pad con ceros a la izquierda hasta 8 dígitos (DIVIPOLA estándar)
+            return str_pad($code, 8, '0', STR_PAD_LEFT);
         }
 
         // Por defecto, Bogotá
-        return 11001000;
+        return '11001000';
     }
 
     /**

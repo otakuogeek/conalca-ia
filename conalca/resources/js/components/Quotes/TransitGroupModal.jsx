@@ -85,6 +85,17 @@ export default function TransitGroupModal({ open, onClose, group }) {
                     <span className="px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200 shadow-sm">
                       ID {group?.id}
                     </span>
+                    {(() => {
+                      const stMatch = (group?.cotizaciones || [])
+                        .map(c => c.solicitud?.silogtran_status || '')
+                        .join(' ')
+                        .match(/ST\s*\d+/i);
+                      return stMatch ? (
+                        <span className="px-3 py-1.5 rounded-full bg-green-50 text-green-700 text-xs font-bold border border-green-200 shadow-sm">
+                          {stMatch[0]}
+                        </span>
+                      ) : null;
+                    })()}
                     <span
                       className="truncate uppercase text-gray-700 text-sm"
                       title={group?.client?.name}
@@ -274,6 +285,12 @@ export default function TransitGroupModal({ open, onClose, group }) {
                                 <span className="truncate">${parseFloat(quote.valor).toLocaleString('es-CO')}</span>
                               </span>
                             )}
+                            {quote.flete && (
+                              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-100 text-purple-700 border border-purple-300 font-semibold text-xs shadow-sm max-w-full">
+                                <span className="text-sm">🚛</span>
+                                <span className="truncate">Flete: ${parseFloat(quote.flete).toLocaleString('es-CO')}</span>
+                              </span>
+                            )}
                           </div>
                           
                           <div className="flex flex-col items-end gap-2 min-w-0 flex-shrink-0">
@@ -391,6 +408,18 @@ export default function TransitGroupModal({ open, onClose, group }) {
                         />
                         <Field
                           small
+                          label="Flete"
+                          value={
+                            cot.flete
+                              ? `$${parseFloat(
+                                  cot.flete
+                                ).toLocaleString('es-CO')}`
+                              : '--'
+                          }
+                          highlight="green"
+                        />
+                        <Field
+                          small
                           label="Cotización"
                           value={
                             cot.valor
@@ -417,6 +446,42 @@ export default function TransitGroupModal({ open, onClose, group }) {
                           small
                           label="Reg. fotog."
                           value={cot.registro_fotografico}
+                        />
+                        <Field
+                          small
+                          label="Fecha de cargue"
+                          multiline
+                          value={(() => {
+                            const raw =
+                              cot.fecha_hora_descargue_cargue ||
+                              cot.fecha_cargue ||
+                              null;
+                            if (!raw) return '--';
+                            const d = new Date(
+                              String(raw).replace(' ', 'T')
+                            );
+                            if (Number.isNaN(d.getTime())) return String(raw);
+                            const fecha = d.toLocaleDateString('es-CO', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                            });
+                            const horas = d.getHours();
+                            const minutos = d.getMinutes();
+                            if (horas === 0 && minutos === 0) return fecha;
+                            const hora = d.toLocaleTimeString('es-CO', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true,
+                            });
+                            return (
+                              <span className="flex flex-col leading-tight">
+                                <span>{fecha}</span>
+                                <span className="text-xs font-semibold opacity-80">{hora}</span>
+                              </span>
+                            );
+                          })()}
+                          highlight="orange"
                         />
                       </div>
                     </div>
@@ -479,11 +544,12 @@ export default function TransitGroupModal({ open, onClose, group }) {
 }
 
 /* ───────────────── helper pequeño para no repetir markup ───────────────── */
-function Field({ label, value, small, highlight }) {
+function Field({ label, value, small, highlight, multiline }) {
   const classes = [
     'px-3 py-2 rounded-lg border shadow-sm',
     highlight === 'green' && 'bg-green-50 text-green-700 font-bold border-green-300',
     highlight === 'blue' && 'bg-blue-50 text-blue-700 font-bold border-blue-300',
+    highlight === 'orange' && 'bg-orange-50 text-orange-700 font-bold border-orange-300',
     !highlight && 'bg-gray-50 text-gray-800 border-gray-200'
   ]
     .filter(Boolean)
@@ -492,7 +558,7 @@ function Field({ label, value, small, highlight }) {
   return (
     <div className={`flex flex-col gap-2 ${small ? 'text-sm' : 'text-sm'}`}>
       <span className="font-bold text-gray-600 text-xs uppercase tracking-wide">{label}:</span>
-      <span className={`flex-1 truncate ${classes} min-h-[2.2rem] flex items-center transition-colors hover:shadow-md`} title={value}>
+      <span className={`flex-1 ${multiline ? '' : 'truncate'} ${classes} min-h-[2.2rem] flex items-center transition-colors hover:shadow-md`} title={typeof value === 'string' ? value : undefined}>
         {value || '--'}
       </span>
     </div>

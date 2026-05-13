@@ -579,7 +579,7 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
 
           <div className="relative">
             <FiLayers className="absolute left-3 top-1/2 -translate-y-1/2 text-orange-400 pointer-events-none" />
-            <input
+            <select
               id="centro_costo_despacho"
               name="centro_costo_despacho"
               value={form.centro_costo_despacho}
@@ -587,12 +587,59 @@ export default function Step1({ data = {}, formData = {}, onNext, loading }) {
               className={`
                 w-full py-2 pl-11 pr-3 rounded-md
                 border ${hasError('centro_costo_despacho') ? 'border-red-500' : 'border-gray-300'}
-                placeholder-gray-400
                 focus:ring-2 focus:ring-orange-500 focus:border-orange-500
               `}
-              placeholder="Centro costo despacho"
               required
-            />
+            >
+              <option value="">— seleccionar —</option>
+              <option>TRANSLIDHER BARRANQUILLA</option>
+              <option>TRANSLIDHER BOGOTA</option>
+              <option>TRANSLIDHER UBATE</option>
+              <option>TRANSLIDHER CARTAGENA</option>
+              <option>TRANSLIDHER BUENAVENTURA</option>
+              <option>TRANSLIDHER CALI</option>
+              <option>TRANSLIDHER SANTA MARTA</option>
+              <option>TRANSLIDHER PEREIRA</option>
+              <option>TRANSLIDHER IPIALES</option>
+              <option>TRANSLIDHER MEDELLIN</option>
+              <option>CONALCA MANIZALEZ</option>
+              <option>CONALCA BUENAVENTURA</option>
+              <option>CONALCA CALI</option>
+              <option>ALMACENAMIENTO MOSQUERA</option>
+              <option>OTM CONALCA CTG</option>
+              <option>OTM CONALCA SNMT</option>
+              <option>CONALCA IPIALES</option>
+              <option>ALMACENAMIENTO CALI</option>
+              <option>CONALCA CARTAGENA</option>
+              <option>CONALCA UBATE</option>
+              <option>OTM CONALCA BTA</option>
+              <option>BUN MAERSK DEDICADO</option>
+              <option>BOG MAERSK DEDICADO</option>
+              <option>CLO MAERSK DEDICADO</option>
+              <option>CONALCA PEREIRA</option>
+              <option>CONALCA BARRANQUILLA</option>
+              <option>ARMENIA - BAVARIA</option>
+              <option>CONALCA PAGOS ANT</option>
+              <option>CONALCA SANTA MARTA</option>
+              <option>CARTAGENA - BAVARIA</option>
+              <option>TUNJA - BAVARIA</option>
+              <option>SANTAMARTA - BAVARIA</option>
+              <option>YUMBO - BAVARIA</option>
+              <option>CONALCA BOGOTA</option>
+              <option>CONALCA BUCARAMANGA</option>
+              <option>OTM CONALCA BAQ</option>
+              <option>OTM CONALCA BUN</option>
+              <option>BUENAVENTURA PANTOS</option>
+              <option>CONALCA MEDELLIN</option>
+              <option>ALMACENAMIENTO</option>
+              <option>BOGOTA GLOBAL</option>
+              <option>BUENAVENTURA GLOBAL</option>
+              <option>CALI GLOBAL EXPRESS</option>
+              <option>BOGOTA CONENVIOS</option>
+              <option>MEDELLIN GLOBAL EXPRESS</option>
+              <option>BOGOTA CONALOG</option>
+              <option>TRANSIFRONT CUCUTA</option>
+            </select>
           </div>
         </div>
 

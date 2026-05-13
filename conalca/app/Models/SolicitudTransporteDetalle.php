@@ -16,6 +16,8 @@ class SolicitudTransporteDetalle extends Model
         'origen',
         'destino',
         'ciudad_intermedia',
+        'lugar_recogida_contenedor',
+        'tipo_carga',
         'cantidad_mercancia',
         'peso',
         'peso_despachado',

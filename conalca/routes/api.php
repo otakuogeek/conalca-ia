@@ -13,11 +13,59 @@ use App\Imports\DataColumnImport;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Controllers\DataColumnController;
 use App\Http\Controllers\Api\CallStatusController;
+use App\Http\Controllers\Api\CallHangupController;
 use App\Http\Controllers\Api\ElevenLabsController;
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\PricingApiController;
 use App\Http\Controllers\Api\ArcangelController;
+use App\Models\ConversationSession;
+
+// ═══════════════════════════════════════════════════════════════
+// EMERGENCY ENDPOINT - Detener runs atascados
+// ═══════════════════════════════════════════════════════════════
+Route::get('/emergency/stop-run/{threadId}', function($threadId) {
+    try {
+        $session = ConversationSession::where('session_id', $threadId)->first();
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sesión no encontrada'
+            ], 404);
+        }
+        
+        $metadata = json_decode($session->metadata ?? '{}', true);
+        $oldRunId = $metadata['last_run_id'] ?? null;
+        $oldStatus = $metadata['last_run_status'] ?? null;
+        
+        // Forzar status a completed sin datos para detener polling
+        $metadata['last_run_status'] = 'completed';
+        $session->metadata = json_encode($metadata);
+        $session->save();
+        
+        \Log::info('🚨 EMERGENCY STOP ejecutado', [
+            'thread_id' => $threadId,
+            'old_run_id' => $oldRunId,
+            'old_status' => $oldStatus
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Run detenido forzadamente',
+            'old_run_id' => $oldRunId,
+            'old_status' => $oldStatus,
+            'new_status' => 'completed',
+            'action' => 'Por favor recarga la página'
+        ]);
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // TEST ENDPOINT - Arcangel sin autenticación (temporal)
@@ -105,6 +153,13 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 Route::get('/get/product/{product_name}', [ApiProductController::class => 'getProduct']);
 
+// ═══════════════════════════════════════════════════════════════
+// MCP (Model Context Protocol) - Búsqueda inteligente de productos
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('mcp')->group(function () {
+    Route::post('/search-products', [App\Http\Controllers\Api\ProductController::class, 'search']);
+});
+
 Route::post('/get-multiple-data', [DataColumnController::class, 'getMultipleData']);
 
 Route::post('/import-data-columns', function (Request $request) {
@@ -137,6 +192,7 @@ Route::get('/calls/{callId}/status', [CallController::class, 'getCallStatus'])->
 // Ruta para obtener el estado de conductores aceptados por cotización
 Route::get('/calls/{cotizacionId}', [CallStatusController::class, 'show'])->name('api.calls.accepted');
 Route::post('/calls/{cotizacionId}/select-driver', [CallStatusController::class, 'selectDriver'])->name('api.calls.select-driver');
+Route::get('/conductor-details/{driverId}', [CallStatusController::class, 'getDriverDetails'])->name('api.conductor.details');
 
 // Client assignment routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -197,11 +253,40 @@ Route::middleware(['auth:sanctum,web'])->group(function () {
         ->name('api.llamadas.get');
     Route::post('/llamadas/update-status', [App\Http\Controllers\ConversationalAgentController::class, 'updateLlamadaStatus'])
         ->name('api.llamadas.update-status');
+    Route::post('/llamadas/{llamada}/hangup', CallHangupController::class)
+        ->name('api.llamadas.hangup');
 });
 
 // Endpoint para iniciar llamadas reales con ElevenLabs (fuera de middleware auth para compatibilidad con frontend)
 Route::post('/start-elevenlabs-calls/{cotizacionId}', [App\Http\Controllers\ConversationalAgentController::class, 'startElevenLabsCalls'])
     ->name('api.start-elevenlabs-calls');
+
+// ============================================================================
+// ElevenLabs Post-Call Webhooks - Control de cola con máximo 2 llamadas simultáneas
+// Estos webhooks son llamados por ElevenLabs cuando una llamada termina o falla
+// Configurar la URL en ElevenLabs Dashboard > Seguridad > Webhook posterior a la llamada
+// ============================================================================
+Route::post('/elevenlabs-webhook', [App\Http\Controllers\Api\ElevenLabsWebhookController::class, 'handleWebhook'])
+    ->name('api.elevenlabs-webhook');
+Route::get('/elevenlabs-queue-status', [App\Http\Controllers\Api\ElevenLabsWebhookController::class, 'getQueueStatus'])
+    ->name('api.elevenlabs-queue-status');
+
+// ============================================================================
+// ElevenLabs Agent Tools - Endpoints que el agente de voz usa como herramientas
+// Estos endpoints son llamados vía webhook por el agente durante las conversaciones
+// ============================================================================
+Route::prefix('elevenlabs-tools')->group(function () {
+    Route::post('/get-contexto-inicial-conductor', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getContextoInicialConductor'])
+        ->name('api.elevenlabs-tools.get-contexto-inicial-conductor');
+    Route::post('/get-conductor-by-telefono', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getConductorByTelefono'])
+        ->name('api.elevenlabs-tools.get-conductor');
+    Route::post('/get-cotizaciones', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'getCotizaciones'])
+        ->name('api.elevenlabs-tools.get-cotizaciones');
+    Route::post('/precioviaje', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'precioViaje'])
+        ->name('api.elevenlabs-tools.precioviaje');
+    Route::post('/save-driver-decision', [App\Http\Controllers\Api\ElevenLabsAgentToolsController::class, 'saveDriverDecision'])
+        ->name('api.elevenlabs-tools.save-driver-decision');
+});
 
 // Endpoint para hacer llamadas directas a cualquier número
 Route::post('/make-direct-call', [App\Http\Controllers\ConversationalAgentController::class, 'makeDirectCall'])
@@ -295,6 +380,7 @@ Route::get('clients/search-by-document', [App\Http\Controllers\Api\ClientSearchC
 // Búsqueda de clientes para React (nueva implementación)
 Route::get('clients/search-react', [App\Http\Controllers\Api\ClientController::class, 'search'])->name('api.clients.search-react');
 Route::get('clients/by-document', [App\Http\Controllers\Api\ClientController::class, 'getByDocument'])->name('api.clients.by-document');
+Route::post('clients', [App\Http\Controllers\Api\ClientController::class, 'store'])->name('api.clients.store');
 
 // Goals API - Rutas protegidas
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -340,6 +426,19 @@ Route::prefix('chat')->group(function () {
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.quote');
         
+    // 🆕 Fallback para GET accidental en navegador
+    Route::get('/quote', function() {
+        return response()->json([
+            'message' => 'Este endpoint es solo para uso interno del chat (POST).',
+            'status' => 'active'
+        ]);
+    });
+    
+    // 🆕 Ruta para extracción inteligente de datos con IA
+    Route::post('/extract-quote-data', [App\Http\Controllers\Api\DataExtractionController::class, 'chatExtractData'])
+        ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+        ->name('api.chat.extract.quote.data');
+        
     Route::post('/clear-stuck-runs', [App\Http\Controllers\Api\ChatController::class, 'clearStuckRuns'])
         ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
         ->name('api.chat.clear.stuck.runs');
@@ -371,6 +470,11 @@ Route::prefix('chat')->group(function () {
         ->middleware('auth')
         ->name('api.chat.clear.thread');
     
+    // 🆕 Ruta para limpiar mensajes de un grupo específico
+    Route::post('/chat/clear-group', [App\Http\Controllers\Api\ChatController::class, 'clearGroupMessages'])
+        ->middleware('auth')
+        ->name('api.chat.clear.group');
+    
     // Ruta para guardar group_id en sesión (puente React → Livewire)
     Route::post('/quote/set-session-group', [App\Http\Controllers\Api\QuoteSessionController::class, 'setGroupInSession'])
         ->middleware('auth')
@@ -384,6 +488,11 @@ Route::prefix('chat')->group(function () {
     Route::get('/quote/routes/{groupId}', [App\Http\Controllers\Api\QuoteRoutesController::class, 'getQuoteRoutes'])
         ->middleware('auth')
         ->name('api.quote.get.routes');
+    
+    // 🆕 Actualizar extracted_data (para cambios de tara en tiempo real)
+    Route::post('/chat/update-extracted-data', [App\Http\Controllers\Api\ChatController::class, 'updateExtractedData'])
+        ->middleware('auth')
+        ->name('api.chat.update.extracted.data');
         
     // Debug endpoint para verificar rutas (temporal)
     Route::get('/quote/debug/{groupId}', function($groupId) {
@@ -414,6 +523,11 @@ Route::prefix('chat')->group(function () {
         ->middleware('auth')
         ->name('api.quote.save.from.chat');
 });
+
+// 🆕 Rutas para extracción de datos con IA
+Route::post('/extract-quote-data', [App\Http\Controllers\Api\DataExtractionController::class, 'extractData'])
+    ->withoutMiddleware([\Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class])
+    ->name('api.extract.quote.data');
 
 // Ruta para enviar emails de cotización
 Route::post('/send-quote-email', [App\Http\Controllers\Api\QuoteEmailController::class, 'sendQuoteEmail'])
@@ -479,6 +593,14 @@ Route::delete('/cotizacion/grupos/{id}', [App\Http\Controllers\Api\GroupQuotatio
     ->name('api.cotizacion.grupos.destroy');
 
 // ═══════════════════════════════════════════════════════════════
+// Silogtran - Consultas externas
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('silog')->group(function () {
+    Route::get('/clientes', [App\Http\Controllers\Api\SilogController::class, 'consultarCliente'])
+        ->name('api.silog.consultar-cliente');
+});
+
+// ═══════════════════════════════════════════════════════════════
 // Solicitud Transporte Routes - Sistema de solicitudes de transporte paso a paso
 // ═══════════════════════════════════════════════════════════════
 Route::prefix('solicitud-transporte')->group(function () {
@@ -529,4 +651,39 @@ Route::prefix('catalog')->group(function () {
             ->get();
         return response()->json($bodyworks);
     });
+
+    // Tara de contenedores
+    Route::get('/tara-settings', function() {
+        $settings = \App\Models\TaraSetting::getInstance();
+        return response()->json([
+            'tara_contenedor_20' => $settings->tara_contenedor_20,
+            'tara_contenedor_40' => $settings->tara_contenedor_40,
+        ]);
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TEST SEED Routes - Crear cotizaciones de prueba directamente
+// Sin autenticación para facilitar pruebas con curl/Postman
+// ═══════════════════════════════════════════════════════════════
+Route::prefix('test')->group(function () {
+    // Crear un grupo con cotizaciones en estado "En tránsito"
+    Route::post('/seed-cotizacion', [App\Http\Controllers\Api\TestSeedController::class, 'seedCotizacion'])
+        ->name('api.test.seed.cotizacion');
+
+    // Crear múltiples grupos de una vez
+    Route::post('/seed-multiple', [App\Http\Controllers\Api\TestSeedController::class, 'seedMultiple'])
+        ->name('api.test.seed.multiple');
+
+    // Listar grupos de prueba creados
+    Route::get('/seed-groups', [App\Http\Controllers\Api\TestSeedController::class, 'listTestGroups'])
+        ->name('api.test.seed.list');
+
+    // Eliminar un grupo de prueba específico
+    Route::delete('/seed-groups/{id}', [App\Http\Controllers\Api\TestSeedController::class, 'deleteTestGroup'])
+        ->name('api.test.seed.delete');
+
+    // Limpiar todos los grupos de prueba
+    Route::delete('/seed-cleanup', [App\Http\Controllers\Api\TestSeedController::class, 'cleanupTestGroups'])
+        ->name('api.test.seed.cleanup');
 });

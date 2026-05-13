@@ -90,18 +90,98 @@ class CallStatusController extends Controller
         /* 1. Cotización */
         $cot = \App\Models\CotizacionModel::findOrFail($cotizacionId);
 
-        /* 2. Total de conductores registrados para esta cotización en llamadas_conductores */
-        $totalToCall = \App\Models\LlamadaConductor::where('cotizacion_id', $cotizacionId)
+        $llamadas = \App\Models\Llamada::query()
+            ->byCotizacion($cotizacionId)
+            ->with('conductor:id,nombre_conductor,telefono,placa,tipo_vehiculo')
+            ->orderBy('batch_number')
+            ->orderBy('batch_position')
+            ->orderByDesc('id_llamada')
+            ->get();
+
+        /* 2. Total de conductores con llamadas realmente registradas (tabla llamadas) */
+        $totalToCall = $llamadas
+            ->pluck('conductor_id')
+            ->filter()
+            ->unique()
             ->count();
 
-        /* 3. Conductores que aceptaron desde driver_call_responses
-            Relacionando con llamadas_conductores para obtener sus datos */
-        $acceptedDrivers = \App\Models\LlamadaConductor::query()
+        $queueSummary = [
+            'registered' => $llamadas->count(),
+            'pending' => $llamadas->where('queue_status', 'pending')->count(),
+            'processing' => $llamadas->where('queue_status', 'processing')->count(),
+            'completed' => $llamadas->where('queue_status', 'completed')->count(),
+            'failed' => $llamadas->where('queue_status', 'failed')->count(),
+            'cancelled' => $llamadas->where('queue_status', 'cancelled')->count(),
+        ];
+
+        $queueSummary['finished'] = $queueSummary['completed'] + $queueSummary['failed'] + $queueSummary['cancelled'];
+        $queueSummary['progress_percentage'] = $queueSummary['registered'] > 0
+            ? round(($queueSummary['finished'] / $queueSummary['registered']) * 100, 2)
+            : 0;
+        $queueSummary['active'] = $queueSummary['processing'] > 0 || $queueSummary['pending'] > 0;
+
+        $totalRegistered = $llamadas->count();
+        $totalBatches = $llamadas->max('batch_number') ?? 1;
+
+        $recentCalls = $llamadas->take(10)->map(function ($llamada) use ($totalRegistered, $totalBatches) {
+            $conductor = $llamada->conductor;
+
+            // Calcular posición global en la cola
+            $globalPosition = null;
+            if ($llamada->batch_number && $llamada->batch_position) {
+                $globalPosition = (($llamada->batch_number - 1) * 2) + $llamada->batch_position;
+            }
+
+            return [
+                'id_llamada' => $llamada->id_llamada,
+                'driver_id' => $llamada->conductor_id,
+                'driver_name' => $conductor?->nombre_conductor ?? 'Sin nombre',
+                'driver_phone' => $conductor?->telefono ?? $llamada->numero_destino,
+                'placa' => $conductor?->placa,
+                'tipo_vehiculo' => $conductor?->tipo_vehiculo,
+                'status' => $llamada->status,
+                'queue_status' => $llamada->queue_status,
+                'call_status' => $llamada->call_status,
+                'batch_number' => $llamada->batch_number,
+                'batch_position' => $llamada->batch_position,
+                'total_batches' => $totalBatches,
+                'global_position' => $globalPosition,
+                'total_registered' => $totalRegistered,
+                'queued_at' => $llamada->queued_at?->format('Y-m-d H:i:s'),
+                'processing_started_at' => $llamada->processing_started_at?->format('Y-m-d H:i:s'),
+                'processing_completed_at' => $llamada->processing_completed_at?->format('Y-m-d H:i:s'),
+                'call_started_at' => $llamada->call_started_at?->format('Y-m-d H:i:s'),
+                'call_completed_at' => $llamada->call_completed_at?->format('Y-m-d H:i:s'),
+                'failure_reason' => $llamada->failure_reason,
+                'call_notes' => $llamada->call_notes,
+            ];
+        })->values();
+
+        /* 3. Conductores que aceptaron:
+           - Primero busca vía relación driverCallResponse (response_status = 'accepted')
+           - Luego busca directamente en llamadas_conductores (respuesta_llamada LIKE '%acepta%')
+           - Combina ambos resultados sin duplicados, máximo 7 */
+        $acceptedViaResponse = \App\Models\LlamadaConductor::query()
             ->where('cotizacion_id', $cotizacionId)
             ->whereHas('driverCallResponse', function ($query) {
                 $query->where('response_status', 'accepted');
             })
-            ->with('driverCallResponse')
+            ->pluck('id')
+            ->toArray();
+
+        $acceptedViaLlamada = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->where(function ($q) {
+                $q->where('respuesta_llamada', 'LIKE', '%acepta%')
+                  ->orWhere('respuesta_llamada', 'LIKE', '%Acepta%');
+            })
+            ->pluck('id')
+            ->toArray();
+
+        $acceptedIds = array_unique(array_merge($acceptedViaResponse, $acceptedViaLlamada));
+
+        $acceptedDrivers = \App\Models\LlamadaConductor::query()
+            ->whereIn('id', $acceptedIds)
             ->select([
                 'id',
                 'nombre_conductor',
@@ -111,27 +191,66 @@ class CallStatusController extends Controller
                 'ciudad_origen',
                 'ciudad_destino',
                 'cotizacion_id',
-                'driver_call_response_id'  // IMPORTANTE: necesario para cargar la relación
+                'estado_llamada',
+                'respuesta_llamada',
+                'fecha_llamada',
             ])
+            ->orderByDesc('fecha_llamada')
+            ->limit(7)
             ->get();
 
-        /* 4. Respuesta para el front */
+        /* 4. Conductores en TAL VEZ / seguimiento:
+           - response_status = 'pending' en driver_call_responses
+           - o respuesta_llamada = 'pending' en llamadas_conductores
+           - sin mezclar con los aceptados */
+        $maybeViaResponse = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->whereHas('driverCallResponse', function ($query) {
+                $query->where('response_status', 'pending');
+            })
+            ->pluck('id')
+            ->toArray();
+
+        $maybeViaLlamada = \App\Models\LlamadaConductor::query()
+            ->where('cotizacion_id', $cotizacionId)
+            ->where('respuesta_llamada', 'pending')
+            ->pluck('id')
+            ->toArray();
+
+        $maybeIds = array_values(array_diff(array_unique(array_merge($maybeViaResponse, $maybeViaLlamada)), $acceptedIds));
+
+        $maybeDrivers = \App\Models\LlamadaConductor::query()
+            ->whereIn('id', $maybeIds)
+            ->select([
+                'id',
+                'nombre_conductor',
+                'telefono',
+                'placa',
+                'tipo_vehiculo',
+                'ciudad_origen',
+                'ciudad_destino',
+                'cotizacion_id',
+                'estado_llamada',
+                'respuesta_llamada',
+                'fecha_llamada',
+            ])
+            ->orderByDesc('fecha_llamada')
+            ->limit(7)
+            ->get();
+
+        /* 5. Respuesta para el front */
         return response()->json([
             'prompt'              => $this->buildPrompt($cot),
             'vehicle_type'        => $cot->vehiculo_requerido,
             'ciudad_origen'       => $cot->ciudad_origen,
             'ciudad_destino'      => $cot->ciudad_destino,
             'total_to_call'       => $totalToCall,
+            'call_execution'      => [
+                'summary' => $queueSummary,
+                'recent_calls' => $recentCalls,
+                'last_updated' => now()->format('Y-m-d H:i:s'),
+            ],
             'accepted'            => $acceptedDrivers->map(function ($d) {
-                                        $decisionDate = null;
-                                        if ($d->driverCallResponse) {
-                                            if ($d->driverCallResponse->response_time) {
-                                                $decisionDate = \Carbon\Carbon::parse($d->driverCallResponse->response_time)->format('Y-m-d H:i:s');
-                                            } elseif ($d->driverCallResponse->created_at) {
-                                                $decisionDate = $d->driverCallResponse->created_at->format('Y-m-d H:i:s');
-                                            }
-                                        }
-                                        
                                         return [
                                             'id'    => $d->id,
                                             'name'  => $d->nombre_conductor ?: 'Sin nombre',
@@ -140,11 +259,29 @@ class CallStatusController extends Controller
                                             'tipo_vehiculo' => $d->tipo_vehiculo,
                                             'ciudad_origen' => $d->ciudad_origen,
                                             'ciudad_destino' => $d->ciudad_destino,
-                                            'decision_date' => $decisionDate,
+                                            'decision_date' => $d->fecha_llamada
+                                                ? $d->fecha_llamada->format('Y-m-d H:i:s')
+                                                : null,
                                         ];
                                     }),
+            'total_accepted'      => count($acceptedIds),
+            'maybe'               => $maybeDrivers->map(function ($d) {
+                                        return [
+                                            'id'    => $d->id,
+                                            'name'  => $d->nombre_conductor ?: 'Sin nombre',
+                                            'phone' => $d->telefono ?: 'Sin teléfono',
+                                            'placa' => $d->placa ?: 'Sin placa',
+                                            'tipo_vehiculo' => $d->tipo_vehiculo,
+                                            'ciudad_origen' => $d->ciudad_origen,
+                                            'ciudad_destino' => $d->ciudad_destino,
+                                            'decision_date' => $d->fecha_llamada
+                                                ? $d->fecha_llamada->format('Y-m-d H:i:s')
+                                                : null,
+                                        ];
+                                    }),
+            'total_maybe'         => count($maybeIds),
             'percentage'          => $totalToCall > 0
-                                    ? round(($acceptedDrivers->count() / $totalToCall) * 100, 2)
+                                    ? round((count($acceptedIds) / $totalToCall) * 100, 2)
                                     : 0,
             'selected_driver_id'  => $cot->selected_driver_id,
         ]);
@@ -159,10 +296,14 @@ class CallStatusController extends Controller
         $cot = CotizacionModel::findOrFail($cotizacionId);
 
         // Validar que el conductor existe en llamadas_conductores y aceptó esta cotización
+        // Busca tanto por driverCallResponse como por respuesta_llamada directa
         $conductor = \App\Models\LlamadaConductor::where('id', $validated['driver_id'])
             ->where('cotizacion_id', $cotizacionId)
-            ->whereHas('driverCallResponse', function ($query) {
-                $query->where('response_status', 'accepted');
+            ->where(function ($q) {
+                $q->whereHas('driverCallResponse', function ($query) {
+                    $query->where('response_status', 'accepted');
+                })
+                ->orWhere('respuesta_llamada', 'LIKE', '%acepta%');
             })
             ->first();
 
@@ -181,6 +322,34 @@ class CallStatusController extends Controller
             'conductor_nombre'   => $conductor->nombre_conductor,
             'conductor_telefono' => $conductor->telefono,
             'conductor_placa'    => $conductor->placa,
+        ]);
+    }
+
+    /**
+     * Obtener detalles completos de un conductor por ID
+     */
+    public function getDriverDetails($driverId)
+    {
+        $conductor = \App\Models\LlamadaConductor::find($driverId);
+
+        if (!$conductor) {
+            return response()->json([
+                'message' => 'Conductor no encontrado'
+            ], 404);
+        }
+
+        return response()->json([
+            'id' => $conductor->id,
+            'nombre_conductor' => $conductor->nombre_conductor,
+            'telefono' => $conductor->telefono,
+            'placa' => $conductor->placa,
+            'tipo_vehiculo' => $conductor->tipo_vehiculo,
+            'ciudad_origen' => $conductor->ciudad_origen,
+            'ciudad_destino' => $conductor->ciudad_destino,
+            'cotizacion_id' => $conductor->cotizacion_id,
+            'estado_llamada' => $conductor->estado_llamada,
+            'respuesta_llamada' => $conductor->respuesta_llamada,
+            'fecha_llamada' => $conductor->fecha_llamada,
         ]);
     }
 

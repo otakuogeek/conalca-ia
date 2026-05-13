@@ -101,92 +101,113 @@
             </div>
             @endif
 
-            {{-- Tabla de rutas mejorada --}}
+            {{-- Detalle de la Cotización por Ruta --}}
+            @if(!empty($data['routes']) && count($data['routes']) > 0)
             <div style="margin-bottom: 32px;">
                 <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 600; color: #d85e13; display: flex; align-items: center;">
                     <svg style="width: 20px; height: 20px; margin-right: 8px;" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z"/>
+                        <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                        <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/>
                     </svg>
-                    Detalle de Rutas y Servicios
+                    Detalle de la Cotización
                 </h3>
-                
-                <div style="background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e9ecef; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                        <thead>
-                            <tr style="background: linear-gradient(135deg, #d85e13 0%, #ff8c42 100%); color: white;">
-                                <th style="padding: 16px 12px; text-align: center; font-weight: 600; border-right: 1px solid rgba(255,255,255,0.2);">Ruta</th>
-                                <th style="padding: 16px 12px; text-align: center; font-weight: 600; border-right: 1px solid rgba(255,255,255,0.2);">Origen</th>
-                                <th style="padding: 16px 12px; text-align: center; font-weight: 600; border-right: 1px solid rgba(255,255,255,0.2);">Destino</th>
-                                <th style="padding: 16px 12px; text-align: center; font-weight: 600; border-right: 1px solid rgba(255,255,255,0.2);">Vehículo</th>
-                                <th style="padding: 16px 12px; text-align: center; font-weight: 600;">Valor</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach ($data['routes'] as $i => $route)
-                                <tr style="background-color: {{ $i % 2 == 0 ? '#fff8f4' : '#ffffff' }}; transition: all 0.2s ease;">
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #d85e13;">
-                                        #{{ $i + 1 }}
-                                    </td>
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #333;">
-                                        {{ $route['ciudad_origen'] ?? '-' }}
-                                    </td>
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #333;">
-                                        {{ $route['ciudad_destino'] ?? '-' }}
-                                    </td>
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #666; font-size: 13px;">
-                                        {{ $route['vehiculo_requerido'] ?? '-' }}
-                                    </td>
-                                    <td style="padding: 16px 12px; text-align: center; border-bottom: 1px solid #f1f3f4; color: #333;">
-                                        @php
-                                            // Calcular valor base y acompañamiento
-                                            $valorBase = floatval($route['valor'] ?? 0);
-                                            $tipo   = $route['tipaco_codigo'] ?? '';
-                                            $cant   = (int)($route['itesoltra_vehiculoacompanamiento'] ?? 0);
-                                            $valorU = (float)($route['itesoltra_acompanamientovalor']  ?? 0);
-                                            $totalAcomp = $cant > 0 ? $cant * $valorU : 0;
-                                            
-                                            // Total de esta ruta (valor_final debe incluir acompañamiento)
-                                            $valorFinal = isset($route['valor_final']) 
-                                                ? floatval($route['valor_final']) 
-                                                : ($valorBase + $totalAcomp);
-                                        @endphp
-                                        
-                                        <div style="font-weight: 600; color: #333; font-size: 14px; margin-bottom: 4px;">
-                                            Transporte: <span style="color: #d85e13;">${{ number_format($valorBase, 0, ',', '.') }}</span>
-                                        </div>
 
-                                        @if($tipo && $totalAcomp > 0)
-                                            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                                                + Acompañamiento {{ ucfirst(strtolower($tipo)) }}: 
-                                                <span style="color: #ff8c42;">${{ number_format($totalAcomp, 0, ',', '.') }}</span>
-                                            </div>
-                                        @endif
-                                        
-                                        <div style="font-weight: 700; color: #d85e13; font-size: 16px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e9ecef;">
-                                            Total: ${{ number_format($valorFinal, 0, ',', '.') }}
-                                        </div>
-                                    </td>
-                                </tr>
-                            @endforeach
-                            
-                            {{-- Fila del total mejorada --}}
-                            <tr style="background: linear-gradient(135deg, #fff2e6 0%, #ffe8d6 100%); border-top: 2px solid #d85e13;">
-                                <td colspan="4" style="padding: 20px 16px; text-align: right; font-weight: 700; font-size: 16px; color: #d85e13; letter-spacing: 0.5px;">
-                                    TOTAL COTIZACIÓN
+                @php
+                    $cargoLabels = [
+                        'general' => 'General',
+                        'refrigerado' => 'Refrigerada',
+                        'dangerous' => 'Peligrosa',
+                        'sobredimensionada' => 'Sobredimensionada',
+                    ];
+                    $cargoLabel = $cargoLabels[strtolower($data['cargo_type'] ?? 'general')] ?? ucfirst($data['cargo_type'] ?? 'General');
+                @endphp
+
+                @foreach ($data['routes'] as $i => $route)
+                @php
+                    $valorBase = floatval($route['valor'] ?? 0);
+                    $cant = (int)($route['itesoltra_vehiculoacompanamiento'] ?? 0);
+                    $valorU = (float)($route['itesoltra_acompanamientovalor'] ?? 0);
+                    $totalAcomp = $cant > 0 ? $cant * $valorU : 0;
+                    $valorFinal = isset($route['valor_final']) ? floatval($route['valor_final']) : ($valorBase + $totalAcomp);
+                    $tipo = $route['tipaco_codigo'] ?? '';
+                @endphp
+                <div style="margin-bottom: 20px; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e9ecef; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                    {{-- Encabezado de ruta --}}
+                    <div style="background: linear-gradient(135deg, #d85e13 0%, #ff8c42 100%); color: white; padding: 14px 20px; font-weight: 600; font-size: 15px;">
+                        Ruta #{{ $i + 1 }}: {{ $route['ciudad_origen'] ?? '-' }} → {{ $route['ciudad_destino'] ?? '-' }}
+                    </div>
+
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tbody>
+                            <tr style="background-color: #fff;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555; width: 40%;">Origen</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">{{ $route['ciudad_origen'] ?? '-' }}</td>
+                            </tr>
+                            <tr style="background-color: #fafbfc;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Destino</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">{{ $route['ciudad_destino'] ?? '-' }}</td>
+                            </tr>
+                            <tr style="background-color: #fff;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Tipo de Carga</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">{{ $cargoLabel }}</td>
+                            </tr>
+                            <tr style="background-color: #fafbfc;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Peso Mercancía</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">
+                                    {{ !empty($route['peso_mercancia']) ? number_format(floatval($route['peso_mercancia']), 0, ',', '.') . ' kg' : '-' }}
                                 </td>
-                                <td style="padding: 20px 16px; text-align: center; font-weight: 700; color: #d85e13; font-size: 18px; letter-spacing: 0.5px;">
-                                    @php
-                                        $total = collect($data['routes'])->sum(function ($r) {
-                                            return floatval($r['valor_final'] ?? 0);   // valor_final ya incluye acompañamiento
-                                        });
-                                    @endphp
-                                    ${{ number_format($total, 0, ',', '.') }}
+                            </tr>
+                            @if(!empty($route['valor_declarado']))
+                            <tr style="background-color: #fff;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Valor Mercancía</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">
+                                    ${{ number_format(floatval($route['valor_declarado']), 0, ',', '.') }}
+                                </td>
+                            </tr>
+                            @endif
+                            <tr style="background-color: #fafbfc;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Tipo de Vehículo</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">
+                                    {{ $route['vehiculo_requerido'] ?? '-' }}
+                                </td>
+                            </tr>
+                            @if(!empty($route['tipo_producto']))
+                            <tr style="background-color: #fff;">
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; font-weight: 600; color: #555;">Producto</td>
+                                <td style="padding: 12px 20px; border-bottom: 1px solid #f1f3f4; color: #333;">{{ ucfirst($route['tipo_producto']) }}</td>
+                            </tr>
+                            @endif
+                            {{-- Valor del servicio --}}
+                            <tr style="background: linear-gradient(135deg, #fff2e6 0%, #ffe8d6 100%);">
+                                <td style="padding: 14px 20px; font-weight: 700; color: #d85e13; font-size: 15px;">Valor del Servicio</td>
+                                <td style="padding: 14px 20px; font-weight: 700; color: #d85e13; font-size: 16px;">
+                                    ${{ number_format($valorFinal, 0, ',', '.') }}
+                                    @if($tipo && $totalAcomp > 0)
+                                        <div style="font-size: 12px; color: #666; font-weight: 400; margin-top: 4px;">
+                                            Transporte: ${{ number_format($valorBase, 0, ',', '.') }} + Acompañamiento: ${{ number_format($totalAcomp, 0, ',', '.') }}
+                                        </div>
+                                    @endif
                                 </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
+                @endforeach
+
+                {{-- Total general --}}
+                @if(count($data['routes']) > 0)
+                <div style="background: linear-gradient(135deg, #d85e13 0%, #ff8c42 100%); border-radius: 12px; padding: 20px; text-align: center; margin-top: 8px;">
+                    @php
+                        $total = collect($data['routes'])->sum(function ($r) {
+                            return floatval($r['valor_final'] ?? 0);
+                        });
+                    @endphp
+                    <div style="color: rgba(255,255,255,0.85); font-size: 14px; font-weight: 500; margin-bottom: 4px;">TOTAL COTIZACIÓN</div>
+                    <div style="color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">${{ number_format($total, 0, ',', '.') }}</div>
+                </div>
+                @endif
             </div>
+            @endif
 
             {{-- Call to action mejorado --}}
             <div style="margin-bottom: 32px; padding: 28px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 16px; text-align: center; border: 1px solid #dee2e6;">

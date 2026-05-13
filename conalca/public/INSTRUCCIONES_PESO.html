@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMPORTANTE: Actualización Sistema</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .alert {
+            background: #ff6b6b;
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .steps {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .step {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+        }
+        .step strong {
+            color: #1976D2;
+            font-size: 1.1em;
+        }
+        .keyboard {
+            display: inline-block;
+            background: #333;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            margin: 0 5px;
+            font-family: monospace;
+        }
+        .success {
+            background: #4CAF50;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="alert">
+        🚨 ACCIÓN REQUERIDA: RECARGAR NAVEGADOR 🚨
+    </div>
+    
+    <div class="steps">
+        <h1>El sistema ha sido actualizado</h1>
+        <p>Hemos corregido el problema del campo <strong>PESO</strong> que no se actualizaba correctamente.</p>
+        
+        <h2>Para aplicar los cambios:</h2>
+        
+        <div class="step">
+            <strong>PASO 1:</strong> Presiona las siguientes teclas AL MISMO TIEMPO:
+            <br><br>
+            <span class="keyboard">Ctrl</span> + <span class="keyboard">Shift</span> + <span class="keyboard">R</span>
+            <br><br>
+            (En Mac: <span class="keyboard">Cmd</span> + <span class="keyboard">Shift</span> + <span class="keyboard">R</span>)
+        </div>
+        
+        <div class="step">
+            <strong>PASO 2:</strong> Espera a que la página recargue completamente
+        </div>
+        
+        <div class="step">
+            <strong>PASO 3:</strong> Verifica que el peso se actualiza correctamente al cambiar valores
+        </div>
+        
+        <div class="success">
+            ✅ <strong>Estado actual:</strong><br>
+            • Grupo 690: Creado registro ID 1518 con peso 35.000 kg<br>
+            • Grupo 691: Creado registro ID 1519 con peso 15.000 kg<br>
+            • Nuevo código JavaScript compilado: QuoteIndex-1d3401f7.js<br>
+            • Backend funcionando correctamente ✓<br>
+            • <strong>Solo falta recargar el navegador para ver los cambios</strong>
+        </div>
+        
+        <h2>¿Por qué debo hacer esto?</h2>
+        <p>El navegador guarda en memoria (caché) la versión antigua del código JavaScript. 
+        Al presionar Ctrl+Shift+R, forzamos al navegador a descargar la versión más reciente 
+        que incluye la corrección del bug del peso.</p>
+        
+        <h2>Después de recargar:</h2>
+        <ul>
+            <li>✅ El peso se actualizará correctamente cada vez que lo cambies</li>
+            <li>✅ Los datos se guardarán automáticamente en la base de datos</li>
+            <li>✅ El panel mostrará los valores actualizados instantáneamente</li>
+        </ul>
+    </div>
+</body>
+</html>

@@ -6,13 +6,18 @@ const API = '/pricings-solutions';
 const getCsrfToken = () =>
   document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-export const fetchLatestPricingsByRoute = ({ origin, destination, cargo_weight }) =>
-  axios.get(`${API}/latest-by-route`, {
-    params: { origin, destination, cargo_weight },
+export const fetchLatestPricingsByRoute = ({ origin, destination, cargo_weight, condition, is_return, container_size }) => {
+  const params = { origin, destination, cargo_weight };
+  if (condition) params.condition = condition;
+  if (is_return) params.is_return = 1;
+  if (container_size) params.container_size = container_size;
+  return axios.get(`${API}/latest-by-route`, {
+    params,
     headers: {
       'X-CSRF-TOKEN': getCsrfToken(),
     },
   });
+};
 
 export const fetchVehicleSuggestions = (routesPayload) =>
   axios.post('/pricing-suggestions', routesPayload, {

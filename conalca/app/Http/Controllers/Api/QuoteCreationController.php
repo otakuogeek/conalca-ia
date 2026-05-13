@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\GroupCotization;
 use App\Models\Client;
+use App\Models\ConversationSession;
+use App\Services\MCPAssistantService;
 use App\Services\QuoteAssistantService;
 use Illuminate\Support\Facades\Log;
 
@@ -43,35 +45,42 @@ class QuoteCreationController extends Controller
                 'type_business' => $request->type_business,
             ]);
 
-            // Buscar si ya existe un grupo borrador reciente (últimas 24 horas)
+            // 🆕 CAMBIO: Solo reutilizar un borrador si:
+            // 1. NO tiene mensajes asociados
+            // 2. Fue creado hace más de 2 minutos (evita race condition con múltiples pestañas)
             $existingDraft = GroupCotization::where('client_id', $request->client_id)
                 ->where('user_id', $userId)
                 ->where('status', 'borrador')
                 ->where('created_at', '>=', now()->subDay())
+                ->where('created_at', '<=', now()->subMinutes(2)) // 🆕 Solo si tiene más de 2 minutos
+                ->whereDoesntHave('messages') // 🆕 Solo si NO tiene mensajes
                 ->orderBy('created_at', 'desc')
                 ->first();
 
             if ($existingDraft) {
-                // Actualizar el borrador existente en lugar de crear uno nuevo
+                // Actualizar el borrador existente VACÍO y ANTIGUO en lugar de crear uno nuevo
                 $existingDraft->update([
                     'type' => $request->type_business,
                     'operation_type' => $request->operation_type,
                     'candado_satelital' => $request->candado_satelital ?? false,
                     'cargo_type' => $request->cargo_type,
+                    'load_type' => $request->load_type,
                     'jen_set' => $request->jen_set ?? false,
                     'combustible' => $request->combustible ?? false,
                     'kit_derrames' => $request->kit_derrames ?? false,
                     'pictogramas' => $request->pictogramas ?? false,
+                    'extracted_data' => null, // 🆕 Limpiar datos extraídos
                 ]);
                 
                 $group = $existingDraft;
                 
-                Log::info('✅ Grupo BORRADOR actualizado (reutilizado)', [
+                Log::info('✅ Grupo BORRADOR vacío y antiguo reutilizado', [
                     'group_id' => $group->id,
-                    'created_at' => $group->created_at
+                    'created_at' => $group->created_at,
+                    'age_minutes' => now()->diffInMinutes($group->created_at)
                 ]);
             } else {
-                // Crear nuevo grupo borrador solo si no existe uno reciente
+                // 🆕 SIEMPRE crear nuevo grupo si no hay borrador válido para reutilizar
                 $group = GroupCotization::create([
                     'user_id' => $userId,
                     'client_id' => $request->client_id,
@@ -80,6 +89,7 @@ class QuoteCreationController extends Controller
                     'status' => 'borrador',
                     'candado_satelital' => $request->candado_satelital ?? false,
                     'cargo_type' => $request->cargo_type,
+                    'load_type' => $request->load_type,
                     'jen_set' => $request->jen_set ?? false,
                     'combustible' => $request->combustible ?? false,
                     'kit_derrames' => $request->kit_derrames ?? false,
@@ -92,13 +102,36 @@ class QuoteCreationController extends Controller
             // Guardar group_id en sesión para que Livewire lo encuentre
             session()->put('current_group_id', $group->id);
 
-            // Obtener el cliente y crear/obtener thread de OpenAI
+            // Obtener el cliente y crear/obtener thread de MCP
             $client = Client::find($request->client_id);
             
             try {
-                $threadId = QuoteAssistantService::getThread($client);
+                // Usar MCPAssistantService para el thread
+                $threadId = MCPAssistantService::getThread($client);
+                
+                // 🆕 CRÍTICO: Limpiar extracted_data de la sesión para evitar mezcla de datos
+                if ($threadId) {
+                    $session = ConversationSession::where('session_id', $threadId)->first();
+                    if ($session) {
+                        $metadata = json_decode($session->metadata ?? '{}', true);
+                        
+                        // Limpiar datos extraídos anteriores
+                        $metadata['extracted_data'] = [];
+                        $metadata['current_group_id'] = $group->id;
+                        $metadata['group_started_at'] = now()->toIso8601String();
+                        
+                        $session->metadata = json_encode($metadata);
+                        $session->save();
+                        
+                        Log::info('🧹 Sesión limpiada para nuevo grupo', [
+                            'thread_id' => $threadId,
+                            'group_id' => $group->id,
+                            'client_id' => $client->id
+                        ]);
+                    }
+                }
             } catch (\Exception $openaiError) {
-                Log::warning('OpenAI no disponible, continuando sin thread', [
+                Log::warning('MCP/OpenAI no disponible, continuando sin thread', [
                     'error' => $openaiError->getMessage(),
                     'client_id' => $client->id
                 ]);

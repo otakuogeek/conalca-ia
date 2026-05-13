@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SolicitudTransporte extends Model
@@ -138,5 +139,10 @@ class SolicitudTransporte extends Model
     public function cotizacion(): BelongsTo
     {
         return $this->belongsTo(CotizacionModel::class, 'cotizacion_model_id');
+    }
+
+    public function costos(): HasMany
+    {
+        return $this->hasMany(SolicitudTransporteCosto::class);
     }
 }

@@ -49,6 +49,11 @@ return [
         'agent_phone_number_id' => env('ELEVENLABS_AGENT_PHONE_NUMBER_ID'),
         'agent_phone_number' => env('ELEVENLABS_AGENT_PHONE_NUMBER', '+576017564145'),
         'agent_name' => env('ELEVENLABS_AGENT_NAME', 'Conalca'),
+        // Twilio provider (alternativo a Zadarma SIP Trunk)
+        'twilio_phone_number_id' => env('ELEVENLABS_TWILIO_PHONE_NUMBER_ID'),
+        'twilio_phone_number' => env('ELEVENLABS_TWILIO_PHONE_NUMBER', '+573105672307'),
+        // Proveedor activo: 'zadarma' o 'twilio'
+        'call_provider' => env('ELEVENLABS_CALL_PROVIDER', 'zadarma'),
     ],
 
     'openai' => [
@@ -57,10 +62,41 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    'groq' => [
+        'api_key' => env('GROQ_API_KEY'),
+        'model' => env('GROQ_MODEL', 'qwen/qwen3-32b'),
+    ],
+
+    'chat' => [
+        'provider' => env('CHAT_PROVIDER', 'openai'),
+    ],
+
+    'twilio' => [
+        'sid' => env('TWILIO_SID'),
+        'token' => env('TWILIO_AUTH_TOKEN'),
+        'phone_number' => env('TWILIO_PHONE_NUMBER'),
+        'webhook_url' => env('TWILIO_WEBHOOK_URL', env('APP_URL') . '/api/twilio/webhook/status'),
+    ],
+
+    'mcp' => [
+        'base_url' => env('MCP_BASE_URL', 'https://conalcaia.conalca.com.co/mcp/'),
+        'websocket_url' => env('MCP_WEBSOCKET_URL', 'wss://conalcaia.conalca.com.co/ws'),
+        'tools_enabled' => env('MCP_TOOLS_ENABLED', true),
+        'server_port' => env('MCP_SERVER_PORT', 18840),
+        'server_host' => env('MCP_SERVER_HOST', '0.0.0.0'),
+    ],
+
     'local_audio' => [
         'enabled' => env('LOCAL_AUDIO_STORAGE', true),
         'path' => env('LOCAL_AUDIO_PATH', 'storage/app/public/audios'),
         'cleanup_hours' => env('LOCAL_AUDIO_CLEANUP_HOURS', 1),
+    ],
+
+    'bulkgate' => [
+        'application_id'    => env('BULKGATE_APP_ID', '37132'),
+        'application_token' => env('BULKGATE_APP_TOKEN'),
+        'sender_id'         => env('BULKGATE_SENDER_ID', 'gSystem'),
+        'otp_ttl_minutes'   => env('BULKGATE_OTP_TTL', 10),
     ],
 
 ];

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Client;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class ClientController extends Controller
 {
@@ -69,5 +70,59 @@ class ClientController extends Controller
         }
 
         return response()->json($client);
+    }
+
+    /**
+     * Crear un nuevo cliente automáticamente
+     */
+    public function store(Request $request)
+    {
+        $cliente = $request->input('cliente');
+        $documento = $request->input('documento');
+        
+        if (empty($cliente) || empty($documento)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cliente y documento son requeridos'
+            ], 422);
+        }
+
+        // Verificar si ya existe
+        $existe = Client::where('documento', $documento)->first();
+        if ($existe) {
+            return response()->json([
+                'success' => true,
+                'id' => $existe->id,
+                'cliente' => $existe->cliente,
+                'documento' => $existe->documento,
+                'message' => 'Cliente ya existe'
+            ]);
+        }
+
+        try {
+            $client = Client::create([
+                'cliente' => $cliente,
+                'documento' => $documento,
+                'telefono' => $request->input('telefono'),
+                'celular' => $request->input('celular'),
+                'email' => $request->input('email'),
+                'direccion' => $request->input('direccion'),
+                'ciudad' => $request->input('ciudad'),
+                'branch_office' => $request->input('branch_office'),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'id' => $client->id,
+                'cliente' => $client->cliente,
+                'documento' => $client->documento,
+                'message' => 'Cliente creado exitosamente'
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al crear cliente: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

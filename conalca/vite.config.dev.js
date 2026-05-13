@@ -26,6 +26,7 @@ export default defineConfig({
                 "resources/js/dropzone.js",
                 "resources/js/editCalendarModal.js",
                 "resources/js/analysis.js",
+                'resources/js/sidebar-server-metrics.js',
                 'resources/js/app.jsx',
                 'resources/js/quotes-react.jsx'
             ],

@@ -43,7 +43,14 @@ export const startElevenLabsCalls = (cotizacionId) =>
     { headers: { 'X-CSRF-TOKEN': getCsrfToken() } }
   );
 
-export const buscarConductores = (cotizacionId, minScore = 7, limit = 50) =>
+export const hangupCall = (llamadaId) =>
+  axios.post(
+    `${API}/llamadas/${llamadaId}/hangup`,
+    {},
+    { headers: { 'X-CSRF-TOKEN': getCsrfToken() } }
+  );
+
+export const buscarConductores = (cotizacionId, minScore = 0, limit = 50) =>
   axios.post(
     `${API}/arcangel/buscar-conductores`,
     { 

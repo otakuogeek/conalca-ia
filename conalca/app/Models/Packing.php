@@ -10,27 +10,42 @@ class Packing extends Model
     use HasFactory;
 
     // Nombre explícito de la tabla
-    protected $table = 'packing';
+    protected $table = 'tb_empaque';
     
     // Especificar la clave primaria
-    protected $primaryKey = 'Codigo';
+    protected $primaryKey = 'id';
     
-    // Si la clave primaria no es un entero autoincremental
-    public $incrementing = false;
+    // La clave primaria es autoincremental
+    public $incrementing = true;
     
     // Tipo de la clave primaria
-    protected $keyType = 'string';
+    protected $keyType = 'int';
     
-    // Deshabilitar timestamps si la tabla no los tiene
+    // Deshabilitar timestamps (usa data_criacao/data_modificacao)
     public $timestamps = false;
+    
+    // Mapear nombres de timestamps personalizados
+    const CREATED_AT = 'data_criacao';
+    const UPDATED_AT = 'data_modificacao';
 
     // Campos asignables masivamente
     protected $fillable = [
-        'Codigo',
-        'Nombre',
-        'Codigo Ministerio',
-        'Usuario',
-        'Fecha Creacion',
-        'Fecha Modificacion'
+        'codigo_ministerio',
+        'nome',
+        'usuario',
+        'data_criacao',
+        'data_modificacao'
     ];
+    
+    // Accessor para compatibilidad con código existente que usa 'Codigo'
+    public function getCodigoAttribute()
+    {
+        return $this->codigo_ministerio;
+    }
+    
+    // Accessor para compatibilidad con código existente que usa 'Nombre'
+    public function getNombreAttribute()
+    {
+        return $this->nome;
+    }
 }

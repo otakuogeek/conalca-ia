@@ -348,8 +348,10 @@ class AnalysisController extends Controller
                     $key = $allCities->search(function ($item) use ($cityName) {
                         return strtolower($item['name']) === $cityName;
                     });
-                    $allCities[$key]['count'] += $city->count;
-                    $allCities[$key]['type'] = 'both';
+                    $item = $allCities[$key];
+                    $item['count'] += $city->count;
+                    $item['type'] = 'both';
+                    $allCities->put($key, $item);
                 } else {
                     $allCities->push([
                         'name' => ucwords($cityName), // Mostrar con primera letra mayúscula

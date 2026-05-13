@@ -620,7 +620,7 @@ class ConalcaMCPServer:
                                 },
                                 {
                                     "name": "precioviaje",
-                                    "description": "Obtiene el precio específico de un viaje consultando la cotización y su precio asociado. Ideal para responder cuando el chofer pregunta el valor del viaje.",
+                                    "description": "Obtiene el valor del FLETE del viaje desde la cotización. El flete es el valor que se le paga al conductor por el transporte. Usa esta herramienta cuando el chofer pregunte cuánto se paga o el valor del viaje.",
                                     "inputSchema": {
                                         "type": "object",
                                         "properties": {
@@ -1640,10 +1640,27 @@ class ConalcaMCPServer:
                 
                 # Obtener información de cotización si existe
                 cotizacion_info = None
+                campos_faltantes = []  # ✅ NUEVO: Registrar campos críticos faltantes
+                
                 if llamada.id_cotizacion and llamada.id_cotizacion > 0:
                     cotizacion = await repository.get_cotizacion_by_id(llamada.id_cotizacion)
                     if cotizacion:
                         cotizacion_info = cotizacion.model_dump()
+                        
+                        # ✅ NUEVA VALIDACIÓN: Verificar campos críticos
+                        campos_criticos = {
+                            'ciudad_origen': cotizacion.ciudad_origen,
+                            'ciudad_destino': cotizacion.ciudad_destino,
+                            'peso_mercancia': cotizacion.peso_mercancia,
+                            'vehiculo_requerido': cotizacion.vehiculo_requerido,
+                            'fecha_hora_descargue_cargue': cotizacion.fecha_hora_descargue_cargue,  # 🔴 CRÍTICO
+                            'valor': cotizacion.valor,
+                        }
+                        
+                        for campo, valor in campos_criticos.items():
+                            if not valor or str(valor).strip() == '' or str(valor).upper() == 'NULL':
+                                campos_faltantes.append(campo)
+                                logger.warning(f"⚠️ Campo faltante en cotización {llamada.id_cotizacion}: {campo}")
                 
                 # Obtener información del chofer si existe
                 chofer_info = None
@@ -1677,8 +1694,13 @@ class ConalcaMCPServer:
                     },
                     "cotizacion_info": cotizacion_info,
                     "chofer_info": chofer_info,
+                    "campos_faltantes": campos_faltantes if campos_faltantes else None,  # ✅ NUEVO: Alertar sobre campos faltantes
                     "mensaje_para_agente": self._generar_mensaje_agente(llamada, cotizacion_info, chofer_info)
                 }
+                
+                # ✅ NUEVO: Loguear si hay campos críticos faltantes
+                if campos_faltantes:
+                    logger.error(f"🔴 CRÍTICO: Cotización {llamada.id_cotizacion} incompleta. Campos faltantes: {', '.join(campos_faltantes)}")
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
             
@@ -1718,10 +1740,58 @@ class ConalcaMCPServer:
                     if nombre_producto:
                         tipo_producto_nombre = nombre_producto
                 
+                # ✅ MEJORADO: Parsear fecha_hora_descargue_cargue
+                _fhdc = conductor_data.get('fecha_hora_descargue_cargue')
+                _fecha_cargue = None
+                _hora_cargue = None
+                _fecha_warning = False
+                
+                # ✅ VALIDACIÓN 1: Verificar si la fecha existe y no es vacía
+                if not _fhdc or str(_fhdc).strip() == '' or str(_fhdc).upper() == 'NULL':
+                    logger.error(f"❌ CRÍTICO: Cotización {cotizacion_id} SIN fecha_hora_descargue_cargue")
+                    logger.error(f"   Datos recibidos: {conductor_data}")
+                    # ✅ VALOR POR DEFECTO: "por coordinar"
+                    _fecha_cargue = "fecha por coordinar"
+                    _hora_cargue = None
+                    _fecha_warning = True
+                else:
+                    # ✅ VALIDACIÓN 2: Intentar parsear la fecha
+                    try:
+                        _dt = None
+                        for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                            try:
+                                _dt = datetime.strptime(str(_fhdc), _fmt)
+                                break
+                            except ValueError:
+                                pass
+                        
+                        if _dt:
+                            _dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+                            _meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                            _fecha_cargue = f"{_dias[_dt.weekday()]} {_dt.day} de {_meses[_dt.month - 1]} de {_dt.year}"
+                            if not (_dt.hour == 0 and _dt.minute == 0):
+                                _h = _dt.hour % 12 or 12
+                                _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                            logger.info(f"✅ Fecha parseada correctamente: {_fecha_cargue} {_hora_cargue or ''}")
+                        else:
+                            # ✅ Si no se puede parsear, usar el valor raw
+                            logger.warning(f"⚠️ No se pudo parsear fecha '{_fhdc}' - usando valor raw")
+                            _fecha_cargue = str(_fhdc)
+                    except Exception as e:
+                        # ✅ En caso de error, usar el valor raw
+                        logger.error(f"❌ Error parseando fecha '{_fhdc}': {str(e)}")
+                        _fecha_cargue = str(_fhdc)
+                
                 # Construir respuesta en el mismo formato que antes
                 result = {
                     "success": True,
                     "conversation_id": conversation_id,
+                    "validacion": {  # ✅ NUEVO: Campo de validación
+                        "fecha_cargue_presente": not _fecha_warning,
+                        "advertencia_fecha": "Fecha de cargue no especificada - se usará 'por coordinar'" if _fecha_warning else None
+                    },
                     "llamada_info": {
                         "identificador_unico": identificador_unico,  # Nuevo: identificador para save_driver_decision
                         "id_cotizacion": cotizacion_id,
@@ -1743,10 +1813,21 @@ class ConalcaMCPServer:
                         "tipo_embalaje": tipo_embalaje_nombre,
                         "tipo_producto": tipo_producto_nombre,
                         "mercancia": conductor_data.get('mercancia', tipo_producto_nombre),
-                        "fecha_hora": conductor_data.get('fecha_hora_descargue_cargue'),
+                        "fecha_cargue": _fecha_cargue,  # ✅ MEJORADO: Fecha parseada
+                        "hora_cargue": _hora_cargue,    # ✅ MEJORADO: Hora parseada
+                        "fecha_hora": conductor_data.get('fecha_hora_descargue_cargue'),  # Raw para compatibilidad
                         "vehiculo_requerido": conductor_data.get('vehiculo_requerido')
                     }
                 }
+                
+                # Obtener el flete de la cotización para incluir el precio
+                if cotizacion_id:
+                    cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                    if cotizacion and cotizacion.flete and float(cotizacion.flete) > 0:
+                        flete_num = float(cotizacion.flete)
+                        result["viaje"]["valor_flete"] = flete_num
+                        result["viaje"]["valor_flete_formateado"] = f"${flete_num:,.0f} COP"
+                        result["mensaje_para_agente"] = f"El valor del flete para este viaje es de ${flete_num:,.0f} pesos colombianos. Este es el valor que se le paga al conductor por el transporte."
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
             
@@ -2048,7 +2129,7 @@ class ConalcaMCPServer:
                 if not cotizacion_id:
                     return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
                 
-                # Primero obtenemos la cotización para conseguir el pricing_id
+                # Obtenemos la cotización para usar el campo flete como precio del viaje
                 cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
                 if not cotizacion:
                     return json.dumps({
@@ -2056,34 +2137,28 @@ class ConalcaMCPServer:
                         "error": f"No se encontró cotización con ID: {cotizacion_id}"
                     }, ensure_ascii=False)
                 
-                # Verificamos si tiene pricing_id
-                if not cotizacion.pricing_id:
+                # El valor que se le paga al conductor es el FLETE
+                flete_valor = cotizacion.flete
+                if not flete_valor or float(flete_valor) == 0:
                     return json.dumps({
                         "success": False,
-                        "error": f"La cotización {cotizacion_id} no tiene precio asociado (pricing_id es null)"
+                        "error": f"La cotización {cotizacion_id} no tiene valor de flete asignado"
                     }, ensure_ascii=False)
                 
-                # Buscamos el precio en la tabla pricings
-                pricing = await repository.get_pricing_by_id(cotizacion.pricing_id)
-                if not pricing:
-                    return json.dumps({
-                        "success": False,
-                        "error": f"No se encontró precio con ID: {cotizacion.pricing_id}"
-                    }, ensure_ascii=False)
+                flete_num = float(flete_valor)
                 
-                # Preparamos la respuesta con información completa del viaje
+                # Preparamos la respuesta con el flete como precio del viaje
                 result = {
                     "success": True,
                     "cotizacion_id": cotizacion_id,
-                    "pricing_id": cotizacion.pricing_id,
-                    "precio_viaje": pricing.price,
+                    "precio_viaje": flete_num,
+                    "precio_viaje_formateado": f"${flete_num:,.0f} COP",
                     "informacion_viaje": {
-                        "origen": pricing.origin or cotizacion.ciudad_origen,
-                        "destino": pricing.destination or cotizacion.ciudad_destino,
-                        "tipo_vehiculo": pricing.vehicle_type,
-                        "tipo_precio": pricing.type_pricing,
-                        "peso_desde": pricing.weight_from,
-                        "peso_hasta": pricing.weight_to
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                        "tipo_carroceria": cotizacion.tipo_carroceria,
+                        "peso_mercancia": cotizacion.peso_mercancia
                     },
                     "informacion_cotizacion": {
                         "vehiculo_requerido": cotizacion.vehiculo_requerido,
@@ -2093,7 +2168,7 @@ class ConalcaMCPServer:
                         "peso_mercancia": cotizacion.peso_mercancia,
                         "tipo_mercancia": cotizacion.tipo_mercancia
                     },
-                    "mensaje_chofer": f"El precio del viaje desde {pricing.origin or cotizacion.ciudad_origen} hasta {pricing.destination or cotizacion.ciudad_destino} es de ${float(pricing.price):,.2f} COP"
+                    "mensaje_chofer": f"El valor del flete del viaje desde {cotizacion.ciudad_origen} hasta {cotizacion.ciudad_destino} es de ${flete_num:,.0f} pesos colombianos"
                 }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)

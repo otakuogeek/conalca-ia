@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 import uvloop
 import json
 from datetime import datetime, date
+from decimal import Decimal
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,7 +32,129 @@ class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, date)):
             return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
         return super().default(obj)
+
+
+# ============================================================
+# Helper: formato de fecha natural (relativo a hoy)
+# ============================================================
+_DIAS_SEMANA = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo']
+_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+          'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+
+def _format_fecha_natural(dt) -> str:
+    """
+    Devuelve la fecha en forma conversacional relativa a HOY (zona America/Bogota).
+    Patrón unificado para que ElevenLabs pronuncie la fecha tal cual la entrega el MCP:
+      - delta 0  → "hoy"
+      - delta 1  → "mañana"
+      - delta ≥2 → "el próximo [día_semana] [N]"        (ej: "el próximo miércoles 6")
+      - delta -1 → "ayer"
+      - delta <-1 → "el [día_semana] [N] de [mes]"      (fechas pasadas)
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        hoy = datetime.now(ZoneInfo('America/Bogota')).date()
+    except Exception:
+        hoy = datetime.now().date()
+
+    fecha = dt.date() if isinstance(dt, datetime) else dt
+    delta = (fecha - hoy).days
+    nombre_dia = _DIAS_SEMANA[fecha.weekday()]
+
+    if delta == 0:
+        return 'hoy'
+    if delta == 1:
+        return 'mañana'
+    if delta >= 2:
+        return f'el próximo {nombre_dia} {fecha.day}'
+    if delta == -1:
+        return 'ayer'
+    # Fechas pasadas (no debería usarse en cotización futura, pero por completitud)
+    return f'el {nombre_dia} {fecha.day} de {_MESES[fecha.month - 1]}'
+
+
+def _normalize_phone_for_lookup(phone: Any) -> str:
+    """Normaliza teléfonos colombianos para comparar llamadas salientes con conductores."""
+    if phone is None:
+        return ''
+
+    digits = ''.join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) > 10 and digits.startswith('57'):
+        digits = digits[2:]
+    return digits
+
+
+def _phones_match(left: Any, right: Any) -> bool:
+    """Compara números tolerando +57, espacios, guiones y formatos internacionales."""
+    left_clean = _normalize_phone_for_lookup(left)
+    right_clean = _normalize_phone_for_lookup(right)
+
+    if not left_clean or not right_clean:
+        return False
+
+    if left_clean == right_clean:
+        return True
+
+    if len(left_clean) >= 10 and len(right_clean) >= 10:
+        return left_clean[-10:] == right_clean[-10:]
+
+    return left_clean.endswith(right_clean) or right_clean.endswith(left_clean)
+
+
+def _resolve_driver_decision(decision: Any) -> Dict[str, Any]:
+    """Mapea las decisiones del prompt a estados persistibles por el MCP."""
+    if isinstance(decision, bool) or isinstance(decision, int):
+        decision_int = int(decision)
+        return {
+            "normalized_decision": "accepted" if decision_int == 1 else "rejected",
+            "decision_text": "acepta" if decision_int == 1 else "rechaza",
+            "estado_llamada": "completada" if decision_int == 1 else "fallida",
+            "respuesta_llamada": "accepted" if decision_int == 1 else "rejected",
+            "historical_decision": decision_int,
+            "requires_retry": False,
+        }
+
+    normalized = str(decision).strip().lower()
+    if normalized in {"1", "si", "sí", "accept", "accepted", "acepta", "aceptado"}:
+        return {
+            "normalized_decision": "accepted",
+            "decision_text": "acepta",
+            "estado_llamada": "completada",
+            "respuesta_llamada": "accepted",
+            "historical_decision": 1,
+            "requires_retry": False,
+        }
+    if normalized in {"retry", "reintento", "reintentar", "voicemail", "buzon", "buzón", "no_answer"}:
+        return {
+            "normalized_decision": "retry",
+            "decision_text": "reintento",
+            "estado_llamada": "pendiente",
+            "respuesta_llamada": "",
+            "historical_decision": None,
+            "requires_retry": True,
+        }
+    if normalized in {"maybe", "tal_vez", "talvez", "indeciso", "supervisor", "pending", "seguimiento"}:
+        return {
+            "normalized_decision": "maybe",
+            "decision_text": "pendiente de supervisor",
+            "estado_llamada": "completada",
+            "respuesta_llamada": "pending_supervisor",
+            "historical_decision": None,
+            "requires_retry": False,
+        }
+
+    return {
+        "normalized_decision": "rejected",
+        "decision_text": "rechaza",
+        "estado_llamada": "fallida",
+        "respuesta_llamada": "rejected",
+        "historical_decision": 0,
+        "requires_retry": False,
+    }
 
 class ConalcaMCPServer:
     """Servidor MCP compatible con ElevenLabs - Protocolo JSON-RPC 2.0"""
@@ -225,6 +348,213 @@ class ConalcaMCPServer:
                                     }
                                 },
                                 {
+                                    "name": "get_cotizacion_by_id",
+                                    "description": "Obtiene una cotización específica por su ID. Devuelve todos los detalles de la cotización incluyendo ciudades, peso, tipo de producto, fechas, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID único de la cotización a consultar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "create_cotizacion",
+                                    "description": "Crea una nueva cotización con todos los campos disponibles: ciudades origen/destino, peso, tipo de producto, vehículo requerido, fechas, valores, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "pricing_id": {"type": "integer", "description": "ID del pricing asociado"},
+                                            "ciudad_origen": {"type": "string", "description": "Ciudad de origen del transporte"},
+                                            "ciudad_destino": {"type": "string", "description": "Ciudad de destino del transporte"},
+                                            "peso_mercancia": {"type": "string", "description": "Peso de la mercancía"},
+                                            "cantidad": {"type": "string", "description": "Cantidad de unidades"},
+                                            "tipo_embajale": {"type": "string", "description": "Tipo de embalaje"},
+                                            "tipo_producto": {"type": "string", "description": "Tipo de producto a transportar"},
+                                            "vehiculo_requerido": {"type": "string", "description": "Tipo de vehículo requerido"},
+                                            "fecha_hora_descargue_cargue": {"type": "string", "description": "Fecha y hora de descargue/cargue"},
+                                            "ruta": {"type": "string", "description": "Ruta del transporte"},
+                                            "valor": {"type": "string", "description": "Valor de la cotización"},
+                                            "valor_declarado": {"type": "string", "description": "Valor declarado de la mercancía"},
+                                            "tipo_mercancia": {"type": "string", "description": "Tipo de mercancía"},
+                                            "group_cotizations_id": {"type": "integer", "description": "ID del grupo de cotizaciones"},
+                                            "porcentaje": {"type": "string"},
+                                            "ciudad_origen_dane": {"type": "string"},
+                                            "ciudad_destino_dane": {"type": "string"},
+                                            "dimensiones_exactas": {"type": "string"},
+                                            "registro_fotografico": {"type": "string"},
+                                            "planos": {"type": "string"},
+                                            "temperatura_mercancia": {"type": "string"},
+                                            "humedad": {"type": "string"},
+                                            "regimen_nacionalizado": {"type": "string"},
+                                            "agente_aduanas": {"type": "string"},
+                                            "descargue_cargue": {"type": "string"},
+                                            "consolidado_expreso": {"type": "string"},
+                                            "fcl_lcl": {"type": "string"},
+                                            "sitio_devolucion_contenedor": {"type": "string"},
+                                            "numero_documento_bl": {"type": "string"},
+                                            "cantidad_vh": {"type": "string"},
+                                            "un": {"type": "string"},
+                                            "frecuencia": {"type": "string"},
+                                            "esquema_seguridad": {"type": "string"},
+                                            "tipo_carroceria": {"type": "string"},
+                                            "ventanas_horarios_recibidos": {"type": "string"},
+                                            "seguro": {"type": "string"},
+                                            "silogtran_status": {"type": "string"}
+                                        },
+                                        "required": ["pricing_id"]
+                                    }
+                                },
+                                {
+                                    "name": "update_cotizacion",
+                                    "description": "Actualiza los campos de una cotización existente. Puedes actualizar cualquier campo: ciudades, peso, fechas, valores, estado, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID de la cotización a actualizar",
+                                                "minimum": 1
+                                            },
+                                            "ciudad_origen": {"type": "string"},
+                                            "ciudad_destino": {"type": "string"},
+                                            "peso_mercancia": {"type": "string"},
+                                            "cantidad": {"type": "string"},
+                                            "tipo_embajale": {"type": "string"},
+                                            "tipo_producto": {"type": "string"},
+                                            "vehiculo_requerido": {"type": "string"},
+                                            "fecha_hora_descargue_cargue": {"type": "string"},
+                                            "ruta": {"type": "string"},
+                                            "valor": {"type": "string"},
+                                            "valor_declarado": {"type": "string"},
+                                            "tipo_mercancia": {"type": "string"},
+                                            "silogtran_status": {"type": "string"},
+                                            "group_cotizations_id": {"type": "integer"},
+                                            "pricing_id": {"type": "integer"},
+                                            "porcentaje": {"type": "string"},
+                                            "ciudad_origen_dane": {"type": "string"},
+                                            "ciudad_destino_dane": {"type": "string"},
+                                            "dimensiones_exactas": {"type": "string"},
+                                            "registro_fotografico": {"type": "string"},
+                                            "planos": {"type": "string"},
+                                            "temperatura_mercancia": {"type": "string"},
+                                            "humedad": {"type": "string"},
+                                            "regimen_nacionalizado": {"type": "string"},
+                                            "agente_aduanas": {"type": "string"},
+                                            "descargue_cargue": {"type": "string"},
+                                            "consolidado_expreso": {"type": "string"},
+                                            "fcl_lcl": {"type": "string"},
+                                            "sitio_devolucion_contenedor": {"type": "string"},
+                                            "numero_documento_bl": {"type": "string"},
+                                            "cantidad_vh": {"type": "string"},
+                                            "un": {"type": "string"},
+                                            "frecuencia": {"type": "string"},
+                                            "esquema_seguridad": {"type": "string"},
+                                            "tipo_carroceria": {"type": "string"},
+                                            "ventanas_horarios_recibidos": {"type": "string"},
+                                            "seguro": {"type": "string"}
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "delete_cotizacion",
+                                    "description": "Elimina una cotización de la base de datos usando su ID. Esta acción es permanente.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID de la cotización a eliminar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "search_cotizaciones",
+                                    "description": "Búsqueda avanzada de cotizaciones con filtros múltiples: ciudad origen/destino, tipo de producto, ruta, vehículo, estado, etc.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ciudad_origen": {"type": "string", "description": "Filtrar por ciudad de origen"},
+                                            "ciudad_destino": {"type": "string", "description": "Filtrar por ciudad de destino"},
+                                            "tipo_producto": {"type": "string", "description": "Filtrar por tipo de producto"},
+                                            "ruta": {"type": "string", "description": "Filtrar por ruta"},
+                                            "vehiculo_requerido": {"type": "string", "description": "Filtrar por tipo de vehículo"},
+                                            "tipo_carroceria": {"type": "string", "description": "Filtrar por tipo de carrocería"},
+                                            "silogtran_status": {"type": "string", "description": "Filtrar por estado en Silogtran"},
+                                            "group_cotizations_id": {"type": "integer", "description": "Filtrar por grupo de cotizaciones"},
+                                            "limit": {"type": "integer", "description": "Límite de resultados", "default": 50},
+                                            "offset": {"type": "integer", "description": "Offset para paginación", "default": 0}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "search_products",
+                                    "description": "Busca productos por nombre usando coincidencia parcial. Devuelve los resultados más relevantes ordenados por similitud. Ideal para autocompletar o encontrar productos similares.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "search_term": {
+                                                "type": "string",
+                                                "description": "Término de búsqueda (palabra o parte del nombre del producto)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["search_term"]
+                                    }
+                                },
+                                {
+                                    "name": "get_product_by_code",
+                                    "description": "Obtiene un producto específico por su código único.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "producto_codigo": {
+                                                "type": "integer",
+                                                "description": "Código único del producto",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["producto_codigo"]
+                                    }
+                                },
+                                {
+                                    "name": "get_products_by_category",
+                                    "description": "Obtiene productos filtrados por categoría (tipo de producto o naturaleza de carga).",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "categoria": {
+                                                "type": "string",
+                                                "description": "Nombre de la categoría a buscar (ej: ANIMALES, CARNES, MERCANCIAS)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 50,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["categoria"]
+                                    }
+                                },
+                                {
                                     "name": "get_vehicle_by_telefono_conductor",
                                     "description": "Busca vehículos asociados a un conductor específico usando su número de teléfono. Devuelve información del vehículo, conductor y propietario.",
                                     "inputSchema": {
@@ -287,6 +617,225 @@ class ConalcaMCPServer:
                                             }
                                         },
                                         "required": ["placa"]
+                                    }
+                                },
+                                {
+                                    "name": "get_empaques",
+                                    "description": "Obtiene lista de todos los tipos de embalaje disponibles con paginación. Devuelve códigos ministerio, nombres y fechas de creación/modificación.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "page": {
+                                                "type": "integer",
+                                                "description": "Número de página para paginación",
+                                                "default": 1,
+                                                "minimum": 1
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Cantidad máxima de empaques por página",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_empaque_by_id",
+                                    "description": "Obtiene un tipo de embalaje específico por su ID. Devuelve código ministerio, nombre y datos completos del empaque.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "empaque_id": {
+                                                "type": "integer",
+                                                "description": "ID único del empaque a consultar",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["empaque_id"]
+                                    }
+                                },
+                                {
+                                    "name": "search_empaques",
+                                    "description": "Busca tipos de embalaje por nombre usando coincidencia parcial. Devuelve resultados ordenados por relevancia (ej: CAJA, SACO, TANQUE).",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "search_term": {
+                                                "type": "string",
+                                                "description": "Término de búsqueda (palabra o parte del nombre del empaque)",
+                                                "minLength": 2
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Número máximo de resultados",
+                                                "default": 20,
+                                                "minimum": 1,
+                                                "maximum": 100
+                                            }
+                                        },
+                                        "required": ["search_term"]
+                                    }
+                                },
+                                {
+                                    "name": "get_contexto_inicial_conductor",
+                                    "description": "Herramienta CONSOLIDADA que obtiene TODO el contexto inicial del conductor en una sola llamada. Busca por teléfono y devuelve: datos del conductor (nombre, placa, vehículo, ciudad), datos de la cotización (origen, destino, mercancía, peso, fechas) y el precio del viaje. Usar SIEMPRE esta herramienta al inicio de la llamada en lugar de llamar get_conductor_by_telefono + get_cotizaciones + precioviaje por separado.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "telefono": {
+                                                "type": "string",
+                                                "description": "Número de teléfono del conductor sin prefijo +57 (ej: 3105672307)"
+                                            },
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs. Si está disponible, se usa como llave principal para evitar mezclar conductores con el mismo teléfono."
+                                            }
+                                        },
+                                        "required": ["telefono"]
+                                    }
+                                },
+                                {
+                                    "name": "precioviaje",
+                                    "description": "Obtiene el valor del FLETE del viaje desde la cotización. El flete es el valor que se le paga al conductor por el transporte. Usa esta herramienta cuando el chofer pregunte cuánto se paga o el valor del viaje.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "cotizacion_id": {
+                                                "type": "integer",
+                                                "description": "ID de la cotización para consultar el valor del flete del viaje",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": ["cotizacion_id"]
+                                    }
+                                },
+                                {
+                                    "name": "save_driver_decision",
+                                    "description": "Guarda la decisión del chofer sobre la oferta de transporte. Registra si acepta (1) o rechaza (0) la propuesta usando el identificador_unico del conductor en llamadas_conductores.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "identificador_unico": {
+                                                "type": "string",
+                                                "description": "Identificador único del conductor en llamadas_conductores (ej: LC-3-5e05b092-1764976542)"
+                                            },
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs (opcional)"
+                                            },
+                                            "decision": {
+                                                "oneOf": [
+                                                    {"type": "integer", "enum": [0, 1]},
+                                                    {"type": "string", "enum": ["accepted", "rejected", "maybe", "retry", "voicemail", "no_answer"]}
+                                                ],
+                                                "description": "Decisión del chofer: 1/accepted acepta, 0/rejected rechaza, maybe seguimiento de supervisor, retry/buzón reintento"
+                                            },
+                                            "notas": {
+                                                "type": "string",
+                                                "description": "Notas adicionales sobre la decisión (opcional)"
+                                            }
+                                        },
+                                        "required": ["identificador_unico", "decision"]
+                                    }
+                                },
+                                {
+                                    "name": "get_conductor_by_telefono",
+                                    "description": "Busca conductores en llamadas_conductores por número de teléfono. Devuelve información completa del conductor incluyendo placa, tipo de vehículo, ciudad actual, estado de llamada y conversation_id si existe.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "telefono": {
+                                                "type": "string",
+                                                "description": "Número de teléfono del conductor (ej: 3105672307, +573105672307)"
+                                            }
+                                        },
+                                        "required": ["telefono"]
+                                    }
+                                },
+                                {
+                                    "name": "update_conversation_id_conductor",
+                                    "description": "Actualiza el conversation_id (call_id) de ElevenLabs para un conductor específico cuando se inicia una llamada. También actualiza el estado a en_progreso y registra la fecha/hora de la llamada.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "identificador_unico": {
+                                                "type": "string",
+                                                "description": "Identificador único del conductor en llamadas_conductores"
+                                            },
+                                            "conversation_id": {
+                                                "type": "string",
+                                                "description": "ID de conversación de ElevenLabs (conversation_id)"
+                                            },
+                                            "estado_llamada": {
+                                                "type": "string",
+                                                "description": "Nuevo estado de la llamada",
+                                                "enum": ["pendiente", "en_progreso", "completada", "fallida", "cancelada"],
+                                                "default": "en_progreso"
+                                            },
+                                            "notas": {
+                                                "type": "string",
+                                                "description": "Notas adicionales sobre la llamada (opcional)"
+                                            }
+                                        },
+                                        "required": ["identificador_unico", "conversation_id"]
+                                    }
+                                },
+                                {
+                                    "name": "zinformacion",
+                                    "description": "Consultar información operativa completa de órdenes con campos estáticos de cotizacion_models. Excluye información sensible como datos del cliente, porcentajes de ganancia y decisiones posteriores a llamadas.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "orden_id": {
+                                                "type": "integer",
+                                                "description": "ID específico de la orden a consultar",
+                                                "minimum": 1
+                                            },
+                                            "search": {
+                                                "type": "string",
+                                                "description": "Texto para buscar en ciudades, productos o mercancías"
+                                            },
+                                            "show_all": {
+                                                "type": "boolean",
+                                                "description": "Mostrar todas las órdenes (limitadas por limit)",
+                                                "default": False
+                                            },
+                                            "show_stats": {
+                                                "type": "boolean",
+                                                "description": "Mostrar estadísticas de completitud de campos obligatorios",
+                                                "default": False
+                                            },
+                                            "limit": {
+                                                "type": "integer",
+                                                "description": "Límite de resultados para búsquedas",
+                                                "default": 10,
+                                                "minimum": 1,
+                                                "maximum": 50
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "llenar_formulario",
+                                    "description": "Llena automáticamente un formulario de cotización usando datos de una orden existente. Convierte la información técnica en valores de formulario listos para usar por el agente de IA.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "orden_id": {
+                                                "type": "integer",
+                                                "description": "ID de la orden para obtener datos del formulario",
+                                                "minimum": 1
+                                            },
+                                            "tipo_formulario": {
+                                                "type": "string",
+                                                "description": "Tipo de formulario a llenar",
+                                                "enum": ["cotizacion", "pre_solicitud", "despacho"],
+                                                "default": "cotizacion"
+                                            }
+                                        },
+                                        "required": ["orden_id"]
                                     }
                                 }
                             ]
@@ -583,6 +1132,115 @@ class ConalcaMCPServer:
                             }
                         },
                         {
+                            "name": "get_cotizacion_by_id",
+                            "description": "Obtiene una cotización específica por su ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {
+                                        "type": "integer",
+                                        "description": "ID único de la cotización",
+                                        "minimum": 1
+                                    }
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "create_cotizacion",
+                            "description": "Crea una nueva cotización con todos los campos disponibles.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "pricing_id": {"type": "integer"},
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "peso_mercancia": {"type": "string"},
+                                    "tipo_producto": {"type": "string"},
+                                    "vehiculo_requerido": {"type": "string"},
+                                    "fecha_hora_descargue_cargue": {"type": "string"},
+                                    "ruta": {"type": "string"},
+                                    "valor": {"type": "string"}
+                                },
+                                "required": ["pricing_id"]
+                            }
+                        },
+                        {
+                            "name": "update_cotizacion",
+                            "description": "Actualiza campos de una cotización existente.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {"type": "integer", "minimum": 1},
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "peso_mercancia": {"type": "string"},
+                                    "valor": {"type": "string"}
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "delete_cotizacion",
+                            "description": "Elimina una cotización por ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "search_cotizaciones",
+                            "description": "Búsqueda avanzada de cotizaciones con filtros.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "ciudad_origen": {"type": "string"},
+                                    "ciudad_destino": {"type": "string"},
+                                    "tipo_producto": {"type": "string"},
+                                    "ruta": {"type": "string"},
+                                    "limit": {"type": "integer", "default": 50}
+                                }
+                            }
+                        },
+                        {
+                            "name": "search_products",
+                            "description": "Busca productos por nombre. Devuelve resultados ordenados por relevancia.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "search_term": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 20, "maximum": 100}
+                                },
+                                "required": ["search_term"]
+                            }
+                        },
+                        {
+                            "name": "get_product_by_code",
+                            "description": "Obtiene un producto por su código.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "producto_codigo": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["producto_codigo"]
+                            }
+                        },
+                        {
+                            "name": "get_products_by_category",
+                            "description": "Obtiene productos por categoría.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "categoria": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 50}
+                                },
+                                "required": ["categoria"]
+                            }
+                        },
+                        {
                             "name": "get_vehicle_by_telefono_conductor",
                             "description": "Busca vehículos asociados a un conductor específico usando su número de teléfono. Devuelve información del vehículo, conductor y propietario.",
                             "inputSchema": {
@@ -646,6 +1304,134 @@ class ConalcaMCPServer:
                                 },
                                 "required": ["placa"]
                             }
+                        },
+                        {
+                            "name": "get_empaques",
+                            "description": "Obtiene lista de tipos de embalaje disponibles (CAJA, SACO, PALLET, TANQUE, etc.).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "page": {"type": "integer", "default": 1, "minimum": 1},
+                                    "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+                                }
+                            }
+                        },
+                        {
+                            "name": "get_empaque_by_id",
+                            "description": "Obtiene un tipo de embalaje específico por ID.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "empaque_id": {"type": "integer", "minimum": 1}
+                                },
+                                "required": ["empaque_id"]
+                            }
+                        },
+                        {
+                            "name": "search_empaques",
+                            "description": "Busca tipos de embalaje por nombre (ej: CAJA, SACO).",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "search_term": {"type": "string", "minLength": 2},
+                                    "limit": {"type": "integer", "default": 20, "maximum": 100}
+                                },
+                                "required": ["search_term"]
+                            }
+                        },
+                        {
+                            "name": "get_contexto_inicial_conductor",
+                            "description": "Obtiene TODO el contexto inicial del conductor en una sola llamada: datos del conductor, cotización y precio del viaje.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "telefono": {"type": "string", "description": "Teléfono del conductor sin +57"},
+                                    "conversation_id": {"type": "string", "description": "ID de conversación de ElevenLabs. Si está disponible, se usa como llave principal para evitar mezclar conductores con el mismo teléfono."}
+                                },
+                                "required": ["telefono"]
+                            }
+                        },
+                        {
+                            "name": "precioviaje",
+                            "description": "Obtiene el valor del FLETE del viaje desde la cotización. El flete es el valor que se le paga al conductor por el transporte. Usa esta herramienta cuando el chofer pregunte cuánto se paga o el valor del viaje.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "cotizacion_id": {"type": "integer", "description": "ID de la cotización para consultar el valor del flete", "minimum": 1}
+                                },
+                                "required": ["cotizacion_id"]
+                            }
+                        },
+                        {
+                            "name": "save_driver_decision",
+                            "description": "Guarda la decisión del chofer sobre la oferta de transporte. Registra si acepta (1) o rechaza (0) usando el identificador_unico del conductor.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "identificador_unico": {"type": "string", "description": "Identificador único del conductor en llamadas_conductores"},
+                                    "conversation_id": {"type": "string", "description": "ID de conversación de ElevenLabs (opcional)"},
+                                    "decision": {
+                                        "oneOf": [
+                                            {"type": "integer", "enum": [0, 1]},
+                                            {"type": "string", "enum": ["accepted", "rejected", "maybe", "retry", "voicemail", "no_answer"]}
+                                        ],
+                                        "description": "1/accepted acepta, 0/rejected rechaza, maybe seguimiento de supervisor, retry/buzón reintento"
+                                    },
+                                    "notas": {"type": "string", "description": "Notas adicionales (opcional)"}
+                                },
+                                "required": ["identificador_unico", "decision"]
+                            }
+                        },
+                        {
+                            "name": "get_conductor_by_telefono",
+                            "description": "Busca conductores en llamadas_conductores por número de teléfono. Devuelve información completa del conductor.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "telefono": {"type": "string", "description": "Número de teléfono del conductor"}
+                                },
+                                "required": ["telefono"]
+                            }
+                        },
+                        {
+                            "name": "update_conversation_id_conductor",
+                            "description": "Actualiza el conversation_id de ElevenLabs para un conductor. También cambia estado a en_progreso.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "identificador_unico": {"type": "string", "description": "Identificador único del conductor"},
+                                    "conversation_id": {"type": "string", "description": "ID de conversación de ElevenLabs"},
+                                    "estado_llamada": {"type": "string", "enum": ["pendiente", "en_progreso", "completada", "fallida", "cancelada"], "default": "en_progreso"},
+                                    "notas": {"type": "string", "description": "Notas adicionales (opcional)"}
+                                },
+                                "required": ["identificador_unico", "conversation_id"]
+                            }
+                        },
+                        {
+                            "name": "zinformacion",
+                            "description": "Consultar información operativa completa de órdenes. Excluye información sensible.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "orden_id": {"type": "integer", "description": "ID de la orden", "minimum": 1},
+                                    "search": {"type": "string", "description": "Buscar en ciudades, productos"},
+                                    "show_all": {"type": "boolean", "default": False},
+                                    "show_stats": {"type": "boolean", "default": False},
+                                    "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 50}
+                                }
+                            }
+                        },
+                        {
+                            "name": "llenar_formulario",
+                            "description": "Llena automáticamente un formulario de cotización usando datos de una orden existente.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "orden_id": {"type": "integer", "description": "ID de la orden", "minimum": 1},
+                                    "tipo_formulario": {"type": "string", "enum": ["cotizacion", "pre_solicitud", "despacho"], "default": "cotizacion"}
+                                },
+                                "required": ["orden_id"]
+                            }
                         }
                     ]
                     
@@ -700,7 +1486,7 @@ class ConalcaMCPServer:
                     "health": f"{self.root_path}/health",
                     "webhook": f"{self.root_path}/webhook/elevenlabs"
                 },
-                "tools_available": 8,
+                "tools_available": 19,
                 "capabilities": ["tools", "resources", "streaming"]
             }
         
@@ -934,10 +1720,27 @@ class ConalcaMCPServer:
                 
                 # Obtener información de cotización si existe
                 cotizacion_info = None
+                campos_faltantes = []  # ✅ NUEVO: Registrar campos críticos faltantes
+                
                 if llamada.id_cotizacion and llamada.id_cotizacion > 0:
                     cotizacion = await repository.get_cotizacion_by_id(llamada.id_cotizacion)
                     if cotizacion:
                         cotizacion_info = cotizacion.model_dump()
+                        
+                        # ✅ NUEVA VALIDACIÓN: Verificar campos críticos
+                        campos_criticos = {
+                            'ciudad_origen': cotizacion.ciudad_origen,
+                            'ciudad_destino': cotizacion.ciudad_destino,
+                            'peso_mercancia': cotizacion.peso_mercancia,
+                            'vehiculo_requerido': cotizacion.vehiculo_requerido,
+                            'fecha_hora_descargue_cargue': cotizacion.fecha_hora_descargue_cargue,  # 🔴 CRÍTICO
+                            'valor': cotizacion.valor,
+                        }
+                        
+                        for campo, valor in campos_criticos.items():
+                            if not valor or str(valor).strip() == '' or str(valor).upper() == 'NULL':
+                                campos_faltantes.append(campo)
+                                logger.warning(f"⚠️ Campo faltante en cotización {llamada.id_cotizacion}: {campo}")
                 
                 # Obtener información del chofer si existe
                 chofer_info = None
@@ -971,8 +1774,13 @@ class ConalcaMCPServer:
                     },
                     "cotizacion_info": cotizacion_info,
                     "chofer_info": chofer_info,
+                    "campos_faltantes": campos_faltantes if campos_faltantes else None,  # ✅ NUEVO: Alertar sobre campos faltantes
                     "mensaje_para_agente": self._generar_mensaje_agente(llamada, cotizacion_info, chofer_info)
                 }
+                
+                # ✅ NUEVO: Loguear si hay campos críticos faltantes
+                if campos_faltantes:
+                    logger.error(f"🔴 CRÍTICO: Cotización {llamada.id_cotizacion} incompleta. Campos faltantes: {', '.join(campos_faltantes)}")
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
             
@@ -982,7 +1790,115 @@ class ConalcaMCPServer:
                 if not conversation_id:
                     return json.dumps({"error": "conversation_id es requerido"}, ensure_ascii=False)
                 
-                # Buscar la llamada por conversation_id
+                # Primero intentar obtener datos desde llamadas_conductores (sistema nuevo con datos reales de Arcangel)
+                conductor_data = await repository.get_conductor_by_conversation_id(conversation_id)
+                
+                if conductor_data:
+                    # Flujo nuevo: datos directos de llamadas_conductores con tipo_vehiculo real del conductor
+                    nombre_conductor = conductor_data.get('nombre_conductor', 'estimado conductor')
+                    identificador_unico = conductor_data.get('identificador_unico')
+                    cotizacion_id = conductor_data.get('cotizacion_id')
+                    
+                    tipo_embalaje_nombre = conductor_data.get('tipo_embajale', 'N/A')
+                    tipo_producto_nombre = conductor_data.get('tipo_producto', 'N/A')
+                    
+                    if conductor_data.get('tipo_embajale') and str(conductor_data.get('tipo_embajale')).isdigit():
+                        nombre_embalaje = await repository.get_packing_name(int(conductor_data.get('tipo_embajale')))
+                        if nombre_embalaje:
+                            tipo_embalaje_nombre = nombre_embalaje
+                    
+                    if conductor_data.get('tipo_producto') and str(conductor_data.get('tipo_producto')).isdigit():
+                        nombre_producto = await repository.get_product_name(int(conductor_data.get('tipo_producto')))
+                        if nombre_producto:
+                            tipo_producto_nombre = nombre_producto
+                    
+                    # ✅ MEJORADO: Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                    _fhdc = conductor_data.get('fecha_hora_descargue_cargue')
+                    _fecha_cargue = None
+                    _hora_cargue = None
+                    _fecha_warning = False
+                    
+                    # ✅ VALIDACIÓN 1: Verificar si la fecha existe y no es vacía
+                    if not _fhdc or str(_fhdc).strip() == '' or str(_fhdc).upper() == 'NULL':
+                        logger.error(f"❌ CRÍTICO: Cotización {cotizacion_id} SIN fecha_hora_descargue_cargue")
+                        logger.error(f"   Datos recibidos: {conductor_data}")
+                        # ✅ VALOR POR DEFECTO: "por coordinar"
+                        _fecha_cargue = "fecha por coordinar"
+                        _fecha_warning = True
+                    else:
+                        # ✅ VALIDACIÓN 2: Intentar parsear la fecha
+                        try:
+                            _dt = None
+                            for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
+                                try:
+                                    _dt = datetime.strptime(str(_fhdc), _fmt)
+                                    break
+                                except ValueError:
+                                    pass
+                            
+                            if _dt:
+                                _fecha_cargue = _format_fecha_natural(_dt)
+                                if not (_dt.hour == 0 and _dt.minute == 0):
+                                    _h = _dt.hour % 12 or 12
+                                    _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                    _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                                logger.info(f"✅ Fecha parseada (natural): {_fecha_cargue} {_hora_cargue or ''}")
+                            else:
+                                # ✅ Si no se puede parsear, usar el valor raw
+                                logger.warning(f"⚠️ No se pudo parsear fecha '{_fhdc}' - usando valor raw")
+                                _fecha_cargue = str(_fhdc)
+                        except Exception as e:
+                            # ✅ En caso de error, usar el valor raw
+                            logger.error(f"❌ Error parseando fecha '{_fhdc}': {str(e)}")
+                            _fecha_cargue = str(_fhdc)
+                    
+                    result = {
+                        "success": True,
+                        "conversation_id": conversation_id,
+                        "validacion": {  # ✅ NUEVO: Campo de validación
+                            "fecha_cargue_presente": not _fecha_warning,
+                            "advertencia_fecha": "Fecha de cargue no especificada - se usará 'por coordinar'" if _fecha_warning else None
+                        },
+                        "llamada_info": {
+                            "identificador_unico": identificador_unico,
+                            "id_cotizacion": cotizacion_id,
+                            "driver_id": identificador_unico
+                        },
+                        "chofer": {
+                            "nombre": nombre_conductor,
+                            "chofer_id": identificador_unico,
+                            "telefono": conductor_data.get('telefono'),
+                            "placa": conductor_data.get('placa'),
+                            "tipo_vehiculo": conductor_data.get('tipo_vehiculo'),
+                            "peso_maximo": float(conductor_data.get('peso_maximo', 0)) if conductor_data.get('peso_maximo') else None,
+                            "ciudad_actual": conductor_data.get('ciudad_actual')
+                        },
+                        "chofer_nombre": nombre_conductor,
+                        "viaje": {
+                            "origen": conductor_data.get('ciudad_origen'),
+                            "destino": conductor_data.get('ciudad_destino'),
+                            "peso_kg": float(conductor_data.get('peso_carga', 0)) if conductor_data.get('peso_carga') else None,
+                            "tipo_embalaje": tipo_embalaje_nombre,
+                            "tipo_producto": tipo_producto_nombre,
+                            "mercancia": conductor_data.get('mercancia', tipo_producto_nombre),
+                            "vehiculo_requerido": conductor_data.get('vehiculo_requerido'),
+                            "fecha_cargue": _fecha_cargue,
+                            "hora_cargue": _hora_cargue
+                        },
+                        "cotizacion_datos": {
+                            "ciudad_origen": conductor_data.get('ciudad_origen'),
+                            "ciudad_destino": conductor_data.get('ciudad_destino'),
+                            "peso_mercancia": conductor_data.get('peso_carga'),
+                            "tipo_embalaje": tipo_embalaje_nombre,
+                            "tipo_producto": tipo_producto_nombre,
+                            "fecha_cargue": _fecha_cargue,
+                            "hora_cargue": _hora_cargue
+                        }
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+                
+                # Fallback: flujo legacy via tabla llamadas
                 llamada = await repository.get_llamada_by_conversation_id(conversation_id)
                 
                 if not llamada:
@@ -1012,6 +1928,30 @@ class ConalcaMCPServer:
                         "llamada_id": llamada.id_llamada
                     }, ensure_ascii=False)
                 
+                # Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                _fhdc = cotizacion.fecha_hora_descargue_cargue if hasattr(cotizacion, 'fecha_hora_descargue_cargue') else None
+                _fecha_cargue = None
+                _hora_cargue = None
+                if _fhdc:
+                    try:
+                        _dt = None
+                        for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                            try:
+                                _dt = datetime.strptime(str(_fhdc), _fmt)
+                                break
+                            except ValueError:
+                                pass
+                        if _dt:
+                            _fecha_cargue = _format_fecha_natural(_dt)
+                            if not (_dt.hour == 0 and _dt.minute == 0):
+                                _h = _dt.hour % 12 or 12
+                                _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                        else:
+                            _fecha_cargue = str(_fhdc)
+                    except Exception:
+                        _fecha_cargue = str(_fhdc)
+                
                 # Generar el mensaje personalizado según el formato solicitado
                 mensaje_oferta = self._generar_mensaje_transporte(nombre_chofer, cotizacion)
                 
@@ -1024,17 +1964,36 @@ class ConalcaMCPServer:
                         "chofer_id": llamada.chofer_id
                     },
                     "chofer_nombre": nombre_chofer,
+                    "viaje": {
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "peso_kg": float(cotizacion.peso_mercancia) if cotizacion.peso_mercancia else None,
+                        "tipo_embalaje": cotizacion.tipo_embajale,
+                        "tipo_producto": cotizacion.tipo_producto,
+                        "fecha_cargue": _fecha_cargue,
+                        "hora_cargue": _hora_cargue
+                    },
                     "cotizacion_datos": {
                         "ciudad_origen": cotizacion.ciudad_origen,
                         "ciudad_destino": cotizacion.ciudad_destino,
                         "peso_mercancia": cotizacion.peso_mercancia,
                         "tipo_embalaje": cotizacion.tipo_embajale,
                         "tipo_producto": cotizacion.tipo_producto,
+                        "fecha_cargue": _fecha_cargue,
+                        "hora_cargue": _hora_cargue,
                         "fecha_hora_descargue_cargue": cotizacion.fecha_hora_descargue_cargue
                     },
                     "mensaje_oferta": mensaje_oferta,
                     "mensaje_para_natalia": f"Aquí tienes el mensaje personalizado para el chofer {nombre_chofer}. Puedes usarlo directamente en tu conversación."
                 }
+                
+                # Agregar el valor del flete al resultado
+                flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                if flete_valor and float(flete_valor) > 0:
+                    flete_num = float(flete_valor)
+                    result["valor_flete"] = flete_num
+                    result["valor_flete_formateado"] = f"${flete_num:,.0f} COP"
+                    result["mensaje_precio"] = f"El valor del flete para este viaje es de ${flete_num:,.0f} pesos colombianos. Este es el valor que se le paga al conductor."
                 
                 return json.dumps(result, indent=2, ensure_ascii=False)
             
@@ -1054,6 +2013,280 @@ class ConalcaMCPServer:
                 }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_cotizacion_by_id":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                
+                if cotizacion:
+                    result = {
+                        "success": True,
+                        "cotizacion": cotizacion.model_dump()
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "error": f"No se encontró cotización con ID: {cotizacion_id}"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "create_cotizacion":
+                # Validar que tenga al menos pricing_id
+                if "pricing_id" not in arguments:
+                    return json.dumps({"error": "pricing_id es requerido"}, ensure_ascii=False)
+                
+                try:
+                    cotizacion_id = await repository.create_cotizacion(arguments)
+                    
+                    if cotizacion_id > 0:
+                        # Obtener la cotización recién creada
+                        nueva_cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                        
+                        result = {
+                            "success": True,
+                            "message": "Cotización creada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "cotizacion": nueva_cotizacion.model_dump() if nueva_cotizacion else None
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": "No se pudo crear la cotización"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error creando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al crear cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "update_cotizacion":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                # Remover cotizacion_id de los datos de actualización
+                update_data = {k: v for k, v in arguments.items() if k != "cotizacion_id"}
+                
+                if not update_data:
+                    return json.dumps({
+                        "success": False,
+                        "error": "No se proporcionaron campos para actualizar"
+                    }, ensure_ascii=False)
+                
+                try:
+                    success = await repository.update_cotizacion(cotizacion_id, update_data)
+                    
+                    if success:
+                        # Obtener la cotización actualizada
+                        cotizacion_actualizada = await repository.get_cotizacion_by_id(cotizacion_id)
+                        
+                        result = {
+                            "success": True,
+                            "message": f"Cotización {cotizacion_id} actualizada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "campos_actualizados": list(update_data.keys()),
+                            "cotizacion_actualizada": cotizacion_actualizada.model_dump() if cotizacion_actualizada else None
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se pudo actualizar la cotización {cotizacion_id}. Verifique que el ID exista."
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error actualizando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al actualizar cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "delete_cotizacion":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                try:
+                    # Primero obtener la cotización para confirmar que existe
+                    cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                    
+                    if not cotizacion:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró cotización con ID: {cotizacion_id}"
+                        }, ensure_ascii=False)
+                    
+                    # Eliminar la cotización
+                    success = await repository.delete_cotizacion(cotizacion_id)
+                    
+                    if success:
+                        result = {
+                            "success": True,
+                            "message": f"Cotización {cotizacion_id} eliminada exitosamente",
+                            "cotizacion_id": cotizacion_id,
+                            "cotizacion_eliminada": cotizacion.model_dump()
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se pudo eliminar la cotización {cotizacion_id}"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error eliminando cotización: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al eliminar cotización: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "search_cotizaciones":
+                try:
+                    cotizaciones = await repository.search_cotizaciones_advanced(arguments)
+                    
+                    result = {
+                        "success": True,
+                        "total_encontradas": len(cotizaciones),
+                        "filtros_aplicados": {k: v for k, v in arguments.items() if k not in ["limit", "offset"]},
+                        "cotizaciones": [cotizacion.model_dump() for cotizacion in cotizaciones]
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando cotizaciones: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "search_products":
+                search_term = arguments.get("search_term")
+                limit = arguments.get("limit", 20)
+                
+                if not search_term:
+                    return json.dumps({"error": "search_term es requerido"}, ensure_ascii=False)
+                
+                if len(search_term) < 2:
+                    return json.dumps({
+                        "error": "El término de búsqueda debe tener al menos 2 caracteres"
+                    }, ensure_ascii=False)
+                
+                try:
+                    products = await repository.search_products_by_name(search_term, limit)
+                    
+                    result = {
+                        "success": True,
+                        "search_term": search_term,
+                        "total_encontrados": len(products),
+                        "productos": [
+                            {
+                                "codigo": p.producto_codigo,
+                                "codigo_ministerio": p.producto_codigo_ministerio,
+                                "nombre": p.producto_nombre,
+                                "tipo_producto": p.tippro_nombre,
+                                "naturaleza_carga": p.natcar_nombre,
+                                "fecha_creacion": p.producto_fechacreacion,
+                                "usuario": p.usuario_nombre
+                            }
+                            for p in products
+                        ],
+                        "mensaje": f"Se encontraron {len(products)} producto(s) que coinciden con '{search_term}'"
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando productos: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en la búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_product_by_code":
+                producto_codigo = arguments.get("producto_codigo")
+                
+                if not producto_codigo:
+                    return json.dumps({"error": "producto_codigo es requerido"}, ensure_ascii=False)
+                
+                try:
+                    product = await repository.get_product_by_code(producto_codigo)
+                    
+                    if product:
+                        result = {
+                            "success": True,
+                            "producto": {
+                                "codigo": product.producto_codigo,
+                                "codigo_ministerio": product.producto_codigo_ministerio,
+                                "nombre": product.producto_nombre,
+                                "tipo_producto": product.tippro_nombre,
+                                "naturaleza_carga": product.natcar_nombre,
+                                "fecha_creacion": product.producto_fechacreacion,
+                                "usuario": product.usuario_nombre
+                            }
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": f"No se encontró producto con código: {producto_codigo}"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error obteniendo producto: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al obtener producto: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_products_by_category":
+                categoria = arguments.get("categoria")
+                limit = arguments.get("limit", 50)
+                
+                if not categoria:
+                    return json.dumps({"error": "categoria es requerida"}, ensure_ascii=False)
+                
+                try:
+                    products = await repository.get_products_by_category(categoria, limit)
+                    
+                    result = {
+                        "success": True,
+                        "categoria_buscada": categoria,
+                        "total_encontrados": len(products),
+                        "productos": [
+                            {
+                                "codigo": p.producto_codigo,
+                                "codigo_ministerio": p.producto_codigo_ministerio,
+                                "nombre": p.producto_nombre,
+                                "tipo_producto": p.tippro_nombre,
+                                "naturaleza_carga": p.natcar_nombre,
+                                "fecha_creacion": p.producto_fechacreacion,
+                                "usuario": p.usuario_nombre
+                            }
+                            for p in products
+                        ],
+                        "mensaje": f"Se encontraron {len(products)} producto(s) en la categoría '{categoria}'"
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error buscando productos por categoría: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en la búsqueda: {str(e)}"
+                    }, ensure_ascii=False)
             
             elif tool_name == "get_vehicle_by_telefono_conductor":
                 telefono = arguments.get("telefono")
@@ -1135,6 +2368,860 @@ class ConalcaMCPServer:
                         "error": f"No se encontró ningún vehículo con la placa: {placa_limpia}",
                         "sugerencia": "Verifique que la placa esté correctamente escrita y completa"
                     }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_empaques":
+                page = arguments.get("page", 1)
+                limit = arguments.get("limit", 20)
+                offset = (page - 1) * limit
+                
+                empaques = await repository.get_empaques(limit=limit, offset=offset)
+                
+                result = {
+                    "success": True,
+                    "total_encontrados": len(empaques),
+                    "page": page,
+                    "limit": limit,
+                    "empaques": [empaque.model_dump() for empaque in empaques]
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_empaque_by_id":
+                empaque_id = arguments.get("empaque_id")
+                if not empaque_id:
+                    return json.dumps({"error": "Se requiere empaque_id"}, ensure_ascii=False)
+                
+                empaque = await repository.get_empaque_by_id(empaque_id)
+                
+                if empaque:
+                    result = {
+                        "success": True,
+                        "empaque": empaque.model_dump()
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"No se encontró empaque con ID {empaque_id}"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "search_empaques":
+                search_term = arguments.get("search_term", "")
+                limit = arguments.get("limit", 20)
+                
+                if not search_term or len(search_term) < 2:
+                    return json.dumps({
+                        "error": "El término de búsqueda debe tener al menos 2 caracteres"
+                    }, ensure_ascii=False)
+                
+                empaques = await repository.search_empaques_by_name(search_term, limit)
+                
+                if empaques:
+                    result = {
+                        "success": True,
+                        "total_encontrados": len(empaques),
+                        "busqueda": search_term,
+                        "empaques": [empaque.model_dump() for empaque in empaques]
+                    }
+                else:
+                    result = {
+                        "success": False,
+                        "message": f"No se encontraron empaques que coincidan con '{search_term}'",
+                        "sugerencia": "Intente con otros términos como: CAJA, SACO, PALLET, TANQUE, GRANEL"
+                    }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "save_driver_decision":
+                # Obtener parámetros
+                identificador_unico = arguments.get("identificador_unico")
+                conversation_id = arguments.get("conversation_id")
+                decision = arguments.get("decision")
+                notas = arguments.get("notas")
+                
+                # Validación de parámetros requeridos
+                if not identificador_unico or decision is None:
+                    return json.dumps({
+                        "success": False,
+                        "error": "Se requieren los parámetros: identificador_unico y decision"
+                    }, ensure_ascii=False)
+                
+                decision_state = _resolve_driver_decision(decision)
+                
+                try:
+                    # Primero verificamos que el conductor exista y, si llega conversation_id,
+                    # que esa conversación pertenezca a este mismo conductor.
+                    query_verify = """
+                    SELECT lc.id, lc.nombre_conductor, lc.cotizacion_id, lc.telefono,
+                           lc.elevenlabs_conversation_id, lc.call_id,
+                           l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                    FROM llamadas_conductores lc
+                    LEFT JOIN llamadas l
+                        ON l.conductor_id = lc.id
+                        AND (%s IS NOT NULL AND l.elevenlabs_conversation_id = %s)
+                    WHERE lc.identificador_unico = %s AND lc.deleted_at IS NULL
+                    LIMIT 1
+                    """
+                    result_verify = await repository.db.execute_query(
+                        query_verify,
+                        (conversation_id, conversation_id, identificador_unico)
+                    )
+                    
+                    if not result_verify:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró conductor con identificador_unico: {identificador_unico}"
+                        }, ensure_ascii=False)
+                    
+                    conductor_data = result_verify[0]
+                    nombre_conductor = conductor_data.get('nombre_conductor', 'Conductor')
+                    cotizacion_id = conductor_data.get('cotizacion_id')
+
+                    if conversation_id:
+                        conversation_matches = conversation_id in {
+                            conductor_data.get('elevenlabs_conversation_id'),
+                            conductor_data.get('call_id'),
+                            conductor_data.get('llamada_conversation_id')
+                        }
+
+                        if not conversation_matches:
+                            return json.dumps({
+                                "success": False,
+                                "error": "El conversation_id no pertenece al identificador_unico enviado. No se guardó la decisión para evitar mezclar conductores.",
+                                "identificador_unico": identificador_unico,
+                                "conversation_id": conversation_id,
+                                "conductor_conversation_id": conductor_data.get('elevenlabs_conversation_id'),
+                                "conductor_call_id": conductor_data.get('call_id')
+                            }, ensure_ascii=False)
+                    
+                    # Usar el método que actualiza llamadas_conductores
+                    success = await repository.save_driver_decision_new(
+                        identificador_unico=identificador_unico,
+                        conversation_id=conversation_id,
+                        decision=decision,
+                        notas=notas
+                    )
+                    
+                    if success:
+                        decision_text = decision_state["decision_text"]
+                        estado_llamada = decision_state["estado_llamada"]
+                        
+                        result = {
+                            "success": True,
+                            "message": f"Decisión guardada correctamente: {nombre_conductor} {decision_text} la cotización",
+                            "data": {
+                                "identificador_unico": identificador_unico,
+                                "nombre_conductor": nombre_conductor,
+                                "cotizacion_id": cotizacion_id,
+                                "decision": decision_state["normalized_decision"],
+                                "decision_text": decision_text,
+                                "estado_llamada": estado_llamada,
+                                "conversation_id": conversation_id,
+                                "requires_retry": decision_state["requires_retry"],
+                                "notas": notas
+                            }
+                        }
+                    else:
+                        result = {
+                            "success": False,
+                            "error": "No se pudo guardar la decisión del conductor en la base de datos"
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+                    
+                except Exception as e:
+                    logger.error(f"Error guardando decisión del conductor: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error interno al guardar la decisión: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_contexto_inicial_conductor":
+                telefono = arguments.get("telefono")
+                conversation_id = arguments.get("conversation_id")
+                if not telefono:
+                    return json.dumps({"error": "El parámetro 'telefono' es requerido"}, ensure_ascii=False)
+                
+                try:
+                    # Limpiar teléfono
+                    telefono_limpio = _normalize_phone_for_lookup(telefono)
+                    telefono_tail = telefono_limpio[-10:] if len(telefono_limpio) >= 10 else telefono_limpio
+                    fuente_busqueda = "telefono"
+                    
+                    results = []
+
+                    # PASO 1: si llega conversation_id, usarlo como llave principal.
+                    if conversation_id:
+                        query_by_conversation = """
+                        SELECT 
+                            lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                            lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                            lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                            lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.elevenlabs_conversation_id,
+                            lc.fecha_llamada, lc.respuesta_llamada, lc.notas, lc.mercancia, lc.peso_carga, lc.empaque,
+                            lc.datos_adicionales, lc.created_at, lc.updated_at,
+                            l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                        FROM llamadas_conductores lc
+                        LEFT JOIN llamadas l
+                            ON l.conductor_id = lc.id
+                            AND l.elevenlabs_conversation_id = %s
+                        WHERE (lc.elevenlabs_conversation_id = %s OR lc.call_id = %s OR l.elevenlabs_conversation_id = %s)
+                            AND lc.deleted_at IS NULL
+                        ORDER BY
+                            CASE
+                                WHEN lc.elevenlabs_conversation_id = %s THEN 0
+                                WHEN lc.call_id = %s THEN 1
+                                WHEN l.elevenlabs_conversation_id = %s THEN 2
+                                ELSE 3
+                            END,
+                            COALESCE(l.updated_at, lc.fecha_llamada, lc.updated_at, lc.created_at) DESC
+                        LIMIT 1
+                        """
+                        results = await repository.db.execute_query(
+                            query_by_conversation,
+                            (conversation_id, conversation_id, conversation_id, conversation_id, conversation_id, conversation_id, conversation_id)
+                        )
+                        if results:
+                            fuente_busqueda = "conversation_id"
+
+                    # PASO 2: fallback por teléfono, priorizando llamadas activas/pendientes.
+                    if not results:
+                        query_conductor = """
+                        SELECT 
+                            lc.id, lc.identificador_unico, lc.cotizacion_id, lc.group_cotization_id,
+                            lc.nombre_conductor, lc.telefono, lc.placa, lc.tipo_vehiculo, lc.vehiculo_silogtran,
+                            lc.peso_maximo, lc.ciudad_actual, lc.ciudad_origen, lc.ciudad_destino,
+                            lc.disponible, lc.score, lc.estado_llamada, lc.call_id, lc.elevenlabs_conversation_id,
+                            lc.fecha_llamada, lc.respuesta_llamada, lc.notas, lc.mercancia, lc.peso_carga, lc.empaque,
+                            lc.datos_adicionales, lc.created_at, lc.updated_at,
+                            l.id_llamada, l.numero_destino, l.elevenlabs_conversation_id AS llamada_conversation_id
+                        FROM llamadas_conductores lc
+                        LEFT JOIN llamadas l ON l.conductor_id = lc.id
+                        WHERE (lc.telefono = %s OR lc.telefono = %s
+                            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(lc.telefono, ' ', ''), '-', ''), '+57', ''), '(', ''), ')', '') = %s
+                            OR RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(lc.telefono, ' ', ''), '-', ''), '+57', ''), '(', ''), ')', ''), 10) = %s)
+                            AND lc.deleted_at IS NULL
+                        ORDER BY
+                            CASE
+                                WHEN lc.estado_llamada = 'en_progreso' THEN 0
+                                WHEN lc.estado_llamada = 'pendiente' THEN 1
+                                ELSE 2
+                            END,
+                            COALESCE(l.call_initiated_at, lc.fecha_llamada, lc.updated_at, lc.created_at) DESC,
+                            lc.id DESC
+                        LIMIT 1
+                        """
+                        
+                        results = await repository.db.execute_query(
+                            query_conductor, (telefono, telefono_limpio, telefono_limpio, telefono_tail)
+                        )
+                    
+                    if not results:
+                        return json.dumps({
+                            "success": True,
+                            "modo": "NO_ENCONTRADO",
+                            "telefono_buscado": telefono,
+                            "conversation_id": conversation_id,
+                            "conductor": None,
+                            "cotizacion": None,
+                            "precio": None,
+                            "mensaje": f"No se encontraron conductores con el teléfono {telefono}"
+                        }, ensure_ascii=False)
+                    
+                    row = results[0]
+                    conductor_data = {
+                        "id": row['id'],
+                        "identificador_unico": row['identificador_unico'],
+                        "cotizacion_id": row['cotizacion_id'],
+                        "group_cotization_id": row['group_cotization_id'],
+                        "nombre_conductor": row['nombre_conductor'],
+                        "telefono": row['telefono'],
+                        "placa": row['placa'],
+                        "tipo_vehiculo": row['tipo_vehiculo'],
+                        "ciudad_actual": row['ciudad_actual'],
+                        "ciudad_origen": row['ciudad_origen'],
+                        "ciudad_destino": row['ciudad_destino'],
+                        "elevenlabs_conversation_id": row.get('elevenlabs_conversation_id'),
+                        "call_id": row.get('call_id'),
+                        "llamada_id": row.get('id_llamada'),
+                        "numero_destino": row.get('numero_destino'),
+                        "disponible": bool(row['disponible']) if row['disponible'] is not None else None,
+                        "score": float(row['score']) if row['score'] else 0.0
+                    }
+                    telefono_coincide = _phones_match(row.get('telefono'), telefono) or _phones_match(row.get('numero_destino'), telefono)
+                    conversation_id_coincide = not conversation_id or conversation_id in {
+                        row.get('elevenlabs_conversation_id'),
+                        row.get('call_id'),
+                        row.get('llamada_conversation_id')
+                    }
+                    
+                    cotizacion_id = row['cotizacion_id']
+                    cotizacion_data = None
+                    precio_data = None
+                    modo = "BUSQUEDA_DISPONIBILIDAD"
+                    
+                    # PASO 2: Si tiene cotizacion_id, obtener cotización Y precio en paralelo
+                    if cotizacion_id:
+                        cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                        
+                        if cotizacion:
+                            modo = "OFERTA_CONCRETA"
+
+                            # Parsear fecha_hora_descargue_cargue → fecha_cargue y hora_cargue
+                            _fhdc = cotizacion.fecha_hora_descargue_cargue if hasattr(cotizacion, 'fecha_hora_descargue_cargue') else None
+                            _fecha_cargue = None
+                            _hora_cargue = None
+                            if _fhdc:
+                                try:
+                                    _dt = None
+                                    for _fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
+                                        try:
+                                            _dt = datetime.strptime(str(_fhdc), _fmt)
+                                            break
+                                        except ValueError:
+                                            pass
+                                    if _dt:
+                                        _fecha_cargue = _format_fecha_natural(_dt)
+                                        if not (_dt.hour == 0 and _dt.minute == 0):
+                                            _h = _dt.hour % 12 or 12
+                                            _ampm = 'AM' if _dt.hour < 12 else 'PM'
+                                            _hora_cargue = f"{_h}:{_dt.minute:02d} {_ampm}"
+                                    else:
+                                        _fecha_cargue = str(_fhdc)
+                                except Exception:
+                                    _fecha_cargue = str(_fhdc)
+
+                            cotizacion_data = {
+                                "id": cotizacion.id,
+                                "ciudad_origen": cotizacion.ciudad_origen,
+                                "ciudad_destino": cotizacion.ciudad_destino,
+                                "peso_mercancia": cotizacion.peso_mercancia,
+                                "tipo_mercancia": cotizacion.tipo_mercancia,
+                                "tipo_embajale": cotizacion.tipo_embajale,
+                                "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                                "tipo_carroceria": cotizacion.tipo_carroceria,
+                                "fecha_cargue": _fecha_cargue,
+                                "hora_cargue": _hora_cargue,
+                                "fecha_descargue": None
+                            }
+                            
+                            # PASO 3: Obtener el FLETE como precio del viaje para el conductor
+                            flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                            if flete_valor and float(flete_valor) > 0:
+                                flete_num = float(flete_valor)
+                                precio_data = {
+                                    "valor_flete": flete_num,
+                                    "precio_viaje": flete_num,
+                                    "precio_viaje_formateado": f"${flete_num:,.0f} COP",
+                                    "origen": cotizacion.ciudad_origen,
+                                    "destino": cotizacion.ciudad_destino,
+                                    "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                                    "mensaje_precio": f"${flete_num:,.0f} COP",
+                                    "nota": "Este es el valor del flete que se le paga al conductor por el transporte"
+                                }
+                    
+                    result = {
+                        "success": True,
+                        "modo": modo,
+                        "conversation_id": conversation_id,
+                        "telefono_buscado": telefono,
+                        "telefono_normalizado": telefono_limpio,
+                        "validacion": {
+                            "fuente_busqueda": fuente_busqueda,
+                            "telefono_coincide": telefono_coincide,
+                            "conversation_id_coincide": conversation_id_coincide
+                        },
+                        "conductor": conductor_data,
+                        "cotizacion": cotizacion_data,
+                        "precio": precio_data
+                    }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    logger.error(f"Error en get_contexto_inicial_conductor: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al obtener contexto del conductor: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "precioviaje":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                # Obtenemos la cotización para usar el campo flete como precio del viaje
+                cotizacion = await repository.get_cotizacion_by_id(cotizacion_id)
+                if not cotizacion:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"No se encontró cotización con ID: {cotizacion_id}"
+                    }, ensure_ascii=False)
+                
+                # El valor que se le paga al conductor es el FLETE
+                flete_valor = cotizacion.flete if hasattr(cotizacion, 'flete') and cotizacion.flete else None
+                if not flete_valor or float(flete_valor) == 0:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"La cotización {cotizacion_id} no tiene valor de flete asignado"
+                    }, ensure_ascii=False)
+                
+                flete_num = float(flete_valor)
+                
+                # Preparamos la respuesta con el flete como precio del viaje
+                result = {
+                    "success": True,
+                    "cotizacion_id": cotizacion_id,
+                    "precio_viaje": flete_num,
+                    "precio_viaje_formateado": f"${flete_num:,.0f} COP",
+                    "informacion_viaje": {
+                        "origen": cotizacion.ciudad_origen,
+                        "destino": cotizacion.ciudad_destino,
+                        "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                        "tipo_carroceria": cotizacion.tipo_carroceria,
+                        "peso_mercancia": cotizacion.peso_mercancia
+                    },
+                    "informacion_cotizacion": {
+                        "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                        "tipo_carroceria": cotizacion.tipo_carroceria,
+                        "ciudad_origen": cotizacion.ciudad_origen,
+                        "ciudad_destino": cotizacion.ciudad_destino,
+                        "peso_mercancia": cotizacion.peso_mercancia,
+                        "tipo_mercancia": cotizacion.tipo_mercancia
+                    },
+                    "mensaje_chofer": f"El valor del flete del viaje desde {cotizacion.ciudad_origen} hasta {cotizacion.ciudad_destino} es de ${flete_num:,.0f} pesos colombianos"
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_conductor_by_telefono":
+                telefono = arguments.get("telefono")
+                
+                if not telefono:
+                    return json.dumps({
+                        "error": "El parámetro 'telefono' es requerido"
+                    }, ensure_ascii=False)
+                
+                try:
+                    # Limpiar teléfono
+                    telefono_limpio = telefono.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+                    
+                    query = """
+                    SELECT 
+                        id, identificador_unico, cotizacion_id, group_cotization_id,
+                        nombre_conductor, telefono, placa, tipo_vehiculo, vehiculo_silogtran,
+                        peso_maximo, ciudad_actual, ciudad_origen, ciudad_destino,
+                        disponible, score, estado_llamada, call_id, fecha_llamada,
+                        respuesta_llamada, notas, mercancia, peso_carga, empaque,
+                        datos_adicionales, created_at, updated_at
+                    FROM llamadas_conductores
+                    WHERE (telefono = %s OR REPLACE(REPLACE(REPLACE(telefono, ' ', ''), '-', ''), '+57', '') = %s)
+                        AND deleted_at IS NULL
+                    ORDER BY score DESC, created_at DESC
+                    """
+                    
+                    results = await repository.db.execute_query(query, (telefono, telefono_limpio))
+                    
+                    if not results:
+                        return json.dumps({
+                            "success": True,
+                            "telefono_buscado": telefono,
+                            "total_encontrados": 0,
+                            "conductores": [],
+                            "mensaje": f"No se encontraron conductores con el teléfono {telefono}"
+                        }, ensure_ascii=False)
+                    
+                    conductores = []
+                    for row in results:
+                        conductores.append({
+                            "id": row['id'],
+                            "identificador_unico": row['identificador_unico'],
+                            "cotizacion_id": row['cotizacion_id'],
+                            "group_cotization_id": row['group_cotization_id'],
+                            "nombre_conductor": row['nombre_conductor'],
+                            "telefono": row['telefono'],
+                            "placa": row['placa'],
+                            "tipo_vehiculo": row['tipo_vehiculo'],
+                            "vehiculo_silogtran": row['vehiculo_silogtran'],
+                            "peso_maximo": float(row['peso_maximo']) if row['peso_maximo'] else None,
+                            "ciudad_actual": row['ciudad_actual'],
+                            "ciudad_origen": row['ciudad_origen'],
+                            "ciudad_destino": row['ciudad_destino'],
+                            "disponible": bool(row['disponible']),
+                            "score": float(row['score']) if row['score'] else 0.0,
+                            "estado_llamada": row['estado_llamada'],
+                            "call_id": row['call_id'],
+                            "fecha_llamada": str(row['fecha_llamada']) if row['fecha_llamada'] else None,
+                            "respuesta_llamada": row['respuesta_llamada'],
+                            "notas": row['notas'],
+                            "mercancia": row['mercancia'],
+                            "peso_carga": float(row['peso_carga']) if row['peso_carga'] else None,
+                            "empaque": row['empaque'],
+                            "datos_adicionales": row['datos_adicionales'],
+                            "created_at": str(row['created_at']) if row['created_at'] else None,
+                            "updated_at": str(row['updated_at']) if row['updated_at'] else None
+                        })
+                    
+                    return json.dumps({
+                        "success": True,
+                        "telefono_buscado": telefono,
+                        "total_encontrados": len(conductores),
+                        "conductores": conductores
+                    }, indent=2, ensure_ascii=False)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al buscar conductor por teléfono: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "update_conversation_id_conductor":
+                identificador_unico = arguments.get("identificador_unico")
+                conversation_id = arguments.get("conversation_id")
+                estado_llamada = arguments.get("estado_llamada", "en_progreso")
+                notas = arguments.get("notas")
+                
+                if not identificador_unico or not conversation_id:
+                    return json.dumps({
+                        "error": "Los parámetros 'identificador_unico' y 'conversation_id' son requeridos"
+                    }, ensure_ascii=False)
+                
+                try:
+                    # Construir query UPDATE
+                    updates = [
+                        "call_id = %s",
+                        "elevenlabs_conversation_id = %s",
+                        "estado_llamada = %s",
+                        "fecha_llamada = NOW()",
+                        "updated_at = NOW()"
+                    ]
+                    params = [conversation_id, conversation_id, estado_llamada]
+                    
+                    if notas:
+                        updates.append("notas = %s")
+                        params.append(notas)
+                    
+                    params.append(identificador_unico)
+                    
+                    query = f"""
+                    UPDATE llamadas_conductores
+                    SET {', '.join(updates)}
+                    WHERE identificador_unico = %s
+                        AND deleted_at IS NULL
+                    """
+                    
+                    affected_rows = await repository.db.execute_update(query, tuple(params))
+                    
+                    if affected_rows > 0:
+                        return json.dumps({
+                            "success": True,
+                            "identificador_unico": identificador_unico,
+                            "conversation_id": conversation_id,
+                            "estado_llamada": estado_llamada,
+                            "mensaje": f"Conversation ID actualizado exitosamente para el conductor {identificador_unico}"
+                        }, ensure_ascii=False)
+                    else:
+                        return json.dumps({
+                            "success": False,
+                            "error": f"No se encontró conductor con identificador_unico: {identificador_unico}"
+                        }, ensure_ascii=False)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error al actualizar conversation_id: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "zinformacion":
+                orden_id = arguments.get("orden_id")
+                search = arguments.get("search")
+                show_all = arguments.get("show_all", False)
+                show_stats = arguments.get("show_stats", False)
+                limit = arguments.get("limit", 10)
+                
+                try:
+                    if orden_id:
+                        # Buscar orden específica con información completa
+                        cotizacion = await repository.get_cotizacion_by_id(orden_id)
+                        if not cotizacion:
+                            return json.dumps({
+                                "error": f"No se encontró orden con ID: {orden_id}"
+                            }, ensure_ascii=False)
+                        
+                        # Obtener información del grupo si existe
+                        grupo_info = None
+                        if cotizacion.group_cotizations_id:
+                            try:
+                                grupo = await repository.get_group_cotization_by_id(cotizacion.group_cotizations_id)
+                                if grupo:
+                                    grupo_info = {
+                                        "tipo": grupo.type,
+                                        "referencia": grupo.reference,
+                                        "estado": grupo.status
+                                    }
+                            except:
+                                pass
+                        
+                        result = {
+                            "success": True,
+                            "tipo": "orden_detallada",
+                            "orden_id": orden_id,
+                            "informacion_general": {
+                                "id": cotizacion.id,
+                                "tipo": grupo_info["tipo"] if grupo_info else "No especificado",
+                                "operacion": "No especificado"
+                            },
+                            "informacion_obligatoria_cotizacion": {
+                                "peso_mercancia": cotizacion.peso_mercancia,
+                                "cantidad": cotizacion.cantidad,
+                                "tipo_embalaje": cotizacion.tipo_embajale,
+                                "dimensiones": cotizacion.dimensiones_exactas,
+                                "tipo_producto": cotizacion.tipo_producto,
+                                "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                                "frecuencia": cotizacion.frecuencia,
+                                "esquema_seguridad": cotizacion.esquema_seguridad,
+                                "tipo_carroceria": cotizacion.tipo_carroceria,
+                                "tipo_mercancia": cotizacion.tipo_mercancia
+                            },
+                            "informacion_estatica_mercancia": {
+                                "registro_fotografico": cotizacion.registro_fotografico,
+                                "temperatura_mercancia": cotizacion.temperatura_mercancia,
+                                "humedad": cotizacion.humedad,
+                                "planos": cotizacion.planos
+                            },
+                            "informacion_carga_descarga": {
+                                "fecha_hora_descargue_cargue": cotizacion.fecha_hora_descargue_cargue,
+                                "descargue_cargue": cotizacion.descargue_cargue
+                            },
+                            "grupo_cotizacion": grupo_info if grupo_info else {
+                                "tipo": "No especificado",
+                                "referencia": "No especificada",
+                                "estado": "No especificado"
+                            },
+                            "ruta": {
+                                "origen": cotizacion.ciudad_origen,
+                                "destino": cotizacion.ciudad_destino,
+                                "dane_origen": cotizacion.ciudad_origen_dane,
+                                "dane_destino": cotizacion.ciudad_destino_dane,
+                                "ruta": cotizacion.ruta
+                            },
+                            "informacion_adicional_mercancia": {
+                                "valor_declarado": cotizacion.valor_declarado,
+                                "valor": cotizacion.valor
+                            },
+                            "informacion_adicional_vehiculo": {
+                                "cantidad_vehiculos": cotizacion.cantidad_vh
+                            },
+                            "informacion_logistica_adicional": {
+                                "seguro": cotizacion.seguro,
+                                "ventanas_horarios": cotizacion.ventanas_horarios_recibidos
+                            },
+                            "comercio_exterior": {
+                                "fcl_lcl": cotizacion.fcl_lcl,
+                                "devolucion_contenedor": cotizacion.sitio_devolucion_contenedor,
+                                "regimen_nacionalizado": cotizacion.regimen_nacionalizado,
+                                "agente_aduanas": cotizacion.agente_aduanas,
+                                "consolidado_expreso": cotizacion.consolidado_expreso,
+                                "numero_documento_bl": cotizacion.numero_documento_bl
+                            },
+                            "documentacion": {
+                                "registro_fotografico": cotizacion.registro_fotografico,
+                                "un": cotizacion.un
+                            },
+                            "sistema": {
+                                "estado_silogtran": cotizacion.silogtran_status,
+                                "pricing_id": cotizacion.pricing_id,
+                                "group_cotizations_id": cotizacion.group_cotizations_id
+                            }
+                        }
+                        
+                    elif show_stats:
+                        cotizaciones = await repository.get_cotizaciones(limit=100, offset=0)
+                        total = len(cotizaciones)
+                        result = {
+                            "success": True,
+                            "tipo": "estadisticas",
+                            "total_ordenes": total,
+                            "mensaje": f"Hay {total} órdenes en el sistema"
+                        }
+                        
+                    elif show_all:
+                        cotizaciones = await repository.get_cotizaciones(limit=limit, offset=0)
+                        ordenes = []
+                        for cot in cotizaciones:
+                            ordenes.append({
+                                "id": cot.id,
+                                "origen": cot.ciudad_origen,
+                                "destino": cot.ciudad_destino,
+                                "vehiculo": cot.vehiculo_requerido,
+                                "mercancia": cot.tipo_mercancia
+                            })
+                        result = {
+                            "success": True,
+                            "tipo": "listado_ordenes",
+                            "total_encontradas": len(ordenes),
+                            "limit": limit,
+                            "ordenes": ordenes
+                        }
+                        
+                    elif search:
+                        cotizaciones = await repository.get_cotizaciones(limit=50, offset=0)
+                        search_lower = search.lower()
+                        ordenes_filtradas = []
+                        for cot in cotizaciones:
+                            texto_busqueda = f"{cot.ciudad_origen or ''} {cot.ciudad_destino or ''} {cot.tipo_mercancia or ''} {cot.vehiculo_requerido or ''}".lower()
+                            if search_lower in texto_busqueda:
+                                ordenes_filtradas.append({
+                                    "id": cot.id,
+                                    "origen": cot.ciudad_origen,
+                                    "destino": cot.ciudad_destino,
+                                    "vehiculo": cot.vehiculo_requerido,
+                                    "mercancia": cot.tipo_mercancia
+                                })
+                        result = {
+                            "success": True,
+                            "tipo": "busqueda",
+                            "termino_busqueda": search,
+                            "total_encontradas": len(ordenes_filtradas),
+                            "ordenes": ordenes_filtradas[:limit]
+                        }
+                        
+                    else:
+                        result = {
+                            "success": True,
+                            "tipo": "ayuda",
+                            "mensaje": "Herramienta zinformacion - Consulta información de órdenes",
+                            "ejemplos": [
+                                "zinformacion(orden_id=31) - Ver orden específica",
+                                "zinformacion(search='bogota') - Buscar por ciudad",
+                                "zinformacion(show_all=True) - Ver todas las órdenes",
+                                "zinformacion(show_stats=True) - Ver estadísticas"
+                            ]
+                        }
+                    
+                    return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en zinformacion: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "llenar_formulario":
+                orden_id = arguments.get("orden_id")
+                tipo_formulario = arguments.get("tipo_formulario", "cotizacion")
+                
+                try:
+                    cotizacion = await repository.get_cotizacion_by_id(orden_id)
+                    if not cotizacion:
+                        return json.dumps({
+                            "error": f"No se encontró orden con ID: {orden_id}"
+                        }, ensure_ascii=False)
+                    
+                    formulario_data = {
+                        "success": True,
+                        "orden_id": orden_id,
+                        "tipo_formulario": tipo_formulario,
+                        "campos_formulario": {
+                            "tipo_viaje": self._mapear_tipo_viaje(cotizacion),
+                            "moneda": "COP",
+                            "fuente_solicitud": self._mapear_fuente_solicitud(cotizacion),
+                            "tipo_operacion": self._mapear_tipo_operacion(cotizacion),
+                            "condicion_despacho": self._mapear_condicion_despacho(cotizacion),
+                            "condicion_facturacion": self._mapear_condicion_facturacion(cotizacion),
+                            "ciudad_facturacion": cotizacion.ciudad_destino or "Bogotá",
+                            "vendedor": "CONALCA",
+                            "centro_costo_despacho": self._mapear_centro_costo(cotizacion.ciudad_origen),
+                            "cliente": "Cliente por asignar"
+                        },
+                        "valores_sugeridos": {
+                            "peso_mercancia": cotizacion.peso_mercancia,
+                            "cantidad": cotizacion.cantidad,
+                            "tipo_embalaje": cotizacion.tipo_embajale,
+                            "dimensiones": cotizacion.dimensiones_exactas,
+                            "vehiculo_requerido": cotizacion.vehiculo_requerido,
+                            "tipo_carroceria": cotizacion.tipo_carroceria,
+                            "tipo_mercancia": cotizacion.tipo_mercancia,
+                            "origen": cotizacion.ciudad_origen,
+                            "destino": cotizacion.ciudad_destino,
+                            "ruta": cotizacion.ruta,
+                            "valor_declarado": cotizacion.valor_declarado,
+                            "frecuencia": cotizacion.frecuencia,
+                            "esquema_seguridad": cotizacion.esquema_seguridad
+                        },
+                        "instrucciones_agente": {
+                            "mensaje": "Use estos valores para llenar automáticamente el formulario. Seleccione las opciones más cercanas en los dropdowns.",
+                            "campos_obligatorios": [
+                                "tipo_viaje", "moneda", "fuente_solicitud", "tipo_operacion",
+                                "condicion_despacho", "condicion_facturacion", "ciudad_facturacion",
+                                "vendedor", "centro_costo_despacho", "cliente"
+                            ],
+                            "ejemplo_llenado": f"Para la orden {orden_id}: Ruta {cotizacion.ciudad_origen} -> {cotizacion.ciudad_destino}, Vehículo: {cotizacion.vehiculo_requerido}, Mercancía: {cotizacion.tipo_mercancia}"
+                        }
+                    }
+                    
+                    return json.dumps(formulario_data, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+                    
+                except Exception as e:
+                    return json.dumps({
+                        "success": False,
+                        "error": f"Error en llenar_formulario: {str(e)}"
+                    }, ensure_ascii=False)
+            
+            elif tool_name == "get_group_cotizations":
+                limit = arguments.get("limit", 100)
+                offset = arguments.get("offset", 0)
+                
+                groups = await repository.get_group_cotizations(limit, offset)
+                result = {
+                    "success": True,
+                    "total_encontrados": len(groups),
+                    "groups": [group.model_dump() for group in groups]
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_pricings":
+                limit = arguments.get("limit", 100)
+                offset = arguments.get("offset", 0)
+                
+                pricings = await repository.get_pricings(limit, offset)
+                result = {
+                    "success": True,
+                    "total_encontrados": len(pricings),
+                    "pricings": [pricing.model_dump() for pricing in pricings]
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "search_pricings_by_route":
+                origin = arguments.get("origin")
+                destination = arguments.get("destination")
+                
+                pricings = await repository.search_pricings_by_route(origin, destination)
+                result = {
+                    "success": True,
+                    "search_criteria": {"origin": origin, "destination": destination},
+                    "total_encontrados": len(pricings),
+                    "pricings": [pricing.model_dump() for pricing in pricings]
+                }
+                
+                return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
+            
+            elif tool_name == "get_cotizacion_with_pricing_info":
+                cotizacion_id = arguments.get("cotizacion_id")
+                if not cotizacion_id:
+                    return json.dumps({"error": "cotizacion_id es requerido"}, ensure_ascii=False)
+                
+                info = await repository.get_cotizacion_with_pricing_info(cotizacion_id)
+                result = {
+                    "success": True,
+                    "cotizacion_id": cotizacion_id,
+                    "info": info
+                }
                 
                 return json.dumps(result, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
             
@@ -1333,6 +3420,74 @@ Espero me pueda decir si le interesa realizar este transporte que se debe realiz
         except Exception as e:
             return fecha_str  # En caso de error, devolver fecha original
 
+    def _mapear_tipo_viaje(self, cotizacion):
+        """Mapea información de cotización a tipo de viaje"""
+        if cotizacion.fcl_lcl and cotizacion.fcl_lcl.upper() == "FCL":
+            return "IMPORT/EXPORT"
+        elif cotizacion.ciudad_origen and cotizacion.ciudad_destino:
+            if cotizacion.ciudad_origen.lower() != cotizacion.ciudad_destino.lower():
+                return "INTERCITY"
+        return "LOCAL"
+    
+    def _mapear_fuente_solicitud(self, cotizacion):
+        """Mapea fuente de la solicitud"""
+        if cotizacion.group_cotizations_id:
+            return "COTIZACION_GRUPAL"
+        return "INDIVIDUAL"
+    
+    def _mapear_tipo_operacion(self, cotizacion):
+        """Mapea tipo de operación basado en la mercancía"""
+        tipo_mercancia = (cotizacion.tipo_mercancia or "").lower()
+        if "granel" in tipo_mercancia:
+            return "GRANEL"
+        elif "liquido" in tipo_mercancia:
+            return "LIQUIDOS"
+        elif "contenedor" in tipo_mercancia or cotizacion.fcl_lcl:
+            return "CONTENEDORES"
+        else:
+            return "CARGA_GENERAL"
+    
+    def _mapear_condicion_despacho(self, cotizacion):
+        """Mapea condición de despacho"""
+        if cotizacion.descargue_cargue:
+            if cotizacion.descargue_cargue == "1":
+                return "ENTREGA_INMEDIATA"
+            else:
+                return "PROGRAMADO"
+        return "PROGRAMADO"
+    
+    def _mapear_condicion_facturacion(self, cotizacion):
+        """Mapea condición de facturación"""
+        if cotizacion.valor_declarado:
+            try:
+                valor = float(cotizacion.valor_declarado)
+                if valor > 1000000:
+                    return "CREDITO_30_DIAS"
+                else:
+                    return "CONTADO"
+            except:
+                pass
+        return "CONTADO"
+    
+    def _mapear_centro_costo(self, ciudad_origen):
+        """Mapea centro de costo según ciudad de origen"""
+        if not ciudad_origen:
+            return "BOGOTA"
+        
+        ciudad = ciudad_origen.lower()
+        if "bogota" in ciudad or "bogotá" in ciudad:
+            return "BOGOTA"
+        elif "medellin" in ciudad or "medellín" in ciudad:
+            return "MEDELLIN"
+        elif "cali" in ciudad:
+            return "CALI"
+        elif "barranquilla" in ciudad:
+            return "BARRANQUILLA"
+        elif "cartagena" in ciudad:
+            return "CARTAGENA"
+        else:
+            return "OTROS"
+    
     def _register_tools(self):
         """Registra herramientas MCP para compatibilidad STDIO"""
         pass  # Las herramientas se manejan via JSON-RPC ahora
@@ -1399,6 +3554,15 @@ async def main():
     finally:
         if 'mcp_server' in locals():
             await mcp_server.close()
+
+# Crear instancia de la aplicación para uvicorn
+mcp_server_instance = ConalcaMCPServer(root_path="/mcp")
+app = mcp_server_instance.app
+
+# Evento de inicio para inicializar conexiones
+@app.on_event("startup")
+async def startup_event():
+    await mcp_server_instance.initialize()
 
 if __name__ == "__main__":
     import sys
