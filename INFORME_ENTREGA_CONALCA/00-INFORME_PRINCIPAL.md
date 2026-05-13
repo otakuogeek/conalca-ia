@@ -20,7 +20,7 @@
 7. Jobs (Colas asíncronas)
 8. Componentes Livewire (UI dinámico)
 9. Comandos Artisan (Console)
-10. Frontend (Blade + React + Vite)
+10. Frontend (Blade + React + Vite) — incluye **10.6 Mapa del menú lateral (sidebar)**
 11. Integraciones externas (APIs)
 12. Servidor MCP (Model Context Protocol)
 13. Roles y permisos
@@ -779,6 +779,379 @@ Cálculo de métricas comerciales:
 - `react-speech-recognition` (transcripción local)
 - `dayjs` (fechas)
 - `react-data-table-component` (tablas)
+
+---
+
+### 10.6 Mapa del Menú Lateral (Sidebar del Sistema)
+
+El sidebar principal del sistema agrupa los módulos accesibles según el rol. Es la "puerta de entrada" del usuario a cada funcionalidad.
+
+#### 📊 Estructura del menú lateral
+
+```
+┌─────────────────────────────────┐
+│  DASHBOARD                       │
+│  CLIENTES                        │
+│  DOCUMENTOS                      │
+│  CALENDARIO                      │
+│  BUZÓN (con badge de no leídos) │
+│  ANÁLISIS  ▼                     │
+│    ├─ Rutas de Transporte        │
+│    ├─ Llamadas ElevenLabs        │
+│    └─ Auditoría Llamadas         │
+│  PRICING                         │
+│  GESTIÓN  ▼                      │
+│    ├─ Metas                      │
+│    ├─ Novedades & Alertas        │
+│    ├─ Conductores                │
+│    ├─ Panel de Porcentajes       │
+│    ├─ Tara                       │
+│    ├─ Vehículos                  │
+│    └─ Esquema de Seguridad       │
+│  CONTROL DE USUARIOS             │
+└─────────────────────────────────┘
+```
+
+#### 🧭 Detalle de cada módulo del menú
+
+##### 1️⃣ Dashboard
+- **Ruta:** `GET /dashboard`
+- **Controlador:** `DashboardController@show`
+- **Endpoint datos:** `GET /dashboard/chart-data` → `DashboardController@getChartData`
+- **Vista:** `resources/views/dashboardChart/`
+- **Función:** Panel principal con KPIs comerciales, gráficos de cotizaciones aceptadas, llamadas exitosas, metas en curso. Datos diferentes según rol del usuario.
+- **JS:** `dashboard.js`, `dashboard-chart.js` (con Chart.js + chartjs-chart-geo)
+
+##### 2️⃣ Clientes
+- **Componente principal:** `Livewire\ClientsIndex`
+- **Controlador API:** `ContactController` (clientes y contactos están unificados en este módulo)
+- **Rutas:**
+  - `GET /contacts` → ContactController@index (panel principal)
+  - `POST /contacts`, `POST /contacts/update`
+  - `POST /clients/assign` → asignar usuario comercial a cliente
+  - `GET /clients/{id}/assigned-users` → usuarios asignados al cliente
+  - `DELETE /clients/remove-assignment`
+  - `GET /clients/search-react` → búsqueda async desde React
+  - `GET /clients/by-document` → cliente por NIT
+  - `POST /clients` → crear cliente
+- **Vista:** `resources/views/contacts/show.blade.php` + componentes (`contactsTable`, `clientDetails`, `createContactModal`, `assignModal`)
+- **Modelos:** `Client`, `Contact`, `ContactFile`, `ClientFile`, `ClientUserAssignment`
+- **Funcionalidad:**
+  - Listado con búsqueda y paginación
+  - Detalles del cliente con cotizaciones, contactos, archivos
+  - Asignación de usuarios comerciales (1 cliente puede tener múltiples comerciales)
+  - Creación/edición de contactos
+  - Subida de archivos por categoría
+
+##### 3️⃣ Documentos
+- **Controlador:** `DocumentController`
+- **Rutas:**
+  - `GET /documents` → index
+  - `POST /documents` → store (upload)
+  - `GET /documents/clients/{id}/details` → detalles del cliente
+  - `GET /documents/clients/{id}/files/{category}` → archivos por categoría
+  - `GET /api/client/{clientId}/files` → archivos del cliente (JSON)
+- **Vista:** `resources/views/documents/` + componentes
+- **Modelos:** `Document`, `ClientFile`, `ContactFile`
+- **Categorías:** documentos legales, contratos, RUT, cámara comercio, certificados, etc.
+- **Función:** Repositorio centralizado de documentos por cliente, con clasificación por categoría y descarga directa.
+
+##### 4️⃣ Calendario
+- **Controlador:** `CalendarController`
+- **Componente Livewire:** `CalendarIndex`
+- **Rutas:**
+  - `GET /calendar` → CalendarController@index
+  - `POST /calendar` → crear evento
+  - `PUT /calendar` → actualizar
+  - `DELETE /calendar` → eliminar
+  - `GET /calendar/search` → buscar eventos
+- **Vista:** `resources/views/calendar/show.blade.php` + componentes
+- **Modelos:** `Appointment`, `CalendarEvent`, `Pending` (tareas)
+- **Función:** Gestión de citas, eventos comerciales, tareas y recordatorios. Soporta drag & drop (react-beautiful-dnd) y filtrado por usuario/equipo.
+
+##### 5️⃣ Buzón (con badge de no leídos)
+- **Vista:** `resources/views/mailbox/show.blade.php` + componentes
+- **Componente Livewire:** `EmailIndex`, `EmailStore`
+- **Rutas:**
+  - `GET /mail` → bandeja de entrada
+  - `POST /emails/store` → componer email
+  - `POST /emails/reply` → responder
+- **Controlador:** `EmailController`
+- **Modelo:** `Email` (with sent_emails / received_emails en User)
+- **Función:** Bandeja interna de mensajes/notificaciones del sistema. El badge muestra emails no leídos. Permite reenvío a otros usuarios (con búsqueda integrada `UserSearch`).
+- **Notificaciones externas:** `Mail\StepCompleted` envía email cuando se completa un paso de la solicitud de transporte.
+
+##### 6️⃣ Análisis ▼ (menú desplegable)
+
+###### 6.1 Rutas de Transporte
+- **Ruta:** `GET /analysis`
+- **Controlador:** `AnalysisController@show`
+- **Endpoint datos:** `GET /analysis/data` → `getAnalysisDataApi()`
+- **Métodos auxiliares:** `debugCities()`, `getMapDataEndpoint()`
+- **Vista:** `resources/views/analysis/show.blade.php`
+- **Función:** Análisis visual de rutas con **Leaflet** + `leaflet-routing-machine`. Muestra:
+  - Mapa de Colombia con rutas más usadas
+  - Densidad de cotizaciones por ciudad
+  - Conductores por región
+  - Tendencias temporales
+
+###### 6.2 Llamadas ElevenLabs
+- **Ruta:** `GET /analysis/calls`
+- **Controlador:** `CallAnalyticsController@show`
+- **Métodos:**
+  - `show()` — panel principal
+  - `apiData()` — datos en JSON
+  - `export(Request)` — exportar Excel/CSV
+  - `getTranscript($llamadaId)` — ver transcript de una llamada
+  - `getGroupCalls($groupId)` — llamadas de un grupo
+- **Exports** (Maatwebsite/Excel):
+  - `CallAnalyticsExport` (libro principal con 11 hojas):
+    - `CallAnalyticsResumenSheet` — resumen ejecutivo
+    - `CallAnalyticsConversationsSheet` — conversaciones detalladas
+    - `CallAnalyticsDailySheet` — análisis diario
+    - `CallAnalyticsDriversSheet` — por conductor
+    - `CallAnalyticsTopDriversSheet` — top conductores
+    - `CallAnalyticsGroupSheet` — por grupo
+    - `CallAnalyticsGroupTranscriptsSheet` — transcripts agrupados
+    - `CallAnalyticsRawDataSheet` — datos crudos
+    - `CallAnalyticsRawLlamadasSheet` — llamadas crudas
+    - `CallAnalyticsResponsesSheet` — respuestas
+- **Vista:** `resources/views/analysis/calls.blade.php`
+- **Función:** Analytics avanzados de las llamadas IA: tasa de aceptación, duración promedio, conductores más exitosos, transcripts completos, métricas por grupo de cotización.
+
+###### 6.3 Auditoría Llamadas
+- **Ruta:** `GET /auditoria-llamadas`
+- **Controlador:** `AuditoriaLlamadasController`
+- **Métodos:**
+  - `index()` — vista principal
+  - `apiData(Request)` — datos paginados/filtrados
+  - `batchDetail(Request, $groupId)` — detalle de lote
+  - `getTranscript($conversationId)` — descarga transcript de ElevenLabs
+  - `getAudio($conversationId)` — descarga audio MP3
+  - `queueStatus()` — estado de la cola en vivo
+  - `callTimeline($llamadaId)` — timeline cronológico de eventos
+  - `searchConductor(Request)` — buscar llamadas por conductor
+  - `exportCsv(Request)` — exportar CSV
+- **Vista:** `resources/views/analysis/auditoria-llamadas.blade.php`
+- **Función:** Auditoría operativa en tiempo real. A diferencia del módulo de Analytics (más comercial), este es **operativo**: permite escuchar audios, ver transcripts línea por línea con timestamp, ver eventos de webhook recibidos (ringing, answered, completed), y reconstruir la línea de tiempo de cada llamada.
+
+##### 7️⃣ Pricing
+- **Vista:** `resources/views/pricing/show.blade.php`
+- **Componente Livewire:** `PricingIndex`, `ModalPricing`
+- **Controladores:** `PricingController` (web) y `PricingApiController` (API REST CRUD + bulk)
+- **Rutas:**
+  - `GET /pricing` → panel principal
+  - `POST /api/pricings-solutions` → crear solución de precio
+  - `PUT /api/pricings-solutions/{id}` → actualizar
+  - `GET /api/pricings-solutions/latest-by-route` → último precio por ruta
+  - `POST /api/pricing-suggestions` → sugerencias de vehículo
+  - `GET /api/pricing-rentability-stats` → estadísticas rentabilidad
+  - `GET /api/pricing/vehicle-guide` → guía de capacidades
+  - Bulk: `bulkStore`, `bulkUpdate`, `bulkDestroy`
+- **Modelo:** `Pricing`
+- **Función:** Tarifario maestro de precios por **ruta (origen → destino)** y **tipo de vehículo**. Incluye:
+  - Filtros por origen, destino, vehículo, IVA, contenedor
+  - Importación masiva desde Excel (`PricingImport`, `PricingSMImport`, `PricingUpImport`)
+  - Exportación (`PricingTemplateExport`, `SimplePricingTemplateExport`)
+  - Sugerencias automáticas según peso/destino
+  - Estadísticas de rentabilidad
+- **Importaciones documentadas:** `DOCUMENTACION_BULK_UPDATE_PRICINGS.md`
+
+##### 8️⃣ Gestión ▼ (menú desplegable)
+
+###### 8.1 Metas
+- **Ruta:** `GET /goals` (administración) — `GET /my-goal` (vista personal) — `GET /goal-management`
+- **Controlador:** `GoalController` (web + api)
+- **Métodos:**
+  - `index()` — listar todas las metas
+  - `update($goal)` — actualizar meta
+  - `myGoal()` — meta personal del usuario
+  - `notifications()` — notificaciones del jefe
+  - `markNotificationRead($id)` — marcar leída
+- **Vista:** `resources/views/goals/index.blade.php`
+- **Modelo:** `Goal` (con relación commercial y boss)
+- **Comando:** `EvaluateMonthlyGoals` (cron mensual)
+- **Servicio:** `PerformanceService.calculateAcceptedAmount(User, year, month)`
+- **Notificación:** `GoalStatusNotification` (alerta al jefe cuando hay logro o riesgo)
+- **Función:** Metas comerciales mensuales por ejecutivo. Calcula automáticamente el monto aceptado en el mes, dispara notificaciones al jefe comercial, y muestra progreso visual.
+
+###### 8.2 Novedades & Alertas
+- **Implementación:** Combinación de:
+  - `PendingController` (tareas pendientes asociadas a grupos)
+  - `GoalController@notifications` (notificaciones del jefe)
+  - `quotes-news-alerts` (alertas de nuevas cotizaciones)
+- **Rutas:**
+  - `GET /groups/{group}/pendings` → tareas del grupo
+  - `POST /pendings` → crear pendiente
+  - `PUT /pendings/{id}` → actualizar
+  - `DELETE /pendings/{id}` → eliminar
+  - `GET /boss/notifications` → notificaciones jefe
+  - `POST /boss/notifications/{id}/read` → marcar leída
+  - `GET /quotes-news-alerts` → alertas de cotizaciones nuevas
+  - `POST /account/notifications` → preferencias de notificaciones del usuario
+- **Modelos:** `Pending`, `Notification` (estándar Laravel), `Solicitation`
+- **Función:** Centro unificado de alertas operativas:
+  - Nuevas cotizaciones que requieren atención
+  - Tareas pendientes asignadas
+  - Notificaciones del jefe (alertas de meta, evaluaciones)
+  - Cambios en cotizaciones que afectan al comercial
+
+###### 8.3 Conductores
+- **Ruta:** `GET /conductores`
+- **Controlador:** `ConductorController` (protegido para SUPER ADMIN + SAC)
+- **Vista:** `resources/views/conductores/index.blade.php` + modals
+- **Rutas API:**
+  - `GET /api/conductores` → listar con búsqueda/filtros (nombre, cédula, placa, teléfono)
+  - `POST /api/conductores` → crear
+  - `GET /api/conductores/{id}` → detalle
+  - `PUT /api/conductores/{id}` → actualizar
+  - `DELETE /api/conductores/{id}` → eliminar
+  - `PATCH /api/conductores/{id}/status` → cambiar estado (activo/inactivo)
+  - `GET /api/conductores/stats` → estadísticas
+  - `GET /api/conductores/vehicle-classes` → clases disponibles
+- **Modelos:** `VehicleOwnerHolderDriver`, `BlockedDriver`
+- **Función:** CRUD de conductores con sincronización contra **Arcángel**. Permite bloquear conductores problemáticos, ver historial de llamadas y aceptaciones.
+
+###### 8.4 Panel de Porcentajes
+- **Ruta:** `GET /percentage-settings` (protegido: SUPER ADMIN | JEFE COMERCIAL)
+- **Controlador:** `PercentageSettingController`
+- **Métodos:**
+  - `index()` — listar porcentajes
+  - `update(PercentageSetting)` — actualizar valor
+- **Vista:** `resources/views/percentage-settings/index.blade.php`
+- **Modelo:** `PercentageSetting`
+- **Función:** Configuración de **porcentajes de comisión** y márgenes por tipo de operación. Estos porcentajes los usa el chat IA para sugerir precios al comercial. Cambiar aquí impacta directamente en las cotizaciones nuevas.
+
+###### 8.5 Tara
+- **Ruta:** `GET /tara-settings` (protegido: SUPER ADMIN | JEFE COMERCIAL | SAC)
+- **Controlador:** `TaraSettingController`
+- **Métodos:**
+  - `index()` — listar taras configuradas
+  - `update(TaraSetting)` — actualizar
+- **Vista:** `resources/views/tara-settings/index.blade.php`
+- **Modelo:** `TaraSetting`
+- **Función:** Configuración de **tara (peso del contenedor vacío)** por tipo:
+  - Contenedor 20 pies → 2300 kg (default)
+  - Contenedor 40 pies → 3400 kg (default)
+- Estos valores los usa `MCPAssistantService.getTaraByContenedor()` para calcular peso neto vs peso bruto durante la cotización.
+- **Doc:** múltiples fixes documentados (`FIX_BUG_TARA_*.md`, `PREVENCION_REGRESION.md`).
+
+###### 8.6 Vehículos
+- **Ruta:** `GET /vehiculos`
+- **Controlador:** `VehiculoController`
+- **Vista:** `resources/views/vehiculos/index.blade.php`
+- **Métodos:**
+  - `index()` — panel con tipos y relaciones
+  - `sincronizar()` — sync con Arcángel
+  - `agregarRelacion(Request)` — vincular vehículo Arcángel con Pricing
+  - `eliminarRelacion($id)`
+  - `obtenerRelaciones($id)`
+  - `getCiudades()` — ciudades de Arcángel
+  - `buscarVehiculosCiudad(Request)` — búsqueda directa
+  - `cambiarModoArcangel(Request)` — switch prod/dev
+- **Modelos involucrados:**
+  - `vehiculos_arcangel` (tipos base traídos de Arcángel)
+  - `vehiculos_pricing` (especificaciones de precio/capacidad)
+  - `vehiculos_relaciones` (join table que mapea uno a otro)
+  - `VehicleClass` (clases: SENCILLO, TURBO, TRACTOMULA, etc.)
+  - `Bodywork` (tipos de carrocería)
+- **Función:** Administración de la **tabla de mapeo** entre los vehículos que reporta Arcángel y los pricings internos de CONALCA. Permite normalizar nombres de vehículos (Arcángel puede tener "CAMION 5T" y el pricing local usar "SENCILLO 5T").
+
+###### 8.7 Esquema de Seguridad ⭐ (módulo crítico)
+- **Ruta:** `GET /security-schema` (protegido por rol)
+- **Controlador:** `SecuritySchemaController`
+- **Vista:** `resources/views/security-schema/index.blade.php`
+- **Componentes React:** `resources/js/components/SecuritySchema/`
+- **Modelos:**
+  - `SecuritySchemaProduct` — catálogo de productos con esquemas
+  - `SecuritySchemaMeasure` — medidas (candado satelital, jen-set, escolta, GPS, kit derrames, pictogramas, combustible)
+  - `SecuritySchemaPriceRange` — rangos de precio base
+  - `SecuritySchemaClientAssignment` — asignaciones por cliente
+  - `SecuritySchemaUserMeasure` — overrides por usuario
+  - `SecuritySchemaUserPriceRange` — overrides de rangos por usuario
+- **Rutas:**
+  - `GET /security-schema/` → vista principal
+  - `GET /security-schema/data` → datos JSON
+  - `GET /security-schema/for-pricing` → datos optimizados para el chat IA
+  - `POST /security-schema/user-override` → override de rango (cualquier user auth)
+  - `DELETE /security-schema/user-override/{baseRangeId}`
+  - **Sólo SUPER ADMIN** (operaciones CRUD master):
+    - `GET /security-schema/search-products`
+    - `POST /security-schema/products`
+    - `DELETE /security-schema/products/{id}`
+    - `POST /security-schema/price-ranges`
+    - `PUT /security-schema/price-ranges/{id}`
+    - `DELETE /security-schema/price-ranges/{id}`
+    - `GET /security-schema/search-clients`
+    - `GET /security-schema/assigned-clients`
+    - `POST /security-schema/assign-client`
+    - `DELETE /security-schema/unassign-client/{id}`
+- **Función:** Es el **motor de reglas de seguridad por carga**. Define qué medidas son obligatorias en una cotización según:
+  - El **producto** que se transporta (mercancía peligrosa, valiosa, refrigerada, etc.)
+  - El **rango de precio** del producto (productos de alto valor exigen escolta)
+  - El **cliente** asignado (algunos clientes tienen esquemas customizados)
+  - El **usuario comercial** (overrides personales)
+- Cuando el chat IA está cotizando, consulta este esquema vía `getSchemaForPricing()` para saber si debe activar:
+  - `candado_satelital`, `jen_set`, `combustible`, `kit_derrames`, `pictogramas` (campos en `group_cotizations`)
+- Es uno de los módulos más recientes (migraciones de 2026-04-16 a 2026-04-20).
+
+##### 9️⃣ Control de Usuarios
+- **Ruta:** `GET /panel-control-usuarios`
+- **Vista:** `resources/views/users/panel.blade.php`
+- **Componente React:** `resources/js/components/UserControlPanel/`
+- **Controladores:** `Api\UserController`, `Api\UserColumnController`
+- **Rutas API:**
+  - `GET/POST/PUT/DELETE /users` — CRUD usuarios
+  - `GET /users/assignable-roles` — roles que el usuario actual puede asignar
+  - `GET /users/me` — usuario actual
+  - `GET /users/potential-parents` — supervisores potenciales (jerarquía organizacional)
+  - `GET/POST/PUT/DELETE /users/columns` — columnas personalizadas por usuario
+- **Modelos:** `User`, `UserColumn`, `DataColumn`, `Role` (Spatie)
+- **Función:** Panel administrativo de usuarios:
+  - Alta/baja/edición de comerciales, asistentes, SAC, pricing, admins
+  - Asignación de **rol** (con validación: cada rol sólo puede asignar ciertos roles inferiores)
+  - **Jerarquía organizacional** (`creator_id` en users — supervisor de cada comercial)
+  - Personalización de columnas visibles por usuario en los grids (drag & drop sortable)
+  - Reset de password, activación/desactivación
+- **Permisos:**
+  - SUPER ADMIN puede asignar cualquier rol
+  - JEFE COMERCIAL puede asignar comerciales bajo su línea
+  - Otros roles → solo ven su perfil
+
+#### 🎨 Iconografía (FontAwesome 6 + react-icons)
+El sidebar usa íconos:
+- Clientes → `fa-user`
+- Documentos → `fa-file-alt`
+- Calendario → `fa-calendar`
+- Buzón → `fa-envelope`
+- Análisis → `fa-chart-bar`
+- Pricing → `fa-tags`
+- Gestión → `fa-cog`
+- Control Usuarios → `fa-user-cog`
+
+#### 🔐 Visibilidad por rol (lógica de menú)
+
+| Módulo | SUPER ADMIN | JEFE COMERCIAL | GERENTE CUENTA | ASISTENTE | SAC | PRICING |
+|--------|:-:|:-:|:-:|:-:|:-:|:-:|
+| Dashboard | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Clientes | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Documentos | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Calendario | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Buzón | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Análisis › Rutas Transporte | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Análisis › Llamadas ElevenLabs | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Análisis › Auditoría Llamadas | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Pricing | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Gestión › Metas | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Gestión › Novedades | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Gestión › Conductores | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Gestión › Panel Porcentajes | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Gestión › Tara | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Gestión › Vehículos | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Gestión › Esquema Seguridad | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Control de Usuarios | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+*(la visibilidad se calcula en el layout maestro `resources/views/layout/app.blade.php` con `@role()` directives de Spatie)*
 
 ---
 

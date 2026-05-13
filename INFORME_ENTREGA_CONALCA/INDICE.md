@@ -115,6 +115,31 @@ Prompts del agente de voz IA (Natalia/Andrea).
 - `INSTRUCCIONES_ASISTENTE_IA_CIUDADES.md`
 - `asistente.md`
 
+### [11-Modulos-Detallados/](11-Modulos-Detallados/) — 17 informes individuales ⭐
+**Un README por cada módulo del menú lateral** explicando: para qué es, qué hace, cómo funciona, cómo actúa en el sistema, rutas, controladores, modelos, permisos y mantenimiento.
+
+| # | Módulo | Carpeta |
+|---|--------|---------|
+| 01 | 📊 Dashboard | `01-Dashboard/` |
+| 02 | 👥 Clientes | `02-Clientes/` |
+| 03 | 📄 Documentos | `03-Documentos/` |
+| 04 | 📅 Calendario | `04-Calendario/` |
+| 05 | 📧 Buzón | `05-Buzon/` |
+| 06 | 🗺️ Análisis › Rutas de Transporte | `06-Analisis-Rutas-Transporte/` |
+| 07 | 📞 Análisis › Llamadas ElevenLabs | `07-Analisis-Llamadas-ElevenLabs/` |
+| 08 | 🔍 Análisis › Auditoría Llamadas | `08-Analisis-Auditoria-Llamadas/` |
+| 09 | 💰 Pricing | `09-Pricing/` |
+| 10 | 🎯 Gestión › Metas | `10-Gestion-Metas/` |
+| 11 | 🔔 Gestión › Novedades & Alertas | `11-Gestion-Novedades-Alertas/` |
+| 12 | 🚛 Gestión › Conductores | `12-Gestion-Conductores/` |
+| 13 | % Gestión › Panel de Porcentajes | `13-Gestion-Panel-Porcentajes/` |
+| 14 | 📦 Gestión › Tara | `14-Gestion-Tara/` |
+| 15 | 🚚 Gestión › Vehículos | `15-Gestion-Vehiculos/` |
+| 16 | 🛡️ Gestión › Esquema de Seguridad ⭐ | `16-Gestion-Esquema-Seguridad/` |
+| 17 | 👨‍💼 Control de Usuarios | `17-Control-Usuarios/` |
+
+Ver [`11-Modulos-Detallados/INDICE.md`](11-Modulos-Detallados/INDICE.md) para navegación completa.
+
 ---
 
 ## 🚀 ORDEN RECOMENDADO DE LECTURA
