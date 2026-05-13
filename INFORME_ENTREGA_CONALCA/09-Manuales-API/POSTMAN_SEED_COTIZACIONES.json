@@ -1,0 +1,100 @@
+{
+  "info": {
+    "name": "CONALCA - Seed Cotizaciones con Fecha Cargue",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Colección para probar creación de cotizaciones con fecha_cargue en API"
+  },
+  "item": [
+    {
+      "name": "1. Crear Cotización SIMPLE (Mínimo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": 13,\n  \"client_name\": \"CONALCA SAS\",\n  \"reference\": \"TEST-SIMPLE-{{$timestamp}}\",\n  \"operation_type\": \"DISTRIBUCION\",\n  \"rutas\": [\n    {\n      \"ciudad_origen\": \"BOGOTA\",\n      \"ciudad_destino\": \"MEDELLIN\",\n      \"valor\": 3980000,\n      \"flete\": 3200000,\n      \"fecha_cargue\": \"2026-04-29 14:30\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/test/seed-cotizacion",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "test",
+            "seed-cotizacion"
+          ]
+        },
+        "description": "Cotización básica con solo campos obligatorios y fecha_cargue"
+      }
+    },
+    {
+      "name": "2. Crear Cotización COMPLETA (Recomendado)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": 13,\n  \"client_name\": \"CONALCA SAS\",\n  \"reference\": \"TEST-COMPLETO-{{$timestamp}}\",\n  \"operation_type\": \"DISTRIBUCION\",\n  \"cargo_type\": \"general\",\n  \"rutas\": [\n    {\n      \"ciudad_origen\": \"DUITAMA\",\n      \"ciudad_destino\": \"BOGOTA\",\n      \"valor\": 2576000,\n      \"flete\": 2300000,\n      \"peso_mercancia\": \"30000\",\n      \"cantidad\": \"28\",\n      \"cantidad_vh\": \"1\",\n      \"tipo_carroceria\": \"CONTENEDOR\",\n      \"vehiculo_requerido\": \"TRACTOMULA 3\",\n      \"valor_declarado\": \"1000000\",\n      \"tipo_mercancia\": \"REPUESTOS AUTOMOTRICES\",\n      \"tipo_producto\": \"REPUESTOS\",\n      \"tipo_embajale\": \"CONTENEDOR\",\n      \"seguro\": \"Si\",\n      \"temperatura_mercancia\": \"No aplica\",\n      \"fecha_cargue\": \"2026-04-29 11:00\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/test/seed-cotizacion",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "test",
+            "seed-cotizacion"
+          ]
+        },
+        "description": "Cotización con todos los campos disponibles"
+      }
+    },
+    {
+      "name": "3. Crear 4 Cotizaciones Múltiples (Lote)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"grupos\": [\n    {\n      \"user_id\": 13,\n      \"client_name\": \"CONALCA SAS\",\n      \"reference\": \"LOTE-CARGA-1-{{$timestamp}}\",\n      \"operation_type\": \"DISTRIBUCION\",\n      \"rutas\": [\n        {\n          \"ciudad_origen\": \"BOGOTA\",\n          \"ciudad_destino\": \"MEDELLIN\",\n          \"valor\": 3980000,\n          \"flete\": 3200000,\n          \"peso_mercancia\": \"15000\",\n          \"cantidad\": \"20\",\n          \"cantidad_vh\": \"1\",\n          \"tipo_carroceria\": \"FURGON\",\n          \"vehiculo_requerido\": \"TRACTOCAMION\",\n          \"valor_declarado\": \"150000000\",\n          \"tipo_mercancia\": \"TEXTILES\",\n          \"fecha_cargue\": \"2026-04-29 14:30\"\n        }\n      ]\n    },\n    {\n      \"user_id\": 13,\n      \"client_name\": \"CONALCA SAS\",\n      \"reference\": \"LOTE-CARGA-2-{{$timestamp}}\",\n      \"operation_type\": \"DISTRIBUCION\",\n      \"rutas\": [\n        {\n          \"ciudad_origen\": \"CARTAGENA\",\n          \"ciudad_destino\": \"BOGOTA\",\n          \"valor\": 4500000,\n          \"flete\": 3800000,\n          \"peso_mercancia\": \"25000\",\n          \"cantidad\": \"15\",\n          \"cantidad_vh\": \"1\",\n          \"tipo_carroceria\": \"PLANCHON\",\n          \"vehiculo_requerido\": \"TRACTOMULA 3\",\n          \"valor_declarado\": \"200000000\",\n          \"tipo_mercancia\": \"ELECTRODOMÉSTICOS\",\n          \"fecha_cargue\": \"2026-04-29 09:15\"\n        }\n      ]\n    },\n    {\n      \"user_id\": 13,\n      \"client_name\": \"CONALCA SAS\",\n      \"reference\": \"LOTE-CARGA-3-{{$timestamp}}\",\n      \"operation_type\": \"DISTRIBUCION\",\n      \"rutas\": [\n        {\n          \"ciudad_origen\": \"CALI\",\n          \"ciudad_destino\": \"BUCARAMANGA\",\n          \"valor\": 3200000,\n          \"flete\": 2700000,\n          \"peso_mercancia\": \"18000\",\n          \"cantidad\": \"22\",\n          \"cantidad_vh\": \"1\",\n          \"tipo_carroceria\": \"CONTENEDOR\",\n          \"vehiculo_requerido\": \"TRACTOMULA 3\",\n          \"valor_declarado\": \"120000000\",\n          \"tipo_mercancia\": \"ALIMENTOS\",\n          \"fecha_cargue\": \"2026-04-29 16:45\"\n        }\n      ]\n    },\n    {\n      \"user_id\": 13,\n      \"client_name\": \"CONALCA SAS\",\n      \"reference\": \"LOTE-CARGA-4-{{$timestamp}}\",\n      \"operation_type\": \"DISTRIBUCION\",\n      \"rutas\": [\n        {\n          \"ciudad_origen\": \"BARRANQUILLA\",\n          \"ciudad_destino\": \"SANTA MARTA\",\n          \"valor\": 2800000,\n          \"flete\": 2200000,\n          \"peso_mercancia\": \"12000\",\n          \"cantidad\": \"18\",\n          \"cantidad_vh\": \"1\",\n          \"tipo_carroceria\": \"FURGON\",\n          \"vehiculo_requerido\": \"CAMION DOBLETROQUE\",\n          \"valor_declarado\": \"80000000\",\n          \"tipo_mercancia\": \"ACEITES Y LUBRICANTES\",\n          \"fecha_cargue\": \"2026-04-29 10:00\"\n        }\n      ]\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/test/seed-multiple",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "test",
+            "seed-multiple"
+          ]
+        },
+        "description": "Crear 4 cotizaciones en un solo request"
+      }
+    },\n    {\n      \"name\": \"4. Validar Cotización por ID\",\n      \"request\": {\n        \"method\": \"GET\",\n        \"header\": [],\n        \"url\": {\n          \"raw\": \"http://localhost:8000/api/cotizaciones/2571\",\n          \"protocol\": \"http\",\n          \"host\": [\n            \"localhost\"\n          ],\n          \"port\": \"8000\",\n          \"path\": [\n            \"api\",\n            \"cotizaciones\",\n            \"2571\"\n          ]\n        },\n        \"description\": \"Obtener detalles de una cotización específica. Cambiar 2571 por el ID que desees validar.\"\n      }\n    },\n    {\n      \"name\": \"5. Listar Todas las Cotizaciones de Prueba\",\n      \"request\": {\n        \"method\": \"GET\",\n        \"header\": [],\n        \"url\": {\n          \"raw\": \"http://localhost:8000/api/test/seed-groups\",\n          \"protocol\": \"http\",\n          \"host\": [\n            \"localhost\"\n          ],\n          \"port\": \"8000\",\n          \"path\": [\n            \"api\",\n            \"test\",\n            \"seed-groups\"\n          ]\n        },\n        \"description\": \"Listar todos los grupos de cotización de prueba creados\"\n      }\n    }\n  ]\n}"
