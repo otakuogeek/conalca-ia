@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { fetchCallStatus, startCallingDriversGroup, selectDriver, startElevenLabsCalls, buscarConductores } from '../../services/callService';
+import { fetchCallStatus, startCallingDriversGroup, selectDriver, startElevenLabsCalls, buscarConductores, hangupCall } from '../../services/callService';
 import useInterval from '../../hooks/useInterval';
 import {
   FaPhoneAlt,
+  FaPhoneSlash,
   FaTruckMoving,
   FaUserCheck,
   FaUserTimes,
@@ -23,6 +24,55 @@ const PanelSkeleton = () => (
   </div>
 );
 
+const parseFechaCargue = (value) => {
+  if (!value) return null;
+
+  const rawValue = String(value).trim();
+  if (!rawValue || rawValue.toUpperCase() === 'NULL') return null;
+
+  const normalizedValue = rawValue
+    .replace(/\s+/g, ' ')
+    .replace(/\b([ap])\s*\.?\s*m\.?/gi, (_, period) => `${period.toUpperCase()}M`);
+
+  const isoDateTime = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (isoDateTime) {
+    return new Date(
+      Number(isoDateTime[1]),
+      Number(isoDateTime[2]) - 1,
+      Number(isoDateTime[3]),
+      Number(isoDateTime[4] || 0),
+      Number(isoDateTime[5] || 0),
+      Number(isoDateTime[6] || 0)
+    );
+  }
+
+  const localDateTime = normalizedValue.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?/i);
+  if (localDateTime) {
+    let hour = Number(localDateTime[4] || 0);
+    const period = localDateTime[7]?.toUpperCase();
+
+    if (period === 'PM' && hour < 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+
+    return new Date(
+      Number(localDateTime[3]),
+      Number(localDateTime[2]) - 1,
+      Number(localDateTime[1]),
+      hour,
+      Number(localDateTime[5] || 0),
+      Number(localDateTime[6] || 0)
+    );
+  }
+
+  const parsedDate = new Date(normalizedValue.replace(' ', 'T'));
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const fechaCargueTieneHora = (value) => /\b\d{1,2}:\d{2}(:\d{2})?\b/.test(String(value || ''));
+
+const getApiErrorMessage = (error, fallback) =>
+  error?.response?.data?.message || error?.response?.data?.error || error?.message || fallback;
+
 export default function CallPanel({ cotizacion, onModalClose }) {
   const [data, setData] = useState(null);
   const [loadingBtn, setLoadingBtn] = useState(false);
@@ -34,20 +84,23 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   const [isSearchingDrivers, setIsSearchingDrivers] = useState(false);
   const [previewSearchError, setPreviewSearchError] = useState('');
   const [startingCalls, setStartingCalls] = useState(false);
+  const [hangingUpId, setHangingUpId] = useState(null);
 
   const acceptedDrivers = data?.accepted || [];
   const maybeDrivers = data?.maybe || [];
 
-  // Verifica si la fecha de cargue ya pasó (compara solo año/mes/día)
+  // Verifica si la fecha y hora de cargue ya pasaron.
   const fechaCargueVencida = (() => {
     const raw = cotizacion?.fecha_hora_descargue_cargue || cotizacion?.fecha_cargue;
     if (!raw) return false;
-    const d = new Date(String(raw).replace(' ', 'T'));
-    if (Number.isNaN(d.getTime())) return false;
-    const hoy = new Date();
-    const fechaCargueDia = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    const hoyDia = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
-    return fechaCargueDia.getTime() < hoyDia.getTime();
+    const fechaCargue = parseFechaCargue(raw);
+    if (!fechaCargue) return false;
+
+    const limiteCargue = fechaCargueTieneHora(raw)
+      ? fechaCargue
+      : new Date(fechaCargue.getFullYear(), fechaCargue.getMonth(), fechaCargue.getDate(), 23, 59, 59, 999);
+
+    return limiteCargue.getTime() <= Date.now();
   })();
 
   const load = async () => {
@@ -63,6 +116,24 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   useEffect(() => { load(); }, []);
 
   const handleCall = async () => {
+    if (fechaCargueVencida) {
+      const message = 'La fecha y hora de cargue ya pasaron. No se pueden realizar llamadas.';
+
+      if (window.Swal) {
+        window.Swal.fire({
+          title: 'Cargue vencido',
+          text: message,
+          icon: 'warning',
+          confirmButtonText: 'Entendido',
+          confirmButtonColor: '#f97316'
+        });
+      } else if (window.showNotification) {
+        window.showNotification(message, 'warning');
+      }
+
+      return;
+    }
+
     if (!cotizacion.group_cotization_id) {
       console.error('No se encontró group_cotization_id para esta cotización');
       return;
@@ -98,7 +169,7 @@ export default function CallPanel({ cotizacion, onModalClose }) {
       console.error('Error buscando conductores:', e);
 
       setPreviewSearchError(
-        e?.response?.data?.message || 'Error al buscar conductores. Por favor, intenta de nuevo.'
+        getApiErrorMessage(e, 'Error al buscar conductores. Por favor, intenta de nuevo.')
       );
     } finally {
       setIsSearchingDrivers(false);
@@ -138,12 +209,13 @@ export default function CallPanel({ cotizacion, onModalClose }) {
       await load();
     } catch (e) {
       console.error('Error registrando llamadas:', e);
+      const message = getApiErrorMessage(e, 'Error al registrar las llamadas. Por favor, intenta de nuevo.');
       
       // Mostrar error con SweetAlert si está disponible
       if (window.Swal) {
         window.Swal.fire({
           title: 'Error',
-          text: 'Error al registrar las llamadas. Por favor, intenta de nuevo.',
+          text: message,
           icon: 'error',
           confirmButtonText: 'Aceptar',
           confirmButtonColor: '#f97316'
@@ -151,11 +223,11 @@ export default function CallPanel({ cotizacion, onModalClose }) {
       }
       // Fallback: mostrar notificación si existe la función
       else if (window.showNotification) {
-        window.showNotification('Error al registrar las llamadas', 'error');
+        window.showNotification(message, 'error');
       }
       // Fallback final: alert simple
       else {
-        alert('Error al registrar las llamadas. Por favor, intenta de nuevo.');
+        alert(message);
       }
     } finally {
       setLoadingBtn(false);
@@ -216,17 +288,18 @@ export default function CallPanel({ cotizacion, onModalClose }) {
 
     } catch (e) {
       console.error('Error iniciando llamadas ElevenLabs:', e);
+      const message = getApiErrorMessage(e, 'No se pudieron iniciar las llamadas con ElevenLabs. Las llamadas siguen registradas en el sistema.');
       
       if (window.Swal) {
         window.Swal.fire({
           title: 'Error al Iniciar Llamadas',
-          text: 'No se pudieron iniciar las llamadas con ElevenLabs. Las llamadas siguen registradas en el sistema.',
+          text: message,
           icon: 'warning',
           confirmButtonText: 'Entendido',
           confirmButtonColor: '#f97316'
         });
       } else {
-        alert('Error al iniciar llamadas con ElevenLabs. Las llamadas siguen registradas en el sistema.');
+        alert(message);
       }
     }
   };
@@ -247,6 +320,74 @@ export default function CallPanel({ cotizacion, onModalClose }) {
   const openDriverDetails = (driverId) => {
     const url = `/conductor-details/${driverId}`;
     window.open(url, '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+  };
+
+  const canHangupCall = (call) => {
+    const activeCallStatuses = ['initiated', 'ringing', 'answered'];
+    return ['pending', 'processing'].includes(call.queue_status) || activeCallStatuses.includes(call.call_status);
+  };
+
+  const handleHangupCall = async (call) => {
+    const actionLabel = call.queue_status === 'pending' ? 'cancelar' : 'colgar';
+    let confirmed = true;
+
+    if (window.Swal) {
+      const result = await window.Swal.fire({
+        title: actionLabel === 'colgar' ? '¿Colgar llamada?' : '¿Cancelar llamada?',
+        text: `Se ${actionLabel === 'colgar' ? 'cortará' : 'cancelará'} la llamada de ${call.driver_name || 'este conductor'}.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: actionLabel === 'colgar' ? 'Colgar' : 'Cancelar llamada',
+        cancelButtonText: 'Volver',
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#6b7280',
+      });
+      confirmed = result.isConfirmed;
+    } else {
+      confirmed = window.confirm(`¿Deseas ${actionLabel} esta llamada?`);
+    }
+
+    if (!confirmed) return;
+
+    setHangingUpId(call.id_llamada);
+
+    try {
+      const response = await hangupCall(call.id_llamada);
+      const message = response.data?.message || 'Llamada actualizada correctamente.';
+
+      if (window.Swal) {
+        window.Swal.fire({
+          title: 'Listo',
+          text: message,
+          icon: 'success',
+          confirmButtonText: 'Entendido',
+          confirmButtonColor: '#f97316',
+        });
+      } else if (window.showNotification) {
+        window.showNotification(message, 'success');
+      }
+
+      await load();
+    } catch (e) {
+      console.error('hangupCall error', e);
+      const message = getApiErrorMessage(e, 'No se pudo colgar la llamada.');
+
+      if (window.Swal) {
+        window.Swal.fire({
+          title: 'No se pudo colgar',
+          text: message,
+          icon: 'error',
+          confirmButtonText: 'Aceptar',
+          confirmButtonColor: '#f97316',
+        });
+      } else if (window.showNotification) {
+        window.showNotification(message, 'error');
+      } else {
+        alert(message);
+      }
+    } finally {
+      setHangingUpId(null);
+    }
   };
 
   const executionSummary = data?.call_execution?.summary;
@@ -299,7 +440,7 @@ export default function CallPanel({ cotizacion, onModalClose }) {
         <button
           onClick={handleCall}
           disabled={loadingBtn || startingCalls || fechaCargueVencida}
-          title={fechaCargueVencida ? 'No se puede llamar: la fecha de cargue ya pasó' : undefined}
+          title={fechaCargueVencida ? 'No se puede llamar: la fecha y hora de cargue ya pasaron' : undefined}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
         >
           <FaPhoneAlt className={(loadingBtn || startingCalls) ? 'animate-ping' : ''}/>
@@ -308,14 +449,14 @@ export default function CallPanel({ cotizacion, onModalClose }) {
             : startingCalls
               ? 'Realizando…'
               : fechaCargueVencida
-                ? 'Fecha de cargue vencida'
+                ? 'Cargue vencido'
                 : 'Realizar Llamada'}
         </button>
       </div>
 
       {fechaCargueVencida && (
         <p className="text-xs text-red-600 flex items-center gap-1">
-          <FaExclamationTriangle /> La fecha de cargue ya pasó. No se pueden realizar llamadas.
+          <FaExclamationTriangle /> La fecha y hora de cargue ya pasaron. No se pueden realizar llamadas.
         </p>
       )}
 
@@ -413,8 +554,22 @@ export default function CallPanel({ cotizacion, onModalClose }) {
                       }
                     </div>
                   </div>
-                  <div className={`shrink-0 rounded-full border px-2 py-1 text-xs font-medium ${getQueueStatusClasses(call)}`}>
-                    {getQueueStatusLabel(call)}
+                  <div className="shrink-0 flex items-center gap-2">
+                    <div className={`rounded-full border px-2 py-1 text-xs font-medium ${getQueueStatusClasses(call)}`}>
+                      {getQueueStatusLabel(call)}
+                    </div>
+
+                    {canHangupCall(call) && (
+                      <button
+                        type="button"
+                        onClick={() => handleHangupCall(call)}
+                        disabled={hangingUpId === call.id_llamada}
+                        title={call.queue_status === 'pending' ? 'Cancelar llamada en cola' : 'Colgar llamada activa'}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {hangingUpId === call.id_llamada ? <FaSpinner className="animate-spin" /> : <FaPhoneSlash />}
+                      </button>
+                    )}
                   </div>
                 </div>
               </li>

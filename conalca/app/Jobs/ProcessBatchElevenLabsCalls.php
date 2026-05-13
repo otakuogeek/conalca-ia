@@ -11,7 +11,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use App\Models\Llamada;
-use App\Jobs\ProcessElevenLabsCall;
+use App\Services\CallQueueManager;
 
 class ProcessBatchElevenLabsCalls implements ShouldQueue, ShouldBeUnique
 {
@@ -75,89 +75,19 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue, ShouldBeUnique
         }
 
         try {
-            Log::info('ProcessBatchElevenLabsCalls: Iniciando lote', [
+            Log::info('ProcessBatchElevenLabsCalls: Delegando lote legacy al CallQueueManager', [
                 'cotizacion_id' => $this->cotizacionId,
                 'batch_number' => $this->batchNumber,
                 'max_concurrent' => $this->maxConcurrentCalls
             ]);
 
-            $llamadas = Llamada::where('id_cotizacion', $this->cotizacionId)
-                ->where('queue_status', 'pending')
-                ->where('batch_number', $this->batchNumber)
-                ->limit($this->maxConcurrentCalls)
-                ->get();
+            $result = CallQueueManager::dispatchNextCalls($this->cotizacionId);
 
-            if ($llamadas->isEmpty()) {
-                Log::info('ProcessBatchElevenLabsCalls: No hay llamadas pendientes para este lote', [
-                    'cotizacion_id' => $this->cotizacionId,
-                    'batch_number' => $this->batchNumber
-                ]);
-                return;
-            }
-
-            // Marcar como processing de forma atómica (solo las que aún estén pending)
-            $llamadaIds = $llamadas->pluck('id_llamada')->toArray();
-            $updated = Llamada::whereIn('id_llamada', $llamadaIds)
-                ->where('queue_status', 'pending')
-                ->update(['queue_status' => 'processing', 'processing_started_at' => now()]);
-
-            if ($updated === 0) {
-                Log::warning('ProcessBatchElevenLabsCalls: Llamadas ya tomadas por otro proceso', [
-                    'cotizacion_id' => $this->cotizacionId,
-                    'batch_number' => $this->batchNumber
-                ]);
-                return;
-            }
-
-            Log::info('ProcessBatchElevenLabsCalls: Llamadas marcadas processing', [
+            Log::info('ProcessBatchElevenLabsCalls: Resultado de despacho centralizado', [
                 'cotizacion_id' => $this->cotizacionId,
                 'batch_number' => $this->batchNumber,
-                'updated' => $updated
+                'result' => $result,
             ]);
-
-            // Verificar si ya hay 7 confirmados
-            $confirmados = \App\Models\LlamadaConductor::where('cotizacion_id', $this->cotizacionId)
-                ->whereHas('driverCallResponse', function($q) {
-                    $q->where('response_status', 'accepted');
-                })
-                ->count();
-            
-            if ($confirmados >= 7) {
-                Log::info('ProcessBatchElevenLabsCalls: 7 confirmados - DETENIENDO', [
-                    'cotizacion_id' => $this->cotizacionId,
-                    'confirmados' => $confirmados
-                ]);
-                
-                Llamada::where('id_cotizacion', $this->cotizacionId)
-                    ->whereIn('queue_status', ['pending', 'processing'])
-                    ->update([
-                        'queue_status' => 'cancelled',
-                        'call_notes' => 'Cancelada: ya se alcanzaron 7 confirmados',
-                        'processing_completed_at' => now()
-                    ]);
-                
-                return;
-            }
-            
-            // Despachar llamadas individuales con delay escalonado
-            foreach ($llamadas as $index => $llamada) {
-                $delay = $index * 60;
-                
-                ProcessElevenLabsCall::dispatch(
-                    $llamada->conductor_id ?? $llamada->chofer_id, 
-                    $this->cotizacionId, 
-                    $llamada->id_llamada
-                )->delay(now()->addSeconds($delay));
-
-                Log::info('ProcessBatchElevenLabsCalls: Llamada programada', [
-                    'llamada_id' => $llamada->id_llamada,
-                    'batch' => $this->batchNumber,
-                    'delay_s' => $delay
-                ]);
-            }
-
-            // Verificar siguiente lote
-            $this->dispatchNextBatchIfExists();
 
         } catch (\Exception $e) {
             Log::error('ProcessBatchElevenLabsCalls: Error en lote', [
@@ -166,9 +96,6 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue, ShouldBeUnique
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-
-            // Aún con error, intentar despachar siguiente lote para no romper la cadena
-            $this->dispatchNextBatchIfExists();
         } finally {
             if ($lock) {
                 try {
@@ -197,8 +124,7 @@ class ProcessBatchElevenLabsCalls implements ShouldQueue, ShouldBeUnique
                 'processing_completed_at' => now()
             ]);
 
-        // Aún con fallo, despachar siguiente lote para no romper la cadena
-        $this->dispatchNextBatchIfExists();
+        CallQueueManager::dispatchNextCalls($this->cotizacionId);
     }
 
     /**

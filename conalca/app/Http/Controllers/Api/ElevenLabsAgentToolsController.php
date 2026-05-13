@@ -45,14 +45,35 @@ class ElevenLabsAgentToolsController extends Controller
                 'conversation_id' => $conversationId,
             ]);
 
+            // Estrategia estricta para evitar cotizaciones cruzadas (problema
+            // detectado con números de prueba reusados, ej. caso 1969 / SOO360):
+            //
+            // 1) Si llega conversation_id intentar SIEMPRE resolver primero
+            //    por ese id (LlamadaConductor + Llamada::elevenlabs_conversation_id).
+            // 2) Solo si NO llega conversation_id se permite fallback por teléfono,
+            //    y en ese caso se exige que el conductor tenga estado en progreso
+            //    o pendiente reciente para no agarrar una cotización vieja.
             $conductor = $conversationId ? $this->findConductorByConversationId($conversationId) : null;
-            $fuenteBusqueda = $conductor ? 'conversation_id' : 'telefono';
+            $fuenteBusqueda = $conductor ? 'conversation_id' : null;
 
             if (!$conductor) {
+                if ($conversationId) {
+                    Log::warning('ElevenLabs Tool: conversation_id no resolvió conductor; se intenta fallback estricto por teléfono', [
+                        'conversation_id' => $conversationId,
+                        'telefono' => $telefonoLimpio,
+                    ]);
+                }
+
                 $conductor = $this->findLatestConductorByPhone($telefonoLimpio);
+                $fuenteBusqueda = $conductor ? 'telefono_fallback' : null;
             }
 
             if (!$conductor) {
+                Log::warning('ElevenLabs Tool: NO_ENCONTRADO definitivo', [
+                    'telefono' => $telefonoLimpio,
+                    'conversation_id' => $conversationId,
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'modo' => 'NO_ENCONTRADO',
@@ -569,13 +590,47 @@ class ElevenLabsAgentToolsController extends Controller
         return $telefonoLimpio;
     }
 
+    /**
+     * Devuelve las variantes de un teléfono limpio que pueden coexistir en
+     * la base de datos (con/sin prefijo país, con/sin '+'). Se usa para
+     * matchear teléfonos exactos en vez de un LIKE laxo que mete falsos
+     * positivos.
+     */
+    private function phoneVariants(string $telefonoLimpio): array
+    {
+        $variantes = array_unique(array_filter([
+            $telefonoLimpio,
+            '57' . $telefonoLimpio,
+            '+57' . $telefonoLimpio,
+            substr($telefonoLimpio, -10),
+        ]));
+
+        return array_values($variantes);
+    }
+
     private function findLatestConductorByPhone(string $telefonoLimpio): ?LlamadaConductor
     {
-        $query = LlamadaConductor::where('telefono', 'LIKE', '%' . $telefonoLimpio . '%')
-            ->orderByRaw("CASE WHEN estado_llamada IN ('en_progreso', 'pendiente') THEN 0 ELSE 1 END")
-            ->orderBy('created_at', 'desc');
+        $variantes = $this->phoneVariants($telefonoLimpio);
 
-        return $query->first();
+        // Primero: conductor con llamada en progreso o pendiente reciente
+        // (creada en la última hora). Esto evita que un teléfono de prueba
+        // reusado agarre una cotización vieja de otro grupo.
+        $conductor = LlamadaConductor::whereIn('telefono', $variantes)
+            ->whereIn('estado_llamada', ['en_progreso', 'pendiente'])
+            ->where('created_at', '>=', now()->subHour())
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        if ($conductor) {
+            return $conductor;
+        }
+
+        // Segundo: el más reciente con match exacto a alguna variante,
+        // priorizando estados activos.
+        return LlamadaConductor::whereIn('telefono', $variantes)
+            ->orderByRaw("CASE WHEN estado_llamada IN ('en_progreso', 'pendiente') THEN 0 ELSE 1 END")
+            ->orderBy('created_at', 'desc')
+            ->first();
     }
 
     private function findConductorByConversationId(?string $conversationId): ?LlamadaConductor

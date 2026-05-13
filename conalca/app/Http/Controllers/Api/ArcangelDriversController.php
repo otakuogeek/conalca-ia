@@ -7,6 +7,7 @@ use App\Models\CotizacionModel;
 use App\Models\LlamadaConductor;
 use App\Models\GroupCotization;
 use App\Services\ArcangelService;
+use App\Services\CotizacionCallWindowService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -55,6 +56,25 @@ class ArcangelDriversController extends Controller
             
             // Obtener cotización
             $cotizacion = CotizacionModel::findOrFail($cotizacionId);
+
+            $callRestriction = app(CotizacionCallWindowService::class)->getCallRestriction($cotizacion);
+            if ($callRestriction) {
+                Log::warning('Búsqueda de conductores bloqueada por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $callRestriction['message'],
+                    'code' => $callRestriction['code'],
+                    'cotizacion_id' => $cotizacionId,
+                    'loading_at' => $callRestriction['loading_at'],
+                    'loading_at_label' => $callRestriction['loading_at_label'],
+                    'checked_at' => $callRestriction['checked_at'],
+                    'checked_at_label' => $callRestriction['checked_at_label'],
+                ], 422);
+            }
             
             if (!$cotizacion->ciudad_origen) {
                 return response()->json([

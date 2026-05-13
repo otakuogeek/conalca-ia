@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Llamada;
 use App\Models\LlamadaConductor;
+use App\Models\CotizacionModel;
 use App\Jobs\ProcessElevenLabsCall;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\DB;
 
 class CallQueueManager
 {
+    private static array $callRestrictionCache = [];
+
     /**
      * Máximo de llamadas simultáneas permitidas.
      * - Zadarma SIP trunk: 2 líneas (si se excede, Zadarma rechaza llamadas)
@@ -149,6 +152,10 @@ class CallQueueManager
         $availableSlots = max(0, $maxConcurrent - $activeCalls);
         $dispatched = [];
 
+        if ($cotizacionId && self::cancelExpiredPendingCalls($cotizacionId)) {
+            $cotizacionId = null;
+        }
+
         if ($availableSlots <= 0) {
             Log::info('CallQueueManager: No hay slots disponibles', [
                 'active_calls' => $activeCalls,
@@ -198,8 +205,8 @@ class CallQueueManager
             $query->where('id_cotizacion', $cotizacionId);
         }
 
-        // Tomar más candidatos de los slots para compensar los que se salten (ya contactados)
-        $candidates = $query->limit($availableSlots + 5)->get();
+        // Tomar candidatos extra para compensar los que se cancelen por reglas de negocio.
+        $candidates = $query->limit($availableSlots + 20)->get();
 
         if ($candidates->isEmpty() && $cotizacionId) {
             // Si no hay pendientes para esta cotización, buscar de cualquier cotización
@@ -208,7 +215,7 @@ class CallQueueManager
                 ->orderBy('batch_number', 'asc')
                 ->orderBy('batch_position', 'asc')
                 ->orderBy('id_llamada', 'asc')
-                ->limit($availableSlots + 5)
+                ->limit($availableSlots + 20)
                 ->get();
         }
 
@@ -223,6 +230,10 @@ class CallQueueManager
                 break;
             }
 
+            if (self::cancelExpiredCall($llamada)) {
+                continue;
+            }
+
             // Verificar que el conductor no haya sido contactado ya
             if ($llamada->conductor_id) {
                 $conductor = LlamadaConductor::find($llamada->conductor_id);
@@ -232,8 +243,11 @@ class CallQueueManager
                         'conductor_id' => $conductor->id,
                     ]);
                     $llamada->update([
+                        'status' => Llamada::STATUS_FINALIZADA,
+                        'call_status' => Llamada::CALL_STATUS_CANCELLED,
                         'queue_status' => 'cancelled',
                         'call_notes' => 'Cancelada: conductor ya contactado',
+                        'failure_reason' => 'Conductor ya contactado',
                         'processing_completed_at' => now(),
                     ]);
                     continue;
@@ -254,7 +268,7 @@ class CallQueueManager
             }
 
             // Despachar el job con delay según proveedor (Twilio: 1s entre cada llamada)
-            $dispatchDelay = self::getDispatchDelay() * (count($dispatched) - 1);
+            $dispatchDelay = self::getDispatchDelay() * count($dispatched);
             if ($dispatchDelay > 0) {
                 ProcessElevenLabsCall::dispatch(
                     $llamada->conductor_id ?? $llamada->chofer_id,
@@ -292,6 +306,79 @@ class CallQueueManager
         ]);
 
         return ['dispatched' => count($dispatched), 'calls' => $dispatched];
+    }
+
+    private static function cancelExpiredPendingCalls(int $cotizacionId): bool
+    {
+        $restriction = self::getCallRestrictionForCotizacion($cotizacionId);
+
+        if (! $restriction) {
+            return false;
+        }
+
+        $cancelled = Llamada::where('id_cotizacion', $cotizacionId)
+            ->where('queue_status', 'pending')
+            ->update([
+                'status' => Llamada::STATUS_FINALIZADA,
+                'call_status' => Llamada::CALL_STATUS_CANCELLED,
+                'queue_status' => 'cancelled',
+                'failure_reason' => $restriction['message'],
+                'call_notes' => $restriction['message'] . ' Cargue: ' . $restriction['loading_at_label'],
+                'processing_completed_at' => now(),
+            ]);
+
+        Log::warning('CallQueueManager: llamadas pendientes canceladas por fecha/hora de cargue vencida', [
+            'cotizacion_id' => $cotizacionId,
+            'cancelled' => $cancelled,
+            'restriction' => $restriction,
+        ]);
+
+        return true;
+    }
+
+    private static function cancelExpiredCall(Llamada $llamada): bool
+    {
+        $restriction = self::getCallRestrictionForCotizacion((int) $llamada->id_cotizacion);
+
+        if (! $restriction) {
+            return false;
+        }
+
+        $llamada->update([
+            'status' => Llamada::STATUS_FINALIZADA,
+            'call_status' => Llamada::CALL_STATUS_CANCELLED,
+            'queue_status' => 'cancelled',
+            'failure_reason' => $restriction['message'],
+            'call_notes' => $restriction['message'] . ' Cargue: ' . $restriction['loading_at_label'],
+            'processing_completed_at' => now(),
+        ]);
+
+        Log::warning('CallQueueManager: llamada cancelada por fecha/hora de cargue vencida', [
+            'llamada_id' => $llamada->id_llamada,
+            'cotizacion_id' => $llamada->id_cotizacion,
+            'restriction' => $restriction,
+        ]);
+
+        return true;
+    }
+
+    private static function getCallRestrictionForCotizacion(int $cotizacionId): ?array
+    {
+        if (array_key_exists($cotizacionId, self::$callRestrictionCache)) {
+            return self::$callRestrictionCache[$cotizacionId];
+        }
+
+        $cotizacion = CotizacionModel::find($cotizacionId);
+
+        if (! $cotizacion) {
+            self::$callRestrictionCache[$cotizacionId] = null;
+            return null;
+        }
+
+        self::$callRestrictionCache[$cotizacionId] = app(\App\Services\CotizacionCallWindowService::class)
+            ->getCallRestriction($cotizacion);
+
+        return self::$callRestrictionCache[$cotizacionId];
     }
 
     /**
@@ -540,7 +627,12 @@ class CallQueueManager
             ->where('processing_started_at', '<', $cutoff)
             ->get();
 
-        $stuckCalls = $stuckActive->merge($stuckNotStarted);
+        $stuckWithoutStartedAt = Llamada::where('queue_status', 'processing')
+            ->whereNull('processing_started_at')
+            ->where('updated_at', '<', $cutoff)
+            ->get();
+
+        $stuckCalls = $stuckActive->merge($stuckNotStarted)->merge($stuckWithoutStartedAt)->unique('id_llamada');
 
         foreach ($stuckCalls as $llamada) {
             Log::warning('CallQueueManager: Llamada stuck detectada, liberando slot', [
@@ -548,7 +640,9 @@ class CallQueueManager
                 'started_at' => $llamada->processing_started_at,
                 'status' => $llamada->status,
                 'call_status' => $llamada->call_status,
-                'elapsed_seconds' => now()->diffInSeconds($llamada->processing_started_at),
+                'elapsed_seconds' => $llamada->processing_started_at
+                    ? now()->diffInSeconds($llamada->processing_started_at)
+                    : now()->diffInSeconds($llamada->updated_at),
             ]);
 
             $llamada->update([

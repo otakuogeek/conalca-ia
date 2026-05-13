@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\PercentageSettingController;
 use App\Http\Controllers\TaraSettingController;
+use App\Http\Controllers\SystemMetricsController;
 use App\Http\Controllers\Api\GoalController;
 use App\Http\Controllers\Api\CotizationNoteController;
 use App\Http\Controllers\Api\SacCotizationController;
@@ -347,6 +348,7 @@ Route::group(['middleware' => 'auth'], function () {
 
     Route::get('/dashboard', [App\Http\Controllers\DashboardController::class, 'show'])->name('dashboard.show');
     Route::get('/dashboard/chart-data', [App\Http\Controllers\DashboardController::class, 'getChartData'])->name('dashboard.chart-data');
+    Route::get('/server/metrics', [SystemMetricsController::class, 'show'])->name('server.metrics');
 
     // Start AI Calls
 

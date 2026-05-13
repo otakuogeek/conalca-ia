@@ -10,6 +10,7 @@ use App\Services\ConversationalAgentService;
 use App\Services\ElevenLabsService;
 use App\Services\CallQueueService;
 use App\Services\ArcangelService;
+use App\Services\CotizacionCallWindowService;
 use App\Models\DriverCallResponse;
 use App\Models\CotizacionModel;
 use App\Models\ConversationSession;
@@ -922,6 +923,15 @@ class ConversationalAgentController extends Controller
                 Log::error('ERROR: Cotización no encontrada', ['cotizacion_id' => $cotizacionId]);
                 return response()->json(['error' => 'Cotización no encontrada'], 404);
             }
+
+            if ($callRestriction = $this->getCotizacionCallRestriction($cotizacion)) {
+                Log::warning('Llamada conversacional bloqueada por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                ]);
+
+                return response()->json($this->buildCallRestrictionResponse($cotizacion, $callRestriction), 422);
+            }
             
             Log::info('Cotización encontrada', [
                 'id' => $cotizacion->id,
@@ -1470,6 +1480,11 @@ class ConversationalAgentController extends Controller
 
             // Protección contra doble clic: lock de cache
             $lockId = $groupCotizationId ?? $singleCotizationId;
+
+            if (!$lockId) {
+                return response()->json(['error' => 'ID de grupo de cotización o ID de cotización individual requerido'], 400);
+            }
+
             $lockKey = "register_calls_lock_{$lockId}";
             if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
                 Log::warning('Doble registro detectado - llamadas ya fueron registradas', [
@@ -1504,6 +1519,8 @@ class ConversationalAgentController extends Controller
                 $cotizacion = CotizacionModel::find($singleCotizationId);
                 
                 if (!$cotizacion) {
+                    \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                     return response()->json([
                         'error' => 'Cotización no encontrada: ' . $singleCotizationId,
                         'cotizacion_model_id' => $singleCotizationId
@@ -1523,13 +1540,13 @@ class ConversationalAgentController extends Controller
                     ->get();
                 
                 if ($cotizaciones->isEmpty()) {
+                    \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                     return response()->json([
                         'error' => 'No se encontraron cotizaciones para el grupo: ' . $groupCotizationId,
                         'group_cotization_id' => $groupCotizationId
                     ], 404);
                 }
-            } else {
-                return response()->json(['error' => 'ID de grupo de cotización o ID de cotización individual requerido'], 400);
             }
 
             Log::info('Cotizaciones encontradas', [
@@ -1538,8 +1555,42 @@ class ConversationalAgentController extends Controller
                 'source' => $singleCotizationId ? 'individual' : 'grupo'
             ]);
 
+            $blockedCotizaciones = [];
+            $allowedCotizaciones = collect();
+
+            foreach ($cotizaciones as $cotizacion) {
+                $callRestriction = $this->getCotizacionCallRestriction($cotizacion);
+
+                if ($callRestriction) {
+                    $blockedCotizaciones[] = $this->buildCallRestrictionResponse($cotizacion, $callRestriction);
+                    continue;
+                }
+
+                $allowedCotizaciones->push($cotizacion);
+            }
+
+            if ($allowedCotizaciones->isEmpty()) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
+                Log::warning('Registro de llamadas bloqueado: todas las cotizaciones tienen cargue vencido', [
+                    'group_cotization_id' => $groupCotizationId,
+                    'cotizacion_model_id' => $singleCotizationId,
+                    'blocked_cotizaciones' => $blockedCotizaciones,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pueden realizar llamadas porque la fecha y hora de cargue ya pasaron.',
+                    'code' => 'loading_datetime_expired',
+                    'blocked_cotizaciones' => $blockedCotizaciones,
+                    'calls_scheduled' => 0,
+                ], 422);
+            }
+
+            $cotizaciones = $allowedCotizaciones;
+
             $callsScheduled = 0;
-            $errors = [];
+            $errors = $blockedCotizaciones;
             
             // Procesar cada cotización de forma asíncrona
             foreach ($cotizaciones as $cotizacion) {
@@ -1777,6 +1828,10 @@ class ConversationalAgentController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            if (isset($lockKey)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+            }
+
             Log::error("Error iniciando llamadas asíncronas para grupo: " . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
@@ -2400,13 +2455,33 @@ class ConversationalAgentController extends Controller
             // Verificar que la cotización existe
             $cotizacion = CotizacionModel::find($cotizacionId);
             if (!$cotizacion) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                 return response()->json([
                     'error' => 'Cotización no encontrada'
                 ], 404);
             }
 
+            if ($callRestriction = $this->getCotizacionCallRestriction($cotizacion)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+                $cancelledCalls = $this->cancelPendingCallsForExpiredLoad($cotizacion, $callRestriction);
+
+                Log::warning('Inicio de llamadas ElevenLabs bloqueado por fecha/hora de cargue vencida', [
+                    'cotizacion_id' => $cotizacionId,
+                    'restriction' => $callRestriction,
+                    'cancelled_calls' => $cancelledCalls,
+                ]);
+
+                $response = $this->buildCallRestrictionResponse($cotizacion, $callRestriction);
+                $response['cancelled_calls'] = $cancelledCalls;
+
+                return response()->json($response, 422);
+            }
+
             // Verificar que la cotización no esté rechazada
             if ($cotizacion->decision_cliente === 'rechazada') {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+
                 return response()->json([
                     'error' => 'No se pueden iniciar llamadas para cotizaciones rechazadas',
                     'decision_cliente' => $cotizacion->decision_cliente
@@ -2539,6 +2614,10 @@ class ConversationalAgentController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            if (isset($lockKey)) {
+                \Illuminate\Support\Facades\Cache::forget($lockKey);
+            }
+
             Log::error("Error iniciando llamadas ElevenLabs: " . $e->getMessage(), [
                 'cotizacion_id' => $cotizacionId,
                 'trace' => $e->getTraceAsString()
@@ -2602,6 +2681,41 @@ class ConversationalAgentController extends Controller
             // Otros casos: asumir que es internacional y agregar +
             return '+' . $cleanPhone;
         }
+    }
+
+    private function getCotizacionCallRestriction(CotizacionModel $cotizacion): ?array
+    {
+        return app(CotizacionCallWindowService::class)->getCallRestriction($cotizacion);
+    }
+
+    private function buildCallRestrictionResponse(CotizacionModel $cotizacion, array $restriction): array
+    {
+        return [
+            'success' => false,
+            'error' => $restriction['message'],
+            'message' => $restriction['message'],
+            'code' => $restriction['code'],
+            'cotizacion_id' => $cotizacion->id,
+            'group_cotization_id' => $cotizacion->group_cotization_id,
+            'loading_at' => $restriction['loading_at'],
+            'loading_at_label' => $restriction['loading_at_label'],
+            'checked_at' => $restriction['checked_at'],
+            'checked_at_label' => $restriction['checked_at_label'],
+        ];
+    }
+
+    private function cancelPendingCallsForExpiredLoad(CotizacionModel $cotizacion, array $restriction): int
+    {
+        return Llamada::where('id_cotizacion', $cotizacion->id)
+            ->where('queue_status', 'pending')
+            ->update([
+                'status' => Llamada::STATUS_FINALIZADA,
+                'call_status' => Llamada::CALL_STATUS_CANCELLED,
+                'queue_status' => 'cancelled',
+                'failure_reason' => $restriction['message'],
+                'call_notes' => $restriction['message'] . ' Cargue: ' . $restriction['loading_at_label'],
+                'processing_completed_at' => now(),
+            ]);
     }
 
     /**

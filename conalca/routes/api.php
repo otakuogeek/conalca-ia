@@ -13,6 +13,7 @@ use App\Imports\DataColumnImport;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Controllers\DataColumnController;
 use App\Http\Controllers\Api\CallStatusController;
+use App\Http\Controllers\Api\CallHangupController;
 use App\Http\Controllers\Api\ElevenLabsController;
 
 use App\Http\Controllers\Api\AuthController;
@@ -252,6 +253,8 @@ Route::middleware(['auth:sanctum,web'])->group(function () {
         ->name('api.llamadas.get');
     Route::post('/llamadas/update-status', [App\Http\Controllers\ConversationalAgentController::class, 'updateLlamadaStatus'])
         ->name('api.llamadas.update-status');
+    Route::post('/llamadas/{llamada}/hangup', CallHangupController::class)
+        ->name('api.llamadas.hangup');
 });
 
 // Endpoint para iniciar llamadas reales con ElevenLabs (fuera de middleware auth para compatibilidad con frontend)

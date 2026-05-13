@@ -713,6 +713,50 @@
                         @endif
                     </nav>
 
+                    <div id="serverMetricsWidget"
+                        x-show="!sidebarCollapsed"
+                        x-transition
+                        data-metrics-url="{{ route('server.metrics') }}"
+                        class="mx-3 mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+                        aria-label="Uso actual del servidor">
+                        <div class="mb-2 flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <p class="text-[11px] font-bold uppercase leading-none text-[#2E2C34]">Servidor</p>
+                                <p id="serverMetricsUpdated" class="mt-1 truncate text-[10px] leading-none text-[#898989]">Cargando</p>
+                            </div>
+                            <div class="flex items-center gap-1 rounded-full bg-[#FBEBE2] px-2 py-1 text-[10px] font-bold text-[#FF7C32]">
+                                <span id="serverMetricsDot" class="h-1.5 w-1.5 rounded-full bg-[#FF7C32]"></span>
+                                <span id="serverMetricsStatus">En vivo</span>
+                            </div>
+                        </div>
+
+                        <div class="h-20 w-full">
+                            <canvas id="serverMetricsChart" height="80"></canvas>
+                        </div>
+
+                        <div class="mt-2 space-y-2 text-[11px] font-medium text-[#898989]">
+                            <div>
+                                <div class="mb-1 flex items-center justify-between gap-2">
+                                    <span>CPU</span>
+                                    <span id="serverCpuValue" class="font-bold text-[#2E2C34]">--%</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                                    <div id="serverCpuBar" class="h-full rounded-full bg-[#FF7C32] transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="mb-1 flex items-center justify-between gap-2">
+                                    <span>RAM</span>
+                                    <span id="serverRamValue" class="font-bold text-[#2E2C34]">--%</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                                    <div id="serverRamBar" class="h-full rounded-full bg-[#2563EB] transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                                <p id="serverRamDetail" class="mt-1 truncate text-[10px] text-[#898989]">--</p>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
             </aside>
 
@@ -1722,6 +1766,7 @@
 
     @livewireScripts
     {{-- Alpine.js ya está incluido en Livewire, no necesitamos cargarlo manualmente --}}
+    @vite('resources/js/sidebar-server-metrics.js')
 
     <script>
         const setup = () => {

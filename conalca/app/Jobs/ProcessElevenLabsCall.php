@@ -103,10 +103,14 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     ]);
 
                     $llamada->update([
+                        'status' => Llamada::STATUS_FINALIZADA,
+                        'call_status' => Llamada::CALL_STATUS_CANCELLED,
                         'queue_status' => 'cancelled',
                         'call_notes' => 'Cancelada: conductor ya tiene respuesta registrada',
+                        'failure_reason' => 'Conductor ya tiene respuesta registrada',
                         'processing_completed_at' => now()
                     ]);
+                    \App\Services\CallQueueManager::dispatchNextCalls();
                     return;
                 }
             }
@@ -207,6 +211,36 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'queue_status' => 'failed',
                     'processing_completed_at' => now()
                 ]);
+                \App\Services\CallQueueManager::dispatchNextCalls();
+                return;
+            }
+
+            $callRestriction = app(\App\Services\CotizacionCallWindowService::class)->getCallRestriction($cotizacion);
+            if ($callRestriction) {
+                Log::warning('ProcessElevenLabsCall: llamada cancelada por fecha/hora de cargue vencida', [
+                    'llamada_id' => $this->llamadaId,
+                    'cotizacion_id' => $this->cotizacionId,
+                    'restriction' => $callRestriction,
+                ]);
+
+                $llamada->update([
+                    'status' => Llamada::STATUS_FINALIZADA,
+                    'call_status' => Llamada::CALL_STATUS_CANCELLED,
+                    'queue_status' => 'cancelled',
+                    'failure_reason' => $callRestriction['message'],
+                    'call_notes' => $callRestriction['message'] . ' Cargue: ' . $callRestriction['loading_at_label'],
+                    'processing_completed_at' => now(),
+                ]);
+
+                if ($conductor) {
+                    $conductor->update([
+                        'estado_llamada' => 'cancelada',
+                        'fecha_llamada' => now(),
+                        'notas' => $callRestriction['message'],
+                    ]);
+                }
+
+                \App\Services\CallQueueManager::dispatchNextCalls();
                 return;
             }
 
@@ -226,6 +260,7 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
                     'failure_reason' => 'Teléfono destino no coincide con conductor registrado',
                     'processing_completed_at' => now(),
                 ]);
+                \App\Services\CallQueueManager::dispatchNextCalls();
                 return;
             }
             
@@ -430,9 +465,11 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
 
             if (isset($llamada)) {
                 $llamada->update([
-                    'status' => 'failed',
+                    'status' => Llamada::STATUS_FINALIZADA,
+                    'call_status' => Llamada::CALL_STATUS_FAILED,
                     'queue_status' => 'failed',
                     'failure_reason' => $e->getMessage(),
+                    'call_ended_at' => now(),
                     'processing_completed_at' => now()
                 ]);
 
@@ -519,9 +556,11 @@ class ProcessElevenLabsCall implements ShouldQueue, ShouldBeUnique
         try {
             Llamada::where('id_llamada', $this->llamadaId)
                 ->update([
-                    'status' => 'failed',
+                    'status' => Llamada::STATUS_FINALIZADA,
+                    'call_status' => Llamada::CALL_STATUS_FAILED,
                     'queue_status' => 'failed',
                     'failure_reason' => 'Job falló: ' . ($exception?->getMessage() ?? 'Error desconocido'),
+                    'call_ended_at' => now(),
                     'processing_completed_at' => now()
                 ]);
 
